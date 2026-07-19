@@ -5,7 +5,8 @@
 -- manually, deliberately.
 --
 -- Scope: removes ONLY the objects this migration introduced --
--- create_predecided_decision(), enforce_decision_status_trusted_transition()
+-- create_predecided_decision(jsonb,text), dismiss_decision(uuid,text),
+-- enforce_decision_status_trusted_transition(), its two private state tables,
 -- and its trigger, the decision_audit_source column and all three new
 -- CHECK constraints -- and restores approve_decision()/reject_decision()
 -- to their exact pre-this-migration bodies (as deployed by
@@ -33,14 +34,181 @@
 --    went through a trusted, audited path (by construction -- direct
 --    writes were blocked) -- rolling back removes the enforcement but
 --    does not un-approve/un-reject/un-create anything.
--- 4. If any Edge Function was updated to call create_predecided_decision()
---    (per the design report's compatibility plan) before this rollback
---    runs, that Edge Function will start failing immediately after
---    rollback (function no longer exists) -- revert that application-code
---    change FIRST, exactly as the forward migration's own compatibility
---    plan requires doing the reverse before applying it.
+-- 4. Edge Functions calling create_predecided_decision() and frontend code
+--    calling dismiss_decision() will fail after rollback. Revert both caller
+--    deployments BEFORE running this script; SQL cannot verify deployed
+--    application versions.
 
 BEGIN;
+
+-- Fail closed on a partial or provenance-mismatched installation. Application
+-- callers must be rolled back before this script; PostgreSQL cannot verify that
+-- external deployment-order prerequisite.
+DO $preflight$
+DECLARE
+  v_trigger_oid oid := to_regprocedure('public.enforce_decision_status_trusted_transition()');
+  v_create_oid oid := to_regprocedure('public.create_predecided_decision(jsonb,text)');
+  v_dismiss_oid oid := to_regprocedure('public.dismiss_decision(uuid,text)');
+  v_approve_oid oid := to_regprocedure('public.approve_decision(uuid,uuid,text,integer,text)');
+  v_reject_oid oid := to_regprocedure('public.reject_decision(uuid,text)');
+BEGIN
+  -- Hashes are reproducible with SELECT md5(prosrc) FROM pg_proc for the
+  -- exact function sources installed by the forward migration. Length is
+  -- checked as an additional guard; owner/security/config/grants are checked
+  -- independently below.
+  IF to_regclass('public.decision_transition_authorizations') IS NULL
+     OR to_regclass('public.decision_creation_idempotency') IS NULL
+     OR v_trigger_oid IS NULL OR v_create_oid IS NULL OR v_dismiss_oid IS NULL
+     OR v_approve_oid IS NULL OR v_reject_oid IS NULL THEN
+    RAISE EXCEPTION 'rollback preflight failed: hardening installation is partial';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles o ON o.oid=p.proowner JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=v_trigger_oid
+                 AND md5(p.prosrc)='84533cf399b6a5e7e1af1ba3da5fcae8' AND length(p.prosrc)=720
+                 AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND o.rolname='postgres'
+                 AND l.lanname='plpgsql' AND p.prorettype='trigger'::regtype AND NOT p.proretset AND p.pronargdefaults=0)
+     OR NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles o ON o.oid=p.proowner JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=v_create_oid
+                    AND md5(p.prosrc)='330a4e7fb29226e86a8d46c8cbc9231a' AND length(p.prosrc)=4289
+                    AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND o.rolname='postgres'
+                    AND l.lanname='plpgsql' AND p.prorettype='uuid'::regtype AND NOT p.proretset AND p.pronargdefaults=0)
+     OR NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles o ON o.oid=p.proowner JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=v_dismiss_oid
+                    AND md5(p.prosrc)='acd5d840f10b5e1d663083396a9f9829' AND length(p.prosrc)=1754
+                    AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND o.rolname='postgres'
+                    AND l.lanname='plpgsql' AND p.prorettype='jsonb'::regtype AND NOT p.proretset AND p.pronargdefaults=1)
+     OR NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles o ON o.oid=p.proowner JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=v_approve_oid
+                    AND md5(p.prosrc)='5e693be7e84218a83ffc2c2d08295200' AND length(p.prosrc)=3358
+                    AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND o.rolname='postgres'
+                    AND l.lanname='plpgsql' AND p.prorettype='jsonb'::regtype AND NOT p.proretset AND p.pronargdefaults=4)
+     OR NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles o ON o.oid=p.proowner JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=v_reject_oid
+                    AND md5(p.prosrc)='7afdb57a3592c927ea2b8d71946a5491' AND length(p.prosrc)=1928
+                    AND p.prosecdef AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public'] AND o.rolname='postgres'
+                    AND l.lanname='plpgsql' AND p.prorettype='jsonb'::regtype AND NOT p.proretset AND p.pronargdefaults=1) THEN
+    RAISE EXCEPTION 'rollback preflight failed: hardened function source or metadata differs';
+  END IF;
+  IF has_function_privilege('anon',v_trigger_oid,'EXECUTE') OR has_function_privilege('authenticated',v_trigger_oid,'EXECUTE')
+     OR has_function_privilege('service_role',v_trigger_oid,'EXECUTE')
+     OR has_function_privilege('anon',v_create_oid,'EXECUTE') OR has_function_privilege('authenticated',v_create_oid,'EXECUTE')
+     OR NOT has_function_privilege('service_role',v_create_oid,'EXECUTE')
+     OR has_function_privilege('anon',v_dismiss_oid,'EXECUTE') OR NOT has_function_privilege('authenticated',v_dismiss_oid,'EXECUTE')
+     OR has_function_privilege('service_role',v_dismiss_oid,'EXECUTE')
+     OR NOT has_function_privilege('authenticated',v_approve_oid,'EXECUTE') OR has_function_privilege('anon',v_approve_oid,'EXECUTE')
+     OR has_function_privilege('service_role',v_approve_oid,'EXECUTE')
+     OR NOT has_function_privilege('authenticated',v_reject_oid,'EXECUTE') OR has_function_privilege('anon',v_reject_oid,'EXECUTE')
+     OR has_function_privilege('service_role',v_reject_oid,'EXECUTE')
+     OR EXISTS (SELECT 1 FROM pg_proc p, LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE p.oid IN (v_trigger_oid,v_create_oid,v_dismiss_oid,v_approve_oid,v_reject_oid) AND a.grantee=0) THEN
+    RAISE EXCEPTION 'rollback preflight failed: hardened function grants differ';
+  END IF;
+  IF (SELECT count(*) FROM pg_trigger WHERE tgrelid='public.decision_ledger'::regclass AND NOT tgisinternal) <> 4
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.decision_ledger'::regclass
+                    AND tgname='trg_enforce_decision_status_trusted_transition' AND tgtype=23
+                    AND tgenabled='O' AND tgfoid=v_trigger_oid)
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.decision_ledger'::regclass
+                    AND tgname='update_decision_ledger_updated_at' AND tgtype=19 AND tgenabled='O'
+                    AND tgfoid='public.update_updated_at_column()'::regprocedure)
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.decision_ledger'::regclass
+                    AND tgname='trg_intel_writeback_on_decision_resolved' AND tgtype=17 AND tgenabled='O'
+                    AND tgfoid='public.intel_writeback_on_decision_resolved()'::regprocedure)
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.decision_ledger'::regclass
+                    AND tgname='trg_enforce_decision_approval_gate' AND tgtype=19 AND tgenabled='O'
+                    AND tgfoid='public.enforce_decision_approval_gate()'::regprocedure) THEN
+    RAISE EXCEPTION 'rollback preflight failed: hardened trigger inventory or linkage differs';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles o ON o.oid=c.relowner
+                 WHERE c.oid='public.decision_transition_authorizations'::regclass AND c.relkind='r'
+                   AND c.relrowsecurity AND NOT c.relforcerowsecurity AND o.rolname='postgres')
+     OR NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles o ON o.oid=c.relowner
+                    WHERE c.oid='public.decision_creation_idempotency'::regclass AND c.relkind='r'
+                      AND c.relrowsecurity AND NOT c.relforcerowsecurity AND o.rolname='postgres')
+     OR has_table_privilege('anon','public.decision_transition_authorizations','SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('authenticated','public.decision_transition_authorizations','SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('service_role','public.decision_transition_authorizations','SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('anon','public.decision_creation_idempotency','SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('authenticated','public.decision_creation_idempotency','SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('service_role','public.decision_creation_idempotency','SELECT,INSERT,UPDATE,DELETE') THEN
+    RAISE EXCEPTION 'rollback preflight failed: private table owner, RLS, or grants differ';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policy WHERE polrelid IN
+              ('public.decision_transition_authorizations'::regclass,'public.decision_creation_idempotency'::regclass))
+     OR (SELECT count(*) FROM pg_index WHERE indrelid='public.decision_transition_authorizations'::regclass) <> 1
+     OR (SELECT count(*) FROM pg_index WHERE indrelid='public.decision_creation_idempotency'::regclass) <> 2 THEN
+    RAISE EXCEPTION 'rollback preflight failed: private table policy or index inventory differs';
+  END IF;
+  IF (SELECT count(*) FROM pg_attrdef WHERE adrelid='public.decision_transition_authorizations'::regclass) <> 0
+     OR (SELECT count(*) FROM pg_attrdef WHERE adrelid='public.decision_creation_idempotency'::regclass) <> 1 THEN
+    RAISE EXCEPTION 'rollback preflight failed: private table default inventory differs';
+  END IF;
+  IF (SELECT count(*) FROM pg_attribute WHERE attrelid='public.decision_transition_authorizations'::regclass
+      AND attnum>0 AND NOT attisdropped) <> 4
+     OR (SELECT array_agg(attname || ':' || format_type(atttypid,atttypmod) || ':' || attnotnull ORDER BY attnum)
+         FROM pg_attribute WHERE attrelid='public.decision_transition_authorizations'::regclass
+           AND attnum>0 AND NOT attisdropped)
+        <> ARRAY['transaction_id:bigint:true','backend_pid:integer:true','operation:text:true','decision_id:uuid:true']
+     OR (SELECT count(*) FROM pg_constraint WHERE conrelid='public.decision_transition_authorizations'::regclass) <> 2
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_transition_authorizations'::regclass
+                    AND conname='decision_transition_authorizations_pkey' AND contype='p' AND conkey=ARRAY[1,2,3,4]::smallint[])
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_transition_authorizations'::regclass
+                    AND conname='decision_transition_authorizations_operation_check' AND contype='c' AND convalidated
+                    AND regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')=
+                        regexp_replace('(operation = ANY (ARRAY[''INSERT''::text, ''UPDATE''::text]))','\s+','','g'))
+     OR (SELECT count(*) FROM pg_attribute WHERE attrelid='public.decision_creation_idempotency'::regclass
+         AND attnum>0 AND NOT attisdropped) <> 5
+     OR (SELECT array_agg(attname || ':' || format_type(atttypid,atttypmod) || ':' || attnotnull ORDER BY attnum)
+         FROM pg_attribute WHERE attrelid='public.decision_creation_idempotency'::regclass
+           AND attnum>0 AND NOT attisdropped)
+        <> ARRAY['organization_id:uuid:true','caller_scope:uuid:true','idempotency_key:text:true',
+                 'decision_id:uuid:false','created_at:timestamp with time zone:true']
+     OR (SELECT count(*) FROM pg_constraint WHERE conrelid='public.decision_creation_idempotency'::regclass) <> 4
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_creation_idempotency'::regclass
+                    AND conname='decision_creation_idempotency_pkey' AND contype='p' AND conkey=ARRAY[1,2,3]::smallint[])
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_creation_idempotency'::regclass
+                    AND conname='decision_creation_idempotency_decision_id_key' AND contype='u' AND conkey=ARRAY[4]::smallint[])
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_creation_idempotency'::regclass
+                    AND conname='decision_creation_idempotency_idempotency_key_check' AND contype='c' AND convalidated
+                    AND regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')=
+                        regexp_replace('((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 200))','\s+','','g'))
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_attrdef d
+                      ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+                    WHERE a.attrelid='public.decision_creation_idempotency'::regclass
+                      AND a.attname='created_at' AND pg_get_expr(d.adbin,d.adrelid)='now()')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_creation_idempotency'::regclass
+                    AND conname='decision_creation_idempotency_decision_id_fkey' AND contype='f'
+                    AND confrelid='public.decision_ledger'::regclass AND confdeltype='c' AND convalidated) THEN
+    RAISE EXCEPTION 'rollback preflight failed: private table columns or constraints differ';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_attrdef d
+                   ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+                 WHERE a.attrelid='public.decision_ledger'::regclass
+                   AND a.attname='decision_audit_source' AND a.atttypid='text'::regtype AND a.attnotnull
+                   AND pg_get_expr(d.adbin,d.adrelid) IN ('''legacy''::text','''legacy''')
+                   AND NOT a.attisdropped)
+     OR (SELECT count(*) FROM pg_constraint WHERE conrelid='public.decision_ledger'::regclass
+         AND conname IN ('decision_ledger_decision_status_check','decision_ledger_execution_status_check','decision_ledger_audit_source_check')) <> 3
+     OR EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_ledger'::regclass
+                AND conname IN ('decision_ledger_decision_status_check','decision_ledger_execution_status_check','decision_ledger_audit_source_check')
+                AND (contype<>'c' OR NOT convalidated)) THEN
+    RAISE EXCEPTION 'rollback preflight failed: provenance column or workflow constraints differ';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_ledger'::regclass
+                 AND conname='decision_ledger_decision_status_check'
+                 AND regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')=
+                     regexp_replace('(decision_status = ANY (ARRAY[''pending''::text, ''approved''::text, ''rejected''::text, ''dismissed''::text, ''executable''::text, ''executed''::text]))','\s+','','g'))
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_ledger'::regclass
+                    AND conname='decision_ledger_execution_status_check'
+                    AND regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')=
+                        regexp_replace('(execution_status = ANY (ARRAY[''not_started''::text, ''in_progress''::text, ''completed''::text, ''failed''::text, ''cancelled''::text, ''blocked''::text]))','\s+','','g'))
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.decision_ledger'::regclass
+                    AND conname='decision_ledger_audit_source_check'
+                    AND regexp_replace(pg_get_expr(conbin,conrelid),'\s+','','g')=
+                        regexp_replace('(decision_audit_source = ANY (ARRAY[''legacy''::text, ''rpc''::text]))','\s+','','g')) THEN
+    RAISE EXCEPTION 'rollback preflight failed: workflow constraint expressions differ';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE confrelid IN
+              ('public.decision_transition_authorizations'::regclass,'public.decision_creation_idempotency'::regclass)
+              AND conrelid NOT IN ('public.decision_transition_authorizations'::regclass,'public.decision_creation_idempotency'::regclass)) THEN
+    RAISE EXCEPTION 'rollback preflight failed: unexpected external dependency on private tables';
+  END IF;
+  -- DROP uses RESTRICT (the default), providing a final fail-closed dependency check.
+END $preflight$;
 
 -- ---- Step 5 reversal: restore approve_decision/reject_decision to their
 -- exact pre-this-migration bodies ----
@@ -207,14 +375,17 @@ $$;
 REVOKE ALL ON FUNCTION public.reject_decision(uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reject_decision(uuid, text) TO authenticated;
 
--- ---- Step 4 reversal: drop the trusted-insert RPC ----
+-- ---- Step 4 reversal: drop workflow RPCs and private state ----
 
-DROP FUNCTION IF EXISTS public.create_predecided_decision(uuid, text, text, text, text, text, uuid, numeric);
+DROP FUNCTION public.dismiss_decision(uuid, text);
+DROP FUNCTION public.create_predecided_decision(jsonb, text);
 
 -- ---- Step 3 reversal: drop the new trigger and its function ----
 
-DROP TRIGGER IF EXISTS trg_enforce_decision_status_trusted_transition ON public.decision_ledger;
-DROP FUNCTION IF EXISTS public.enforce_decision_status_trusted_transition();
+DROP TRIGGER trg_enforce_decision_status_trusted_transition ON public.decision_ledger;
+DROP FUNCTION public.enforce_decision_status_trusted_transition();
+DROP TABLE public.decision_transition_authorizations;
+DROP TABLE public.decision_creation_idempotency;
 
 -- ---- Step 2 reversal: drop the legacy-provenance column ----
 

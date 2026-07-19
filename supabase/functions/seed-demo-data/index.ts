@@ -193,7 +193,18 @@ Deno.serve(async (req) => {
         prediction_accuracy_score: 91,
       },
     ];
-    await admin.from("decision_ledger").insert(decisions);
+    for (const [index, decision] of decisions.entries()) {
+      if (decision.decision_status === "pending") {
+        const { error } = await admin.from("decision_ledger").insert(decision);
+        if (error) throw error;
+      } else {
+        const { error } = await admin.rpc("create_predecided_decision", {
+          _decision: decision,
+          _idempotency_key: `seed-demo-data:${orgId}:${index}`,
+        });
+        if (error) throw error;
+      }
+    }
 
     // ─── 6. Simulation Results ───
     await admin.from("simulation_results").delete().eq("organization_id", orgId);
