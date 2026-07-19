@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
     ]);
 
     // ─── Decision Ledger ───
-    await admin.from("decision_ledger").insert([
+    const demoDecisions = [
       {
         organization_id: orgId, recommended_action: "Expand enterprise sales team by 4 AEs focused on $100K+ ACV deals",
         decision_type: "growth", decision_status: "approved", execution_status: "in_progress",
@@ -173,7 +173,19 @@ Deno.serve(async (req) => {
         confidence_cap_reason: "Migration complexity estimates based on comparable companies",
         dataset_id: datasetId,
       },
-    ]);
+    ];
+    for (const [index, decision] of demoDecisions.entries()) {
+      if (decision.decision_status === "pending") {
+        const { error } = await admin.from("decision_ledger").insert(decision);
+        if (error) throw error;
+      } else {
+        const { error } = await admin.rpc("create_predecided_decision", {
+          _decision: decision,
+          _idempotency_key: `create-demo-session:${orgId}:${index}`,
+        });
+        if (error) throw error;
+      }
+    }
 
     // ─── Advisory Instances ───
     await admin.from("advisory_instances").insert([
