@@ -60,7 +60,7 @@ CREATE TABLE public.embed_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id uuid REFERENCES public.organizations(id) ON DELETE CASCADE NOT NULL,
   created_by uuid NOT NULL,
-  token text UNIQUE NOT NULL DEFAULT encode(gen_random_bytes(32), 'hex'),
+  token text UNIQUE NOT NULL DEFAULT encode(extensions.gen_random_bytes(32), 'hex'),
   dashboard_type text NOT NULL DEFAULT 'kpi_overview',
   allowed_metrics jsonb DEFAULT '[]'::jsonb,
   expires_at timestamptz,

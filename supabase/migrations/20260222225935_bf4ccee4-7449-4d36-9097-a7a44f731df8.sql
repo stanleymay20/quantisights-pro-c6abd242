@@ -16,9 +16,14 @@ CREATE UNIQUE INDEX idx_data_sync_jobs_request_id ON public.data_sync_jobs (requ
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Hash existing plaintext keys
-UPDATE public.data_sources 
-SET credentials_key_hash = encode(digest(credentials_key, 'sha256'), 'hex')
-WHERE credentials_key IS NOT NULL AND credentials_key_hash IS NULL;
+UPDATE public.data_sources
+SET credentials_key_hash =
+  encode(
+    extensions.digest(credentials_key::text, 'sha256'::text),
+    'hex'
+  )
+WHERE credentials_key IS NOT NULL
+  AND credentials_key_hash IS NULL;
 
 -- 4. Drop the plaintext credentials_key column
 ALTER TABLE public.data_sources DROP COLUMN credentials_key;

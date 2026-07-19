@@ -177,7 +177,12 @@ END;
 $$;
 
 -- 8. Storage bucket for CSV uploads
-INSERT INTO storage.buckets (id, name, public) VALUES ('datasets', 'datasets', false);
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('datasets', 'datasets', false)
+ON CONFLICT (id) DO UPDATE
+SET
+  name = EXCLUDED.name,
+  public = EXCLUDED.public;
 
 CREATE POLICY "Authenticated users can upload datasets"
   ON storage.objects FOR INSERT TO authenticated

@@ -13,25 +13,34 @@ ALTER TABLE public.webauthn_credentials ENABLE ROW LEVEL SECURITY;
 -- This prevents cross-org data leakage via Realtime subscriptions
 DO $$
 BEGIN
-  -- Enable RLS on realtime.messages if not already enabled
-  ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
-  
+  -- Enable RLS only if we own the table (older projects)
+  BEGIN
+    ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      NULL;
+  END;
+
   -- Create policy restricting channel subscriptions
-  -- Realtime topics follow format: "realtime:public:tablename:organization_id=eq.UUID"
-  -- This policy ensures users can only receive messages for channels that match their org
   CREATE POLICY "Users can only access their org channels"
     ON realtime.messages
     FOR SELECT
     TO authenticated
     USING (
-      -- Allow if the extension/topic contains the user's organization_id
       EXISTS (
-        SELECT 1 FROM public.profiles p
+        SELECT 1
+        FROM public.profiles p
         WHERE p.user_id = auth.uid()
-          AND realtime.messages.extension::text LIKE '%' || p.organization_id::text || '%'
+          AND realtime.messages.extension::text
+              LIKE '%' || p.organization_id::text || '%'
       )
     );
-EXCEPTION 
-  WHEN duplicate_object THEN NULL; -- Policy already exists
-  WHEN undefined_table THEN NULL; -- realtime.messages might not exist in all environments
+
+EXCEPTION
+  WHEN duplicate_object THEN
+    NULL;  -- Policy already exists
+  WHEN undefined_table THEN
+    NULL;  -- realtime.messages doesn't exist in this environment
+  WHEN insufficient_privilege THEN
+    NULL;  -- Cannot modify Supabase-managed realtime table
 END $$;
