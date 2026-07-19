@@ -796,9 +796,9 @@ const DATASET_PATTERNS: { type: string; keywords: string[]; workflows: string[];
 ];
 
 export function classifyDataset(headers: string[], mapping: ColumnMapping): DatasetClassification {
-  const allText = headers.map(h => h.toLowerCase().replace(/[_\-]/g, " ")).join(" ");
+  const allText = headers.map(h => h.toLowerCase().replace(/[_-]/g, " ")).join(" ");
   const valueIndices = findAllMappedIdx(mapping, "value");
-  const valueCols = valueIndices.map(i => (headers[i] || "").toLowerCase().replace(/[_\-]/g, " "));
+  const valueCols = valueIndices.map(i => (headers[i] || "").toLowerCase().replace(/[_-]/g, " "));
   const searchText = allText + " " + valueCols.join(" ");
 
   let bestMatch: DatasetClassification = { type: "General Dataset", confidence: 30, recommendedWorkflows: ["KPI Monitoring", "Forecasting", "Anomaly Detection"] };

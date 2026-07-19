@@ -351,7 +351,7 @@ IMPORTANT: Frame ALL insights through this decision context. Every insight must 
     // Use AI with multi-model failover chain to generate contextual insights
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
-    let aiInsights: any[] = [];
+    const aiInsights: any[] = [];
     let modelUsed: string | null = null;
 
     // Model failover chain: primary → secondary → tertiary

@@ -247,7 +247,7 @@ function extractMetricMentions(text: string): string[] {
 
 function extractNumbers(text: string): Array<{ value: number; context: string }> {
   const numbers: Array<{ value: number; context: string }> = [];
-  const regex = /(?:[\$€£¥]?\s*)?(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(%|M|B|K|million|billion|thousand)?/gi;
+  const regex = /(?:[$€£¥]?\s*)?(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(%|M|B|K|million|billion|thousand)?/gi;
   
   let match;
   while ((match = regex.exec(text)) !== null) {

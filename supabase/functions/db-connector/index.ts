@@ -70,7 +70,7 @@ async function testPostgres(config: any) {
     await sql.end();
     return { success: true, message: "Connection successful", version: result[0]?.version || "Connected" };
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     return { success: false, message: `Connection failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
@@ -104,7 +104,7 @@ async function discoverPostgres(config: any & { schema: string }) {
     await sql.end();
     return { tables: result };
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     throw err;
   }
 }
@@ -120,7 +120,7 @@ async function previewPostgres(config: any & { schema: string }, tableName: stri
     await sql.end();
     return { rows: Array.from(rows), count: Number(countResult[0]?.total || 0) };
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     throw err;
   }
 }
@@ -172,7 +172,7 @@ async function syncPostgres(
     }
     await sql.end();
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     errors.push(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -840,7 +840,7 @@ async function testRedshift(body: ConnectorRequest) {
       is_redshift: isRedshift,
     };
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     return { success: false, message: `Redshift connection failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
@@ -898,7 +898,7 @@ async function discoverRedshift(body: ConnectorRequest) {
     await sql.end();
     return { tables: tableDetails, schema, database, engine: "redshift" };
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     return { tables: [], error: `Redshift discovery failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
@@ -976,7 +976,7 @@ async function syncRedshift(
 
     await sql.end();
   } catch (err: unknown) {
-    try { if (sql) await sql.end(); } catch {}
+    try { if (sql) await sql.end(); } catch { /* best-effort cleanup: ignore errors closing the connection while already handling a prior error */ }
     result.errors.push(`Redshift connection: ${err instanceof Error ? err.message : String(err)}`);
   }
 

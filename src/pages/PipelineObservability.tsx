@@ -47,7 +47,7 @@ export default function PipelineObservability() {
     setLoading(true);
 
     // Build queries with optional dataset filter
-    let jobsQuery = supabase.from("data_sync_jobs")
+    const jobsQuery = supabase.from("data_sync_jobs")
       .select("*")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
