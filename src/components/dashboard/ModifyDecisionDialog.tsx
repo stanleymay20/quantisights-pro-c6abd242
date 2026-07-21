@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Save } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { onDecisionApproved } from "@/lib/decision-lifecycle";
 import { useToast } from "@/hooks/use-toast";
 import type { EnrichedDecision } from "./DecisionQueue";
 
@@ -57,9 +56,7 @@ const ModifyDecisionDialog = ({ decision, organizationId, datasetId, open, onOpe
         organization_id: organizationId,
         recommended_action: recommendation,
         chosen_action: recommendation,
-        decided_by: user?.id,
-        decided_at: new Date().toISOString(),
-        decision_status: "approved",
+        decision_status: "pending",
         decision_type: "strategic",
         confidence_at_decision: decision.confidence ?? 50,
         raw_confidence: decision.rawConfidence ?? null,
@@ -76,21 +73,16 @@ const ModifyDecisionDialog = ({ decision, organizationId, datasetId, open, onOpe
       }).select("id").single();
       if (error) throw error;
 
-      // Lifecycle side effects: audit log + execution plan + outcome
-      if (ledgerRow?.id) {
-        const primaryMetric = successMetrics ? successMetrics.split(",")[0].trim().toLowerCase().replace(/\s+/g, "_") : null;
-        await onDecisionApproved({
-          decisionId: ledgerRow.id,
-          organizationId,
-          userId: user?.id ?? null,
-          recommendedAction: recommendation,
-          confidence: decision.cappedConfidence ?? decision.confidence ?? 50,
-          datasetId: datasetId ?? null,
-          expectedMetric: primaryMetric,
-          evaluationWindowDays: parseInt(dueDays) || 30,
-          suggestedOwner: owner,
-        });
-      }
+      if (!ledgerRow?.id) throw new Error("Decision was not created");
+      const primaryMetric = successMetrics ? successMetrics.split(",")[0].trim().toLowerCase().replace(/\s+/g, "_") : undefined;
+      const { error: approveError } = await supabase.rpc("approve_decision", {
+        _decision_id: ledgerRow.id,
+        _dataset_id: datasetId,
+        _expected_metric: primaryMetric,
+        _evaluation_window_days: parseInt(dueDays) || 30,
+        _suggested_owner: owner || undefined,
+      });
+      if (approveError) throw approveError;
 
       // If source is an advisory, update it too
       if (decision.type === "advisory" && decision.sourceId) {

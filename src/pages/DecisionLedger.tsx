@@ -27,7 +27,7 @@ import LazyInputWarning from "@/components/dashboard/LazyInputWarning";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import ExecutionTimeline from "@/components/execution/ExecutionTimeline";
 import DecisionReplayPanel from "@/components/execution/DecisionReplayPanel";
-import { onDecisionApproved, onExecutionStatusChanged } from "@/lib/decision-lifecycle";
+import { onExecutionStatusChanged } from "@/lib/decision-lifecycle";
 
 interface Decision {
   id: string;
@@ -221,39 +221,33 @@ const DecisionLedgerPage = () => {
   const updateDecision = async (id: string, updates: Record<string, any>) => {
     setUpdatingId(id);
     const decision = decisions.find(d => d.id === id);
+    let error: { message: string } | null = null;
 
-    if (updates.execution_status === "completed") {
-      if (decision) {
+    if (updates.decision_status === "approved") {
+      ({ error } = await supabase.rpc("approve_decision", {
+        _decision_id: id,
+        _dataset_id: activeDatasetId ?? undefined,
+        _expected_metric: decision?.recommended_action?.substring(0, 30) ?? "metric",
+        _evaluation_window_days: 30,
+        _suggested_owner: undefined,
+      }));
+    } else if (updates.decision_status === "rejected") {
+      ({ error } = await supabase.rpc("reject_decision", { _decision_id: id }));
+    } else {
+      if (updates.execution_status === "completed" && decision) {
         const conf = decision.confidence_at_decision || decision.capped_confidence || 50;
         const hasOutcome = decision.outcome_delta !== null;
         const outcomePositive = (decision.outcome_delta || 0) >= 0;
         const calibrationError = Math.abs(conf - (outcomePositive ? 100 : 0));
-        const predictionAccuracy = hasOutcome ? Math.max(0, 100 - calibrationError) : null;
         updates.calibration_error = calibrationError;
-        updates.prediction_accuracy_score = predictionAccuracy;
+        updates.prediction_accuracy_score = hasOutcome ? Math.max(0, 100 - calibrationError) : null;
       }
+      ({ error } = await supabase.from("decision_ledger").update(updates).eq("id", id));
     }
 
-    const { error } = await supabase
-      .from("decision_ledger")
-      .update(updates)
-      .eq("id", id);
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
-      // Post-update lifecycle side effects
-      if (updates.decision_status === "approved" && decision) {
-        await onDecisionApproved({
-          decisionId: id,
-          organizationId: decision.organization_id,
-          userId: user?.id ?? null,
-          recommendedAction: decision.recommended_action,
-          confidence: decision.capped_confidence ?? decision.confidence_at_decision ?? 50,
-          datasetId: null,
-          expectedMetric: decision.recommended_action?.substring(0, 30) ?? "metric",
-          evaluationWindowDays: 30,
-        });
-      }
       if (updates.execution_status) {
         await onExecutionStatusChanged({
           decisionId: id,

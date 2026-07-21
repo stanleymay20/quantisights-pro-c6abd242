@@ -11790,6 +11790,14 @@ export type Database = {
         }
         Returns: Json
       }
+      create_predecided_decision: {
+        Args: { _decision: Json; _idempotency_key: string }
+        Returns: string
+      }
+      dismiss_decision: {
+        Args: { _decision_id: string; _reason?: string }
+        Returns: Json
+      }
       blend_evidence: { Args: { _inputs: Json }; Returns: Json }
       check_decision_evaluability: {
         Args: {

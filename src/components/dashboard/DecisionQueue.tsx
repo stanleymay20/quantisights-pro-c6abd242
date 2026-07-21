@@ -14,7 +14,6 @@ import OutputClassificationBadge from "./OutputClassificationBadge";
 import TraceabilityPanel from "./TraceabilityPanel";
 import DismissReasonDialog from "./DismissReasonDialog";
 import { useBuildDecisionQueue, type EnrichedDecision } from "@/hooks/useBuildDecisionQueue";
-import { onDecisionApproved, onDecisionDismissed } from "@/lib/decision-lifecycle";
 import type { Insight } from "@/hooks/useInsights";
 
 export type { EnrichedDecision };
@@ -158,9 +157,7 @@ const DecisionQueue = memo(({
         organization_id: organizationId,
         recommended_action: decision.recommendation.recommendedAction,
         chosen_action: decision.recommendation.recommendedAction,
-        decided_by: user?.id ?? null,
-        decided_at: new Date().toISOString(),
-        decision_status: "approved",
+        decision_status: "pending",
         confidence_at_decision: decision.confidence ?? 50,
         raw_confidence: decision.rawConfidence ?? null,
         capped_confidence: decision.cappedConfidence ?? null,
@@ -171,20 +168,15 @@ const DecisionQueue = memo(({
       }).select("id").single();
       if (ledgerError) throw ledgerError;
 
-      // Lifecycle side effects: audit log + execution plan + outcome
-      if (ledgerRow?.id) {
-        await onDecisionApproved({
-          decisionId: ledgerRow.id,
-          organizationId,
-          userId: user?.id ?? null,
-          recommendedAction: decision.recommendation.recommendedAction,
-          confidence: decision.cappedConfidence ?? decision.confidence ?? 50,
-          datasetId: datasetId ?? null,
-          expectedMetric: decision.recommendation.successMetrics?.[0] ?? null,
-          evaluationWindowDays: decision.costOfDelayResult.recommendedActionWindowDays || 30,
-          suggestedOwner: decision.recommendation.suggestedOwner ?? null,
-        });
-      }
+      if (!ledgerRow?.id) throw new Error("Decision was not created");
+      const { error: approveError } = await supabase.rpc("approve_decision", {
+        _decision_id: ledgerRow.id,
+        _dataset_id: datasetId ?? undefined,
+        _expected_metric: decision.recommendation.successMetrics?.[0] ?? undefined,
+        _evaluation_window_days: decision.costOfDelayResult.recommendedActionWindowDays || 30,
+        _suggested_owner: decision.recommendation.suggestedOwner ?? undefined,
+      });
+      if (approveError) throw approveError;
 
       setDecisions(prev => prev.filter(d => d.id !== decision.id));
       setConfirmation({ decisionTitle: decision.title, action: "approved" });
@@ -214,9 +206,7 @@ const DecisionQueue = memo(({
         organization_id: organizationId,
         recommended_action: decision.recommendation.recommendedAction,
         chosen_action: "Dismissed",
-        decided_by: user?.id ?? null,
-        decided_at: new Date().toISOString(),
-        decision_status: "dismissed",
+        decision_status: "pending",
         confidence_at_decision: decision.confidence ?? 50,
         raw_confidence: decision.rawConfidence ?? null,
         capped_confidence: decision.cappedConfidence ?? null,
@@ -226,16 +216,12 @@ const DecisionQueue = memo(({
         notes: reason ? `Dismiss reason: ${reason}` : "Dismissed without reason",
       }).select("id").single();
 
-      // Audit trail for dismissal
-      if (ledgerRow?.id) {
-        await onDecisionDismissed({
-          decisionId: ledgerRow.id,
-          organizationId,
-          userId: user?.id ?? null,
-          reason,
-          recommendedAction: decision.recommendation.recommendedAction,
-        });
-      }
+      if (!ledgerRow?.id) throw new Error("Decision was not created");
+      const { error: dismissError } = await supabase.rpc("dismiss_decision", {
+        _decision_id: ledgerRow.id,
+        _reason: reason || undefined,
+      });
+      if (dismissError) throw dismissError;
       setDecisions(prev => prev.filter(d => d.id !== decision.id));
       setConfirmation({ decisionTitle: decision.title, action: "dismissed" });
     } catch {
