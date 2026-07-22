@@ -62,8 +62,8 @@ const CounterfactualPanel = ({ decisions }: { decisions: Array<any> }) => {
           const counterfactual = baseline; // without action
           const actionImpact = actual - counterfactual;
           const accuracyRaw = predicted !== 0 ? (actionImpact / predicted) * 100 : NaN;
-          const accuracyPct = Number.isFinite(accuracyRaw) ? accuracyRaw.toFixed(0) : "—";
-          const accuracyIsGood = Number.isFinite(accuracyRaw) && accuracyRaw >= 80;
+          const accuracyPct = Number.isFinite(accuracyRaw) ? Math.round(accuracyRaw) : null;
+          const accuracyIsGood = accuracyPct !== null && accuracyPct >= 80;
 
           return (
             <div key={d.id} className="border border-border/30 rounded-lg p-3">
@@ -80,7 +80,7 @@ const CounterfactualPanel = ({ decisions }: { decisions: Array<any> }) => {
                 <div>
                   <p className="text-[10px] text-muted-foreground">Prediction Accuracy</p>
                   <p className={`text-sm font-bold font-mono ${accuracyIsGood ? "text-success" : "text-warning"}`}>
-                    {accuracyPct === "—" ? accuracyPct : `${Math.round(accuracyPct)}%`}
+                    {accuracyPct === null ? "—" : `${accuracyPct}%`}
                   </p>
                 </div>
               </div>
