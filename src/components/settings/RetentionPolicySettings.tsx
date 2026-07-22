@@ -62,7 +62,7 @@ const RetentionPolicySettings = () => {
     if (savedPolicies && savedPolicies.length > 0) {
       setPolicies((prev) =>
         prev.map((p) => {
-          const saved = savedPolicies.find((s: any) => s.data_category === p.data_category);
+          const saved = savedPolicies.find((s: { data_category: string; retention_days?: number; auto_cleanup?: boolean }) => s.data_category === p.data_category);
           return saved
             ? {
                 ...p,
@@ -78,7 +78,7 @@ const RetentionPolicySettings = () => {
     }
   }, [savedPolicies]);
 
-  const updatePolicy = (category: string, field: keyof RetentionPolicy, value: any) => {
+  const updatePolicy = (category: string, field: keyof RetentionPolicy, value: string | number | boolean) => {
     setPolicies((prev) =>
       prev.map((p) => (p.data_category === category ? { ...p, [field]: value } : p))
     );
@@ -104,7 +104,7 @@ const RetentionPolicySettings = () => {
             auto_cleanup: policy.auto_cleanup,
             description: policy.description,
             enforcement_status: effectiveStatus,
-          } as any,
+          },
           { onConflict: "organization_id,data_category" }
         );
       if (error) {
@@ -135,6 +135,11 @@ const RetentionPolicySettings = () => {
         <p className="text-xs text-muted-foreground">
           Configure how long each data type is retained. Audit logs have a regulatory minimum.
         </p>
+        {!isLoading && (!savedPolicies || savedPolicies.length === 0) && (
+          <p className="text-xs text-warning mt-1.5 flex items-center gap-1.5">
+            <Clock className="w-3 h-3" /> These are unsaved defaults — nothing is persisted yet. Click Save to activate them.
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -151,9 +156,6 @@ const RetentionPolicySettings = () => {
                   key={policy.data_category}
                   className="flex items-center gap-4 p-3.5 rounded-xl border border-border/40 bg-muted/20"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <Icon className="w-4 h-4 text-primary" />
-                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-xs font-semibold text-foreground capitalize">

@@ -90,31 +90,34 @@ export const EmbedManager = () => {
           <p className="text-sm text-muted-foreground text-center py-8">No embed tokens yet</p>
         ) : (
           <div className="space-y-3">
-            {tokens.map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/10 border border-border/20">
+            {tokens.map((t) => {
+              const tk = t as { id: string; is_active: boolean; dashboard_type: string; token: string };
+              return (
+              <div key={tk.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/10 border border-border/20">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={t.is_active ? "default" : "secondary"}>
-                      {t.is_active ? "Active" : "Inactive"}
+                    <Badge variant={tk.is_active ? "default" : "secondary"}>
+                      {tk.is_active ? "Active" : "Inactive"}
                     </Badge>
-                    <span className="text-xs text-muted-foreground">{t.dashboard_type}</span>
+                    <span className="text-xs text-muted-foreground">{tk.dashboard_type}</span>
                   </div>
                   <Input
                     readOnly
-                    value={`${window.location.origin}/embed?token=${t.token}`}
+                    value={`${window.location.origin}/embed?token=${tk.token}`}
                     className="text-xs h-7 bg-background/50 font-mono"
                   />
                 </div>
                 <div className="flex gap-1 ml-3">
-                  <Button size="icon" variant="ghost" onClick={() => copyEmbed(t.token)}>
+                  <Button size="icon" variant="ghost" aria-label="Copy embed code" onClick={() => copyEmbed(tk.token)}>
                     <Copy className="w-4 h-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" onClick={() => deleteToken.mutate(t.id)}>
+                  <Button size="icon" variant="ghost" aria-label="Delete embed token" onClick={() => deleteToken.mutate(tk.id)}>
                     <Trash2 className="w-4 h-4 text-destructive" />
                   </Button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>

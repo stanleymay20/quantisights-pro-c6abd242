@@ -7,12 +7,14 @@ import { useDecisionContexts } from "@/hooks/useDecisionContexts";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw } from "lucide-react";
 import DiagnosticSummaryCards from "@/components/diagnostics/DiagnosticSummaryCards";
 import DiagnosticCard from "@/components/diagnostics/DiagnosticCard";
 import DiagnosticEmptyState from "@/components/diagnostics/DiagnosticEmptyState";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 export interface DiagnosticResult {
   metric_type: string;
@@ -44,6 +46,7 @@ const Diagnostics = () => {
   const { toast } = useToast();
   const [diagnostics, setDiagnostics] = useState<DiagnosticResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasRun, setHasRun] = useState(false);
   const [analyzedCount, setAnalyzedCount] = useState(0);
   const [metricTypesAnalyzed, setMetricTypesAnalyzed] = useState(0);
   const [skippedMetrics, setSkippedMetrics] = useState<string[]>([]);
@@ -53,7 +56,7 @@ const Diagnostics = () => {
     if (!orgId || !datasetId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("diagnostic-engine", {
+      const { data, error } = await invokeWithRetry<any>("diagnostic-engine", {
         body: {
           organization_id: orgId,
           dataset_id: datasetId,
@@ -61,24 +64,27 @@ const Diagnostics = () => {
         },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setDiagnostics(data.diagnostics || []);
-      setAnalyzedCount(data.analyzed_metrics || 0);
-      setMetricTypesAnalyzed(data.metric_types_analyzed?.length || 0);
-      setSkippedMetrics(data.skipped_metrics || []);
-      if (data.diagnostics?.length === 0) {
+      if (data?.error) throw new Error(data.error as string);
+      setDiagnostics((data?.diagnostics as DiagnosticResult[]) || []);
+      setAnalyzedCount((data?.analyzed_metrics as number) || 0);
+      setMetricTypesAnalyzed((data?.metric_types_analyzed as string[])?.length || 0);
+      setSkippedMetrics((data?.skipped_metrics as string[]) || []);
+      setHasRun(true);
+      if ((data?.diagnostics as DiagnosticResult[])?.length === 0) {
         toast({ title: "No anomalies detected", description: "All metrics within expected ranges." });
       }
-    } catch (err: any) {
-      toast({ title: "Diagnostic failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Diagnostic failed";
+      toast({ title: "Diagnostic failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
   }, [orgId, datasetId, activeContext?.id, toast]);
 
   useEffect(() => {
-    if (orgId && datasetId) runDiagnostics();
-  }, [runDiagnostics]);
+    // Do not auto-fire the expensive diagnostic-engine edge function on mount.
+    // Users trigger analysis manually via the Re-analyze button.
+  }, []);
 
   const criticalCount = diagnostics.filter(d => d.severity === "critical").length;
   const warningCount = diagnostics.filter(d => d.severity === "warning").length;
@@ -91,7 +97,7 @@ const Diagnostics = () => {
         <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Diagnostic Intelligence</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Diagnostic Intelligence</h1>
             <p className="text-xs text-muted-foreground">Root cause analysis & causal pattern detection</p>
           </div>
           <Button onClick={runDiagnostics} disabled={loading} variant="outline" size="sm" className="gap-2">
@@ -100,6 +106,7 @@ const Diagnostics = () => {
           </Button>
         </header>
 
+        <SectionErrorBoundary sectionName="Diagnostics">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           <DiagnosticSummaryCards
             analyzedCount={analyzedCount}
@@ -108,10 +115,13 @@ const Diagnostics = () => {
             totalDiagnosed={diagnostics.length}
             metricTypesAnalyzed={metricTypesAnalyzed}
             skippedMetrics={skippedMetrics}
+            loading={loading}
           />
 
           {loading ? (
             <DiagnosticEmptyState variant="loading" />
+          ) : !hasRun ? (
+            <DiagnosticEmptyState variant="ready" onRun={runDiagnostics} />
           ) : diagnostics.length === 0 ? (
             <DiagnosticEmptyState variant="empty" />
           ) : (
@@ -130,6 +140,7 @@ const Diagnostics = () => {
 
           <IntelligenceDisclaimer variant="footer" context="advisory" />
         </main>
+        </SectionErrorBoundary>
       </ErrorBoundary>
     </DatasetRequired>
   );

@@ -1,0 +1,262 @@
+[
+  {
+    "signal_id": "signal_tenant-a_erp_a823a87a",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_erp_e1a2862e",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 0,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 84,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness reduced because signal is expired at more than 86400 seconds old.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 84 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_sap_6581c30f",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_warehouse_7537135c",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_ops-system-a_fe8037e3",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 50000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_ops-system-b_5f5aa22c",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 50000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_erp_1c3b9eb7",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-b_erp_b67cb3dc",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_supplier-portal_3078bd89",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_policy-register_603e7480",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_ops-system_bc83f699",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 25,
+    "integrity": 100,
+    "overall": 90,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality limited because business impact is below 50000.",
+      "materiality reduced because no decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 90 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_erp_1917fda6",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  },
+  {
+    "signal_id": "signal_tenant-a_erp_2328bdc8",
+    "completeness": 100,
+    "consistency": 100,
+    "freshness": 100,
+    "provenance": 100,
+    "materiality": 100,
+    "integrity": 100,
+    "overall": 100,
+    "explanation": [
+      "completeness scored 100 because all required and optional payload fields are populated.",
+      "consistency scored 100 because schema, enums, duplicate IDs, quantities, and compared values are consistent.",
+      "freshness scored 100 because signal age is within 0-300 seconds.",
+      "provenance scored 100 because connector is verified and source record hash is present.",
+      "materiality increased because business impact is at least 500000.",
+      "materiality scored 100 because a decision trigger is present.",
+      "integrity scored 100 because payload hash matches, provenance is verified, and signature is present.",
+      "overall scored 100 using deterministic weighted average: completeness 0.18, consistency 0.2, freshness 0.16, provenance 0.16, materiality 0.14, integrity 0.16."
+    ]
+  }
+]

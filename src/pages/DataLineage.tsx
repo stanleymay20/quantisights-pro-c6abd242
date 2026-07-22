@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Database, ArrowRight, FileText, Target, BarChart3, Loader2, GitCommitVertical, Layers } from "lucide-react";
 import DataPipelineStatus from "@/components/dashboard/DataPipelineStatus";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface LineageNode {
   id: string;
@@ -23,7 +24,7 @@ interface LineageEdge {
   to: string;
 }
 
-const NODE_STYLES: Record<string, { icon: any; bg: string; border: string }> = {
+const NODE_STYLES: Record<string, { icon: React.ElementType; bg: string; border: string }> = {
   source: { icon: Database, bg: "bg-primary/10", border: "border-primary/30" },
   raw: { icon: Layers, bg: "bg-secondary/50", border: "border-border/40" },
   metric: { icon: BarChart3, bg: "bg-success/10", border: "border-success/30" },
@@ -40,10 +41,13 @@ const DataLineage = () => {
   const [decisions, setDecisions] = useState<any[]>([]);
   const [metricTypes, setMetricTypes] = useState<string[]>([]);
   const [rawCount, setRawCount] = useState(0);
-  const [datasetInfo, setDatasetInfo] = useState<{ name: string; row_count: number | null; column_mapping: any } | null>(null);
+  const [datasetInfo, setDatasetInfo] = useState<{ name: string; row_count: number | null; column_mapping: any | null } | null>(null);
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) {
+      setLoading(false);
+      return;
+    }
     const load = async () => {
       setLoading(true);
 
@@ -79,9 +83,9 @@ const DataLineage = () => {
       setSources(srcRes.data || []);
       setKpis(kpiRes.data || []);
       setDecisions(decRes.data || []);
-      const uniqueTypes: string[] = [...new Set((metRes.data || []).map((m: any) => m.metric_type as string))];
+      const uniqueTypes: string[] = [...new Set((metRes.data || []).map((m: { metric_type: string }) => m.metric_type))];
       setMetricTypes(uniqueTypes);
-      setRawCount((rawRes as any).count ?? 0);
+      setRawCount((rawRes as { count?: number }).count ?? 0);
       setDatasetInfo(dsInfo);
       setLoading(false);
     };
@@ -163,7 +167,7 @@ const DataLineage = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <GitCommitVertical className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Data Lineage</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Data Lineage</h1>
           </div>
         </header>
 
@@ -233,6 +237,7 @@ const DataLineage = () => {
                           const style = NODE_STYLES[node.type];
                           const Icon = style.icon;
                           return (
+    <SectionErrorBoundary sectionName="Data Lineage">
                             <Card key={node.id} className={`border ${style.border} ${style.bg}`}>
                               <CardContent className="p-3 flex items-start gap-2">
                                 <Icon className="w-4 h-4 mt-0.5 shrink-0" />
@@ -248,6 +253,7 @@ const DataLineage = () => {
                                 </div>
                               </CardContent>
                             </Card>
+    </SectionErrorBoundary>
                           );
                         })
                       )}

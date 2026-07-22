@@ -66,12 +66,14 @@ const CrossWorkspaceIntelligence = memo(({ organizationId }: CrossWorkspaceIntel
 
       // Parallel org-level fetches (aggregated counts, no raw data exposed)
       const [datasetsRes, advisoriesRes, decisionsRes, riskRes, calRes] = await Promise.all([
-        // Dataset counts per workspace
+        // Dataset counts per workspace. "completed" is what the standard
+        // CSV upload flow writes on success; "active" is only written by
+        // the demo seed and API-ingest paths. Both mean "usable dataset."
         supabase
           .from("datasets")
           .select("id, workspace_id")
           .eq("organization_id", organizationId)
-          .eq("status", "active")
+          .in("status", ["active", "completed"])
           .in("workspace_id", wsIds),
         // Open advisory counts per workspace (via dataset → workspace)
         supabase

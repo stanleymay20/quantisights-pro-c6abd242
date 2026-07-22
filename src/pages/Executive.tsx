@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { useOrganization } from "@/hooks/useOrganization";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import ExecutiveCopilot from "@/components/dashboard/ExecutiveCopilot";
 import StrategicSimulation from "@/components/dashboard/StrategicSimulation";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import ExecutiveConvergence from "@/components/dashboard/ExecutiveConvergence";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -186,8 +187,7 @@ const RiskDial = ({ score, lastUpdated }: { score: number; lastUpdated?: string 
 
 const Executive = () => {
   const { user } = useAuth();
-  const { currentOrgId } = useOrganization();
-  const { datasetId: activeDatasetId, datasetName: activeDatasetName } = useActiveDataContext();
+  const { orgId: currentOrgId, datasetId: activeDatasetId, datasetName: activeDatasetName } = useActiveDataContext();
   const { tier } = useSubscription();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -211,7 +211,8 @@ const Executive = () => {
   const [emailInput, setEmailInput] = useState("");
   const [savingPrefs, setSavingPrefs] = useState(false);
 
-  const isGated = !tier || tier === "starter";
+  const isDemoUser = Boolean(user?.user_metadata?.is_demo);
+  const isGated = !isDemoUser && (!tier || tier === "starter");
 
   // Fetch persistent data
   const fetchSignalData = useCallback(async () => {
@@ -228,7 +229,7 @@ const Executive = () => {
     if (risk) {
       setRiskIndex({
         score: risk.score,
-        components: risk.components as any,
+        components: risk.components as RiskIndex["components"],
         last_updated: risk.last_updated,
         escalation_required: risk.escalation_required,
         escalation_reason: risk.escalation_reason ?? undefined,
@@ -248,8 +249,8 @@ const Executive = () => {
     if (prefs) {
       setNotifPrefs({
         email_enabled: prefs.email_enabled,
-        email_recipients: (prefs as any).email_recipients || [],
-        slack_webhook_url: (prefs as any).slack_webhook_url || "",
+        email_recipients: ((prefs as Record<string, unknown>).email_recipients as string[]) || [],
+        slack_webhook_url: ((prefs as Record<string, unknown>).slack_webhook_url as string) || "",
         slack_enabled: prefs.slack_enabled,
         alert_threshold: prefs.alert_threshold,
         weekly_brief_enabled: prefs.weekly_brief_enabled,
@@ -266,7 +267,7 @@ const Executive = () => {
       .eq("status", "active")
       .order("created_at", { ascending: false });
 
-    setDbAlerts((alerts as any) || []);
+    setDbAlerts((alerts as DbAlert[]) || []);
 
     // Fetch brief history
     const { data: history } = await supabase
@@ -277,7 +278,7 @@ const Executive = () => {
       .order("generated_at", { ascending: false })
       .limit(10);
 
-    setBriefHistory((history as any) || []);
+    setBriefHistory((history as Array<{ id: string; role_type: string; risk_score: number; generated_by: string; generated_at: string }>) || []);
   }, [currentOrgId, activeRole, isGated]);
 
   // Reset state when dataset changes
@@ -296,22 +297,23 @@ const Executive = () => {
     if (!currentOrgId) return;
     setSignalsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("compute-executive-signals", {
+      const { data, error } = await invokeWithRetry<Record<string, unknown>>("compute-executive-signals", {
         body: { role_type: activeRole, organization_id: currentOrgId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) throw new Error(String(data.error));
 
       setRiskIndex({
-        score: data.overall_score,
-        components: data.components,
-        last_updated: data.computed_at,
+        score: data?.overall_score as number,
+        components: data?.components as RiskIndex["components"],
+        last_updated: data?.computed_at as string,
       });
-      setDbAlerts(data.triggered_alerts || []);
-      toast({ title: "Signals computed", description: `Risk score: ${data.overall_score}/100` });
+      setDbAlerts((data?.triggered_alerts as DbAlert[]) || []);
+      toast({ title: "Signals computed", description: `Risk score: ${data?.overall_score}/100` });
       fetchSignalData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally {
       setSignalsLoading(false);
     }
@@ -331,8 +333,9 @@ const Executive = () => {
         .upsert(payload, { onConflict: "organization_id,role_type" });
       if (error) throw error;
       toast({ title: "Saved", description: "Notification preferences updated" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally {
       setSavingPrefs(false);
     }
@@ -354,18 +357,20 @@ const Executive = () => {
     setLoading(true);
     setBrief(null);
     try {
-      const { data, error } = await supabase.functions.invoke("executive-brief", {
+      const { data, error } = await invokeWithRetry<Brief>("executive-brief", {
         body: { role_type: activeRole, organization_id: currentOrgId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setBrief(data as Brief);
-      if (data.cached) {
+      const rawData = data as unknown as Record<string, unknown> | null;
+      if (rawData?.error) throw new Error(String(rawData.error));
+      if (data) setBrief(data);
+      if (rawData?.cached) {
         toast({ title: "Cached brief loaded", description: "Recent brief returned (< 6 hours old)" });
       }
       fetchSignalData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message || "Failed to generate brief", variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast({ title: "Error", description: msg || "Failed to generate brief", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -382,8 +387,8 @@ const Executive = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <SidebarMobileToggle />
-              <h1 className="text-3xl font-bold tracking-tight">Executive Command</h1>
-              <p className="text-muted-foreground mt-1">Strategic Health Monitoring & AI Intelligence</p>
+              <h1 className="text-[18px] font-bold tracking-tight">Executive Command</h1>
+              <p className="text-muted-foreground mt-1">Strategic Health Monitoring</p>
             </div>
             <div className="flex items-center gap-3">
               {riskIndex?.escalation_required && (
@@ -441,9 +446,9 @@ const Executive = () => {
             <Card className="border-dashed border-2 border-muted-foreground/20">
               <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
                 <Lock className="w-12 h-12 text-muted-foreground" />
-                <h2 className="text-xl font-semibold">Upgrade to Growth or Enterprise</h2>
+                <h2 className="text-[16px] font-semibold">Upgrade to Growth or Enterprise</h2>
                 <p className="text-muted-foreground text-center max-w-md">
-                  Executive Command Mode provides AI-powered strategic intelligence tailored to each C-suite role.
+                  AI-powered strategic intelligence tailored to each C-suite role.
                 </p>
                 <Button onClick={() => window.location.href = "/pricing"}>View Plans</Button>
               </CardContent>
@@ -567,7 +572,11 @@ const Executive = () => {
                         {briefHistory.map((b) => (
                           <div key={b.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30">
                             <div>
-                              <p className="text-xs font-semibold capitalize">{b.generated_by}</p>
+                              <p className="text-xs font-semibold">
+                                {b.generated_by === "Ai" || b.generated_by === "ai" ? "AI Brief" :
+                                 b.generated_by === "manual" ? "Manual" :
+                                 b.generated_by ? b.generated_by.charAt(0).toUpperCase() + b.generated_by.slice(1) : "Brief"}
+                              </p>
                               <p className="text-xs text-muted-foreground">
                                 {new Date(b.generated_at).toLocaleDateString()} {new Date(b.generated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                               </p>
@@ -688,7 +697,7 @@ const Executive = () => {
                                     <span className="text-xs text-muted-foreground">{status.label}</span>
                                   </div>
                                 </div>
-                                <p className="text-2xl font-bold">{snap.value}</p>
+                                <p className="text-[18px] font-semibold tracking-tight">{snap.value}</p>
                                 <div className="flex items-center gap-1 mt-1">
                                   {trendUp ? (
                                     <TrendingUp className="w-4 h-4 text-success" />
@@ -897,6 +906,7 @@ const Executive = () => {
               </TabsContent>
 
               <TabsContent value="copilot">
+                <SectionErrorBoundary sectionName="Executive Copilot">
                 <ExecutiveCopilot
                   organizationId={currentOrgId!}
                   roleType={activeRole}
@@ -905,22 +915,27 @@ const Executive = () => {
                   datasetId={activeDatasetId ?? undefined}
                   datasetName={activeDatasetName}
                 />
+                </SectionErrorBoundary>
               </TabsContent>
 
               <TabsContent value="simulation">
+                <SectionErrorBoundary sectionName="Strategic Simulation">
                 <StrategicSimulation
                   organizationId={currentOrgId!}
                   datasetId={activeDatasetId!}
                   roleType={activeRole}
                   tier={tier}
                 />
+                </SectionErrorBoundary>
               </TabsContent>
 
               <TabsContent value="convergence">
+                <SectionErrorBoundary sectionName="Executive Convergence">
                 <ExecutiveConvergence
                   organizationId={currentOrgId!}
                   tier={tier}
                 />
+                </SectionErrorBoundary>
               </TabsContent>
             </Tabs>
           )}

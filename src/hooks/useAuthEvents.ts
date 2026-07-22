@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
+import { captureError } from "@/lib/sentry";
 
 export type AuthEventType =
   | "login"
@@ -42,17 +43,20 @@ export function useAuthEvents() {
       if (!effectiveUserId) return;
 
       try {
-        await supabase.from("auth_events" as any).insert({
+        await supabase.from("auth_events").insert([{
           user_id: effectiveUserId,
           organization_id: currentOrgId,
           event_type: eventType,
           user_agent: navigator.userAgent,
-          metadata,
+          metadata: JSON.parse(JSON.stringify(metadata)),
           risk_score: riskScore,
-        });
-      } catch {
-        // Non-blocking: auth event logging should never break the flow
+        }]);
+      } catch (err) {
         console.warn("Failed to log auth event:", eventType);
+        captureError(
+          err instanceof Error ? err : new Error(`Auth event logging failed: ${eventType}`),
+          { eventType, context: "useAuthEvents" }
+        );
       }
     },
     [user?.id, currentOrgId]

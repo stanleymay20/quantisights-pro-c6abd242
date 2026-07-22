@@ -43,7 +43,7 @@ serve(async (req) => {
       limit: 5,
     });
     const activeSubs = subscriptions.data.filter(
-      (s) => s.status === "active" || s.status === "trialing"
+      (s: any) => s.status === "active" || s.status === "trialing"
     );
 
     const hasActiveSub = activeSubs.length > 0;
@@ -56,6 +56,39 @@ serve(async (req) => {
       subscriptionEnd = new Date(subscription.current_period_end * 1000).toISOString();
       productId = subscription.items.data[0].price.product as string;
       isTrial = subscription.status === "trialing";
+
+      // Reconcile: stripe-webhook's invoice.payment_succeeded/
+      // customer.subscription.updated handlers keep current_period_end
+      // current going forward, but a missed or never-configured webhook
+      // leaves the row stuck at whatever it was last set to -- with no
+      // self-heal until some future event happens to fire. This function
+      // is called on every Billing page load (and in the background by
+      // useSubscription), so use it to also correct drift directly
+      // against Stripe, the source of truth. Only write when something
+      // actually changed -- useSubscription's realtime subscription
+      // re-runs on any UPDATE regardless of whether values changed, and
+      // it re-invokes this function whenever the subscription is active,
+      // so an unconditional write would loop forever.
+      const { data: existing } = await supabaseClient
+        .from("subscriptions")
+        .select("status, current_period_end, cancel_at_period_end")
+        .eq("stripe_subscription_id", subscription.id)
+        .maybeSingle();
+      const driftDetected = !existing
+        || existing.status !== subscription.status
+        || existing.current_period_end !== subscriptionEnd
+        || existing.cancel_at_period_end !== subscription.cancel_at_period_end;
+      if (driftDetected) {
+        const { error: reconcileErr } = await supabaseClient
+          .from("subscriptions")
+          .update({
+            status: subscription.status,
+            current_period_end: subscriptionEnd,
+            cancel_at_period_end: subscription.cancel_at_period_end,
+          })
+          .eq("stripe_subscription_id", subscription.id);
+        if (reconcileErr) console.error("[check-subscription] reconcile error:", reconcileErr.message);
+      }
     }
 
     return new Response(JSON.stringify({
@@ -68,7 +101,7 @@ serve(async (req) => {
       status: 200,
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: (error instanceof Error ? error.message : String(error)) }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
     });

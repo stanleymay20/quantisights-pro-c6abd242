@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, ReactNode } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,11 +12,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Shield } from "lucide-react";
 
-interface DecisionResponsibilityDialogProps {
+export interface DecisionResponsibilityDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   actionLabel: string;
   onConfirm: () => void;
+  children?: ReactNode;
 }
 
 const DecisionResponsibilityDialog = ({
@@ -24,6 +25,7 @@ const DecisionResponsibilityDialog = ({
   onOpenChange,
   actionLabel,
   onConfirm,
+  children,
 }: DecisionResponsibilityDialogProps) => {
   const [ack1, setAck1] = useState(false);
   const [ack2, setAck2] = useState(false);
@@ -72,6 +74,8 @@ const DecisionResponsibilityDialog = ({
             </span>
           </label>
         </div>
+
+        {children}
 
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => { setAck1(false); setAck2(false); }}>

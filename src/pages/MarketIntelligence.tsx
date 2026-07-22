@@ -8,12 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import {
   Globe, Loader2, RefreshCw, TrendingUp, TrendingDown,
   AlertTriangle, Zap, Shield, BarChart3, Minus,
 } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Signal {
   category: string;
@@ -96,16 +98,16 @@ const MarketIntelligence = () => {
     setLoading(true);
     try {
       const topics = customTopics ? customTopics.split(",").map(t => t.trim()) : [];
-      const { data: result, error } = await supabase.functions.invoke("fetch-market-signals", {
+      const { data: result, error } = await invokeWithRetry<MarketData>("fetch-market-signals", {
         body: { organization_id: currentOrgId, dataset_id: activeDatasetId, industry, topics },
       });
       if (error) throw error;
-      if (result?.error) throw new Error(result.error);
-      setData(result);
+      if ((result as unknown as any)?.error) throw new Error(String((result as unknown as any).error));
+      if (result) setData(result);
       fetchStoredSignals();
       toast({ title: "Market signals updated" });
-    } catch (e: any) {
-      toast({ title: "Failed to fetch signals", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Signals unavailable", description: "Market signal generation is temporarily unavailable. Please try again in a moment or contact support if the issue persists.", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -127,10 +129,11 @@ const MarketIntelligence = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <Globe className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Market Intelligence</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Market Intelligence</h1>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Market Intelligence">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Controls */}
           <Card>
@@ -160,6 +163,19 @@ const MarketIntelligence = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Empty state */}
+          {!data && !loading && (
+            <Card>
+              <CardContent className="p-12 flex flex-col items-center text-center gap-3">
+                <Globe className="w-10 h-10 text-muted-foreground/40" />
+                <p className="text-sm font-medium text-muted-foreground">No signals fetched yet</p>
+                <p className="text-xs text-muted-foreground/70 max-w-xs leading-relaxed">
+                  Select an industry sector and click "Fetch Signals" to generate AI-powered market intelligence signals for your sector.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Market Sentiment */}
           {data && (
@@ -260,11 +276,11 @@ const MarketIntelligence = () => {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {storedSignals.slice(0, 10).map((s: any) => (
+                  {storedSignals.slice(0, 10).map((s) => (
                     <div key={s.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/30">
                       <div>
-                        <p className="text-sm font-medium">{(s.data as any)?.title || s.signal_type}</p>
-                        <p className="text-xs text-muted-foreground">{(s.data as any)?.summary?.slice(0, 100)}</p>
+                        <p className="text-sm font-medium">{(s.data as any)?.title as string || s.signal_type}</p>
+                        <p className="text-xs text-muted-foreground">{((s.data as any)?.summary as string)?.slice(0, 100)}</p>
                       </div>
                       <span className="text-[10px] text-muted-foreground">{new Date(s.fetched_at).toLocaleDateString()}</span>
                     </div>
@@ -274,6 +290,7 @@ const MarketIntelligence = () => {
             </Card>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

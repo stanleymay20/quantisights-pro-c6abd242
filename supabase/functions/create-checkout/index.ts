@@ -3,7 +3,11 @@ import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 
+// P0 FIX: Added live production domains (www.quantivis.io + quantivis.io)
+// Previously missing — redirect after payment went to wrong URL
 const ALLOWED_ORIGINS = [
+  "https://www.quantivis.io",
+  "https://quantivis.io",
   "https://quantisights-pro.lovable.app",
   "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app",
   "http://localhost:5173",
@@ -12,8 +16,9 @@ const ALLOWED_ORIGINS = [
 
 function getAllowedOrigin(req: Request): string {
   const origin = req.headers.get("origin") || "";
-  if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) return origin;
-  return ALLOWED_ORIGINS[0]; // fallback to production
+  const match = ALLOWED_ORIGINS.find(o => origin.startsWith(o));
+  // Always prefer the actual origin if it's in the allowlist
+  return match ? origin : "https://www.quantivis.io";
 }
 
 serve(async (req) => {
@@ -26,13 +31,15 @@ serve(async (req) => {
   );
 
   try {
-    const authHeader = req.headers.get("Authorization")!;
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("No authorization header provided");
     const token = authHeader.replace("Bearer ", "");
     const { data } = await supabaseClient.auth.getUser(token);
     const user = data.user;
     if (!user?.email) throw new Error("User not authenticated");
 
-    const { priceId } = await req.json();
+    const body = await req.json();
+    const { priceId, wantsAnnual } = body as { priceId: string; wantsAnnual?: boolean };
     if (!priceId) throw new Error("priceId is required");
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
@@ -53,18 +60,34 @@ serve(async (req) => {
         limit: 10,
       });
       hadTrial = existingSubs.data.some(
-        (s) => s.trial_start !== null || s.status === "trialing"
+        (s: any) => s.trial_start !== null || s.status === "trialing"
       );
     }
+
+    const allowedOrigin = getAllowedOrigin(req);
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : user.email,
       line_items: [{ price: priceId, quantity: 1 }],
       mode: "subscription",
-      subscription_data: hadTrial ? undefined : { trial_period_days: 14 },
-      success_url: `${getAllowedOrigin(req)}/dashboard?checkout=success`,
-      cancel_url: `${getAllowedOrigin(req)}/pricing`,
+      // Stripe Tax — handles EU VAT, German USt, UK VAT, US sales tax automatically
+      automatic_tax: { enabled: true },
+      // Allow customers to update billing address (needed for tax calculation)
+      customer_update: customerId ? { address: "auto" } : undefined,
+      // Stripe handles local payment methods where supported
+      payment_method_collection: "if_required",
+      subscription_data: {
+        ...(hadTrial ? {} : { trial_period_days: 14 }),
+        // Tag if customer wanted annual so sales team can follow up
+        metadata: { wants_annual: wantsAnnual ? "true" : "false", source: "quantivis_web" },
+      },
+      // Promotional codes — allows discount codes at checkout
+      allow_promotion_codes: true,
+      success_url: `${allowedOrigin}/dashboard?checkout=success`,
+      cancel_url: `${allowedOrigin}/pricing`,
+      // Collect billing address for tax purposes
+      billing_address_collection: "required",
     });
 
     return new Response(JSON.stringify({ url: session.url }), {
@@ -72,7 +95,7 @@ serve(async (req) => {
       status: 200,
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: (error instanceof Error ? error.message : String(error)) }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
     });

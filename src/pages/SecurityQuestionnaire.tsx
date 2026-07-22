@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { useSeoHead } from "@/lib/useSeoHead";
 
 interface QAItem {
   id: string;
@@ -41,7 +43,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
     icon: KeyRound,
     items: [
       { id: "AC-1", question: "What authentication mechanisms are supported?", answer: "Email/password authentication with mandatory password strength validation (including HaveIBeenPwned breach database checking). JWT-based session management with automatic token refresh. No anonymous sign-ups are permitted." },
-      { id: "AC-2", question: "Is multi-factor authentication (MFA) supported and enforced?", answer: "Yes. MFA is enforced at the route level using AAL2 (Authenticator Assurance Level 2). Users must complete a TOTP-based second-factor challenge to access protected pages. There is no application-level mechanism to bypass MFA." },
+      { id: "AC-2", question: "Is multi-factor authentication (MFA) supported and enforced?", answer: "MFA is available when configured. Organizations can require AAL2 (Authenticator Assurance Level 2) for protected routes; enrolled users then complete a TOTP-based second-factor challenge before access. Enforcement evidence is tenant-specific and must be verified from organization settings and authentication logs." },
       { id: "AC-3", question: "How is role-based access control implemented?", answer: "Five roles are supported: Owner, Admin, Executive, Analyst, and Viewer. Roles are stored in a dedicated user_roles table (not on the profile). Access is enforced at the database layer via RLS policies using security-definer functions, preventing privilege escalation." },
       { id: "AC-4", question: "Are there least-privilege controls for sensitive data?", answer: "Yes. Strategic tables (decision_ledger, advisory_instances, decision_simulations, executive_modes, executive_briefs) use RESTRICTIVE RLS policies limiting access to Owner, Admin, and Executive roles. Viewers and Analysts cannot access strategic intelligence." },
     ],
@@ -95,8 +97,15 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
   },
 ];
 
-const SecurityQuestionnaire = () => (
-  <div className="min-h-screen bg-background">
+const SecurityQuestionnaire = () => {
+  useSeoHead({
+    title: "Security Questionnaire | Quantivis",
+    description: "Pre-answered Quantivis security questionnaire covering governance, data protection, access controls, infrastructure, audit logging, incident response, and AI governance.",
+    canonicalPath: "/security-questionnaire",
+  });
+
+  return (
+  <div className="min-h-dvh bg-background flex flex-col">
     <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30 print:hidden">
       <div className="container mx-auto px-6 h-14 flex items-center justify-between">
         <Link to="/"><img src={logo} alt="Quantivis Global" className="h-8" /></Link>
@@ -114,14 +123,15 @@ const SecurityQuestionnaire = () => (
       </div>
     </header>
 
-    <main className="container mx-auto px-6 py-16 max-w-4xl">
+    <SectionErrorBoundary sectionName="Security Questionnaire">
+        <main className="flex-1 container mx-auto px-6 py-16 max-w-4xl">
       {/* Header */}
       <div className="mb-12">
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium mb-4">
           <Shield className="w-3.5 h-3.5" />
           Enterprise Security Questionnaire
         </div>
-        <h1 className="text-3xl md:text-4xl font-bold font-display mb-3 tracking-tight">
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-3 tracking-tight">
           Security Questionnaire Responses
         </h1>
         <p className="text-muted-foreground leading-relaxed max-w-2xl">
@@ -220,7 +230,7 @@ const SecurityQuestionnaire = () => (
               <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                 <section.icon className="w-4.5 h-4.5 text-primary" />
               </div>
-              <h2 className="text-xl font-bold font-display">{section.title}</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight tracking-tight">{section.title}</h2>
             </div>
 
             <div className="space-y-4">
@@ -244,7 +254,7 @@ const SecurityQuestionnaire = () => (
 
       {/* Related Documents */}
       <div className="mt-16 rounded-xl border border-primary/20 bg-primary/5 p-8">
-        <h2 className="text-lg font-bold font-display mb-2">Supporting Documentation</h2>
+        <h2 className="text-lg font-bold tracking-tight mb-2">Supporting Documentation</h2>
         <p className="text-sm text-muted-foreground mb-6">
           The following documents are publicly available and supplement this questionnaire.
         </p>
@@ -282,6 +292,7 @@ const SecurityQuestionnaire = () => (
         </p>
       </div>
     </main>
+        </SectionErrorBoundary>
 
     <footer className="border-t border-border/30 py-8 mt-16 print:hidden">
       <div className="container mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -295,6 +306,7 @@ const SecurityQuestionnaire = () => (
       </div>
     </footer>
   </div>
-);
+  );
+};
 
 export default SecurityQuestionnaire;

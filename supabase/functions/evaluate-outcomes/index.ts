@@ -2,6 +2,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { createLogger } from "../_shared/logger.ts";
 import { cronGuard } from "../_shared/cron-guard.ts";
+import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
+
+const RUN_INTERVAL_MS = 60 * 60 * 1000; // outcome evaluation cadence
 
 Deno.serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -17,23 +20,8 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action, organization_id, dataset_id, decision_id, outcome_id } = body;
 
-    // ── CRON: evaluate_all processes all orgs — requires service-role auth ──
+    // ── CRON: evaluate_all processes all orgs — protected by advisory lock ──
     if (action === "evaluate_all" && body.cron === true) {
-      // Verify caller is service-role (cron) — reject anon/user tokens
-      const authHeader = req.headers.get("Authorization");
-      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-      if (!authHeader || !authHeader.includes(serviceKey)) {
-        const callerClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-          global: { headers: { Authorization: authHeader || "" } },
-        });
-        const { data: { user: cronUser } } = await callerClient.auth.getUser();
-        if (cronUser) {
-          return new Response(JSON.stringify({ error: "Forbidden: cron endpoint requires service-role" }), {
-            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-      }
-
       // Advisory lock — prevent overlapping cron runs
       const guard = await cronGuard("evaluate-outcomes");
       if (!guard.acquired) return guard.earlyResponse(corsHeaders);
@@ -42,7 +30,19 @@ Deno.serve(async (req) => {
       const { data: orgs } = await supabase.from("organizations").select("id");
       let totalEvaluated = 0;
 
-      for (const org of (orgs || [])) {
+      // Bound the org loop to the invocation's wall-clock budget, and
+      // rotate the starting point each tick so a sustained overload
+      // doesn't permanently starve whichever orgs sort last -- safe
+      // since a pending outcome stays pending until it's actually
+      // evaluated, so a skipped org is simply retried next tick.
+      const cronStartedAt = Date.now();
+      const deadline = makeDeadline(cronStartedAt);
+      const rotatedOrgs = rotateForFairness(orgs || [], cronStartedAt, RUN_INTERVAL_MS);
+      let orgsProcessed = 0;
+
+      for (const org of rotatedOrgs) {
+        if (deadline.expired()) break;
+        orgsProcessed++;
         const { data: pending } = await supabase
           .from("decision_outcomes")
           .select("*, decision_ledger!inner(decided_at, organization_id)")
@@ -63,18 +63,40 @@ Deno.serve(async (req) => {
           const windowEnd = new Date(decidedAt.getTime() + outcome.evaluation_window_days * 86400000);
           if (now < windowEnd) continue;
 
-          if (!outcome.dataset_id) {
-            immediateUpdates.push({
-              id: outcome.id,
-              update: {
-                outcome_status: "not_evaluable",
-                evaluation_date: now.toISOString(),
-                notes: "No dataset_id linked — cannot measure outcome.",
-              },
-            });
-            totalEvaluated++;
-            continue;
+          // If no dataset_id, try to find the most recent active dataset for this org
+          let effectiveDatasetId = outcome.dataset_id;
+          if (!effectiveDatasetId) {
+            const { data: latestDataset } = await supabase
+              .from("datasets")
+              .select("id")
+              .eq("organization_id", org.id)
+              .eq("status", "active")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (latestDataset?.id) {
+              effectiveDatasetId = latestDataset.id;
+              // Also update the outcome record with the resolved dataset_id
+              await supabase.from("decision_outcomes")
+                .update({ dataset_id: effectiveDatasetId })
+                .eq("id", outcome.id);
+            } else {
+              immediateUpdates.push({
+                id: outcome.id,
+                update: {
+                  outcome_status: "not_evaluable",
+                  evaluation_date: now.toISOString(),
+                  notes: "No dataset found in organization — cannot measure outcome.",
+                },
+              });
+              totalEvaluated++;
+              continue;
+            }
           }
+
+          // Use effectiveDatasetId from here on
+          outcome.dataset_id = effectiveDatasetId;
 
           const key = `${outcome.dataset_id}:${outcome.expected_metric}`;
           if (!metricQueries.has(key)) {
@@ -193,9 +215,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      log.info("Cron batch evaluation complete", { totalEvaluated });
-      await guard.succeed({ evaluated: totalEvaluated });
-      return new Response(JSON.stringify({ success: true, evaluated: totalEvaluated }), {
+      const truncated = orgsProcessed < rotatedOrgs.length;
+      log.info("Cron batch evaluation complete", { totalEvaluated, orgsProcessed, orgsTotal: rotatedOrgs.length, truncated });
+      await guard.succeed({ evaluated: totalEvaluated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated });
+      return new Response(JSON.stringify({ success: true, evaluated: totalEvaluated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

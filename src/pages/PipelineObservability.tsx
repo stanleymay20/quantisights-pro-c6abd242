@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from "recharts";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "text-success",
@@ -35,6 +37,7 @@ export default function PipelineObservability() {
   const [syncJobs, setSyncJobs] = useState<any[]>([]);
   const [dataSources, setDataSources] = useState<any[]>([]);
   const [qualityChecks, setQualityChecks] = useState<any[]>([]);
+  const [aicisSurfaces, setAicisSurfaces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -63,18 +66,27 @@ export default function PipelineObservability() {
       qualityQuery = qualityQuery.eq("dataset_id", activeDatasetId);
     }
 
-    const [jobsRes, sourcesRes, qualityRes] = await Promise.all([
+    const [jobsRes, sourcesRes, qualityRes, aicisRes] = await Promise.all([
       jobsQuery,
       supabase.from("data_sources")
         .select("*")
         .eq("organization_id", organizationId)
         .order("created_at", { ascending: false }),
       qualityQuery,
+      // AICIS Bridge syncs are tracked in aicis_sync_surface_status, not
+      // data_sync_jobs -- without this, a surface-level outage (e.g. one
+      // surface's circuit breaker open after repeated failures) was
+      // completely invisible here, and the empty data_sync_jobs result for
+      // that integration made successRate default to a false 100%.
+      supabase.from("aicis_sync_surface_status")
+        .select("surface, consecutive_failures, circuit_breaker_until, last_status")
+        .eq("organization_id", organizationId),
     ]);
 
     setSyncJobs(jobsRes.data || []);
     setDataSources(sourcesRes.data || []);
     setQualityChecks(qualityRes.data || []);
+    setAicisSurfaces(aicisRes.data || []);
     setLoading(false);
   };
 
@@ -84,7 +96,6 @@ export default function PipelineObservability() {
   const completedJobs = recentJobs.filter(j => j.status === "completed");
   const failedJobs = recentJobs.filter(j => j.status === "failed");
   const totalRecords = completedJobs.reduce((s, j) => s + (j.records_synced || 0), 0);
-  const successRate = recentJobs.length > 0 ? Math.round((completedJobs.length / recentJobs.length) * 100) : 100;
   const avgLatency = completedJobs.length > 0
     ? Math.round(completedJobs.reduce((s, j) => {
         const start = new Date(j.started_at || j.created_at).getTime();
@@ -93,7 +104,24 @@ export default function PipelineObservability() {
       }, 0) / completedJobs.length / 1000)
     : 0;
 
-  const healthStatus = failedJobs.length === 0 ? "healthy" : failedJobs.length < 3 ? "degraded" : "critical";
+  // A surface counts as degraded once its circuit breaker is open (same
+  // threshold Bridge Health uses) -- a stale cooldown timer with a high
+  // consecutive-failure count still means the breaker is effectively
+  // tripped, so check both.
+  const now = Date.now();
+  const degradedAicisSurfaces = aicisSurfaces.filter(s =>
+    (s.circuit_breaker_until && new Date(s.circuit_breaker_until).getTime() > now) ||
+    (s.consecutive_failures ?? 0) >= 3
+  );
+  const healthyAicisSurfaces = aicisSurfaces.length - degradedAicisSurfaces.length;
+
+  const totalFailures = failedJobs.length + degradedAicisSurfaces.length;
+  const totalAttempts = recentJobs.length + aicisSurfaces.length;
+  const successRate = totalAttempts > 0
+    ? Math.round(((completedJobs.length + healthyAicisSurfaces) / totalAttempts) * 100)
+    : 100;
+
+  const healthStatus = totalFailures === 0 ? "healthy" : totalFailures < 3 ? "degraded" : "critical";
   const healthColor = healthStatus === "healthy" ? "text-green-500" : healthStatus === "degraded" ? "text-yellow-500" : "text-destructive";
 
   // Charts data
@@ -111,20 +139,21 @@ export default function PipelineObservability() {
     };
   });
 
-  const sourceTypeData = dataSources.reduce((acc: any[], ds) => {
+  const sourceTypeData = dataSources.reduce((acc: Array<{ name: string; count: number }>, ds) => {
     const existing = acc.find(a => a.name === ds.source_type);
-    if (existing) existing.value++;
-    else acc.push({ name: ds.source_type, value: 1 });
+    if (existing) existing.count++;
+    else acc.push({ name: ds.source_type, count: 1 });
     return acc;
   }, []);
 
   const PIE_COLORS = ["hsl(var(--primary))", "hsl(var(--accent))", "hsl(var(--secondary))", "#22c55e", "#f59e0b"];
 
   return (
+    <SectionErrorBoundary sectionName="Pipeline Observability">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Pipeline Observability</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight tracking-tight">Pipeline Observability</h1>
           <p className="text-muted-foreground">Real-time monitoring of data ingestion, sync health, and quality.</p>
         </div>
         <Button onClick={loadData} variant="outline" size="sm">
@@ -181,15 +210,32 @@ export default function PipelineObservability() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <AlertTriangle className={`h-8 w-8 ${failedJobs.length > 0 ? "text-destructive" : "text-muted-foreground"}`} />
+              <AlertTriangle className={`h-8 w-8 ${totalFailures > 0 ? "text-destructive" : "text-muted-foreground"}`} />
               <div>
-                <p className="text-sm text-muted-foreground">Failures (24h)</p>
-                <p className="text-xl font-bold">{failedJobs.length}</p>
+                <p className="text-sm text-muted-foreground">Failures</p>
+                <p className="text-xl font-bold">{totalFailures}</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {degradedAicisSurfaces.length > 0 && (
+        <Card className="border-destructive/30 bg-destructive/[0.03]">
+          <CardContent className="pt-6 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
+              <p className="text-sm">
+                {degradedAicisSurfaces.length} AICIS Bridge surface{degradedAicisSurfaces.length > 1 ? "s" : ""}
+                {" "}({degradedAicisSurfaces.map(s => s.surface).join(", ")}) {degradedAicisSurfaces.length > 1 ? "have" : "has"} an open circuit breaker.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/admin/bridge-health">View Bridge Health</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="jobs">
         <TabsList>
@@ -417,5 +463,6 @@ export default function PipelineObservability() {
         </TabsContent>
       </Tabs>
     </div>
+    </SectionErrorBoundary>
   );
 }

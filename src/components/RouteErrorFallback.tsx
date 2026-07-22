@@ -27,7 +27,7 @@ const RouteErrorFallback = ({ error, resetError }: Props) => {
           <AlertTriangle className="w-7 h-7 text-destructive" />
         </div>
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-foreground">This page encountered an error</h2>
+          <h2 className="text-[16px] font-semibold text-foreground">This page encountered an error</h2>
           <p className="text-sm text-muted-foreground">
             {error?.message || "An unexpected error occurred while loading this page."}
           </p>

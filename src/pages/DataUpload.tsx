@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,9 +7,12 @@ import { useProject } from "@/contexts/ProjectContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
+import { embedInsightsBatch } from "@/lib/decision-lifecycle";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import {
   Upload, FileSpreadsheet, ArrowRight, Check, X,
@@ -28,6 +31,27 @@ import {
   classifyDataset, confidenceColor, qualityColor, humanizeError, parseCSVText,
   slugifyMetric, deduplicateMetricSlugs,
 } from "@/lib/data-upload-utils";
+import {
+  type ParsedWorkbook,
+  type WorkbookSheet,
+  isSupportedDataFile,
+  isWorkbookFile,
+  parseWorkbookFile,
+} from "@/lib/workbook-parser";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { useChunkedIngestion } from "@/hooks/useChunkedIngestion";
+import IngestionProgressCard from "@/components/upload/IngestionProgressCard";
+import PostUploadSummary from "@/components/upload/PostUploadSummary";
+import MappingIntelligencePanel from "@/components/upload/MappingIntelligencePanel";
+import { buildIngestionIntelligence, type IngestionIntelligenceResult } from "@/lib/ingestion-intelligence";
+import { toIngestionMetadataSnapshot } from "@/lib/ingestion-metadata";
+import { discoverCrossSheetRelationships, type CrossSheetDiscoveryResult } from "@/lib/cross-sheet-discovery";
+import {
+  buildSnapshot,
+  detectDrift,
+  type DriftReport,
+  type SchemaColumn,
+} from "@/lib/schema-evolution";
 
 type Step = "upload" | "autodetect" | "mapping" | "validation" | "intelligence" | "importing" | "done";
 
@@ -72,6 +96,17 @@ const DataUpload = () => {
   const [importMode, setImportMode] = useState<ImportMode>("single");
   const [diagnostics, setDiagnostics] = useState<DatasetDiagnostics | null>(null);
   const [classification, setClassification] = useState<DatasetClassification | null>(null);
+  const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null);
+  const [activeSheetName, setActiveSheetName] = useState<string | null>(null);
+  const [drift, setDrift] = useState<DriftReport | null>(null);
+  const [ingestionIntel, setIngestionIntel] = useState<IngestionIntelligenceResult | null>(null);
+  const [crossSheet, setCrossSheet] = useState<CrossSheetDiscoveryResult | null>(null);
+  const lastFileRef = useRef<File | null>(null);
+
+  // Phase 4: chunked worker-driven ingestion. Used for CSVs ≥ 1 MB so the UI
+  // stays responsive on multi-100k-row uploads. Small CSVs keep the sync path.
+  const ingestion = useChunkedIngestion();
+
 
   const valueColumnCount = useMemo(() => {
     return Object.values(mapping).filter(v => v === "value").length;
@@ -81,9 +116,22 @@ const DataUpload = () => {
     return Object.values(mapping).filter(v => v === "date").length;
   }, [mapping]);
 
-  const handleParse = useCallback((text: string) => {
-    const { headers: hdrs, rows: dataRows } = parseCSVText(text);
+  // Shared post-parse pipeline. Accepts already-parsed headers + rows so both
+  // CSV text and workbook sheets feed into the same inference/classification.
+  const ingestParsed = useCallback((hdrs: string[], dataRows: string[][]) => {
     if (hdrs.length === 0) return;
+
+    // Large-dataset guard: route >50k rows to the server-side pipeline rather
+    // than freeze the browser. We still let smaller-than-50k workbooks through.
+    if (dataRows.length > 50_000) {
+      toast({
+        title: "Large dataset detected",
+        description: `${dataRows.length.toLocaleString()} rows exceeds the 50k browser limit. Use Data Connectors (Settings → Connectors) for server-side ingestion.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setHeaders(hdrs);
     setAllRows(dataRows);
     setRows(dataRows.slice(0, 100));
@@ -91,7 +139,6 @@ const DataUpload = () => {
     const schema = inferSchema(hdrs, dataRows);
     setDetectedSchema(schema);
 
-    // Build mapping keyed by colIdx
     const autoMap: ColumnMapping = {};
     schema.forEach(s => { autoMap[s.colIdx] = s.inferredType; });
     setMapping(autoMap);
@@ -103,48 +150,146 @@ const DataUpload = () => {
 
     const cls = classifyDataset(hdrs, autoMap);
     setClassification(cls);
-  }, []);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    // Phase 8: build full ingestion intelligence (locale, repair report,
+    // dictionary, similarity, semantic schema) so the mapping UI can surface it.
+    try {
+      const diag = computeDiagnostics(dataRows, hdrs, autoMap, schema);
+      const intel = buildIngestionIntelligence({
+        headers: hdrs,
+        rows: dataRows,
+        schema,
+        mapping: autoMap,
+        diagnostics: diag,
+      });
+      setIngestionIntel(intel);
+    } catch (err) {
+      console.warn("[DataUpload] buildIngestionIntelligence failed:", err);
+      setIngestionIntel(null);
+    }
+
+    setStep("autodetect");
+  }, [toast]);
+
+  const handleParse = useCallback((text: string) => {
+    const { headers: hdrs, rows: dataRows } = parseCSVText(text);
+    ingestParsed(hdrs, dataRows);
+  }, [ingestParsed]);
+
+  const loadWorkbookSheet = useCallback((wb: ParsedWorkbook, sheetName: string) => {
+    const sheet = wb.sheets.find(s => s.name === sheetName);
+    if (!sheet || sheet.headers.length === 0 || sheet.rows.length === 0) {
+      toast({ title: "Empty sheet", description: `"${sheetName}" has no usable data.`, variant: "destructive" });
+      return;
+    }
+    setActiveSheetName(sheetName);
+    setDatasetName(wb.sheetCount > 1 ? `${wb.workbookName} — ${sheetName}` : wb.workbookName);
+    ingestParsed(sheet.headers, sheet.rows);
+  }, [ingestParsed, toast]);
+
+  const handleWorkbookFile = useCallback(async (f: File) => {
+    try {
+      const parsed = await parseWorkbookFile(f);
+      const visibleSheets = parsed.sheets.filter(s => !s.hidden && s.rows.length > 0);
+      if (visibleSheets.length === 0) {
+        toast({ title: "No data sheets found", description: "Workbook contains no readable sheets.", variant: "destructive" });
+        return;
+      }
+      setWorkbook(parsed);
+      try {
+        setCrossSheet(discoverCrossSheetRelationships(parsed));
+      } catch (err) {
+        console.warn("[DataUpload] cross-sheet discovery failed:", err);
+        setCrossSheet(null);
+      }
+      if (visibleSheets.length === 1) {
+        loadWorkbookSheet(parsed, visibleSheets[0].name);
+      } else {
+        // Multi-sheet: open the first by default, user can switch via selector
+        loadWorkbookSheet(parsed, visibleSheets[0].name);
+      }
+    } catch (err) {
+      console.error("[DataUpload] workbook parse failed", err);
+      toast({ title: "Could not read workbook", description: String(err), variant: "destructive" });
+    }
+  }, [loadWorkbookSheet, toast]);
+
+  const acceptFile = useCallback((f: File) => {
     if (f.size > 20 * 1024 * 1024) {
       toast({ title: "File too large", description: "Maximum file size is 20MB.", variant: "destructive" });
       return;
     }
-    if (!f.name.endsWith(".csv")) {
-      toast({ title: "Invalid file type", description: "Only CSV files are supported.", variant: "destructive" });
+    if (!isSupportedDataFile(f.name)) {
+      toast({ title: "Unsupported file type", description: "Use CSV, XLSX, XLS, XLSM, or ODS.", variant: "destructive" });
       return;
     }
     setFile(f);
-    setDatasetName(f.name.replace(/\.csv$/i, ""));
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      handleParse(ev.target?.result as string);
-      setStep("autodetect");
-    };
-    reader.readAsText(f);
+    lastFileRef.current = f;
+    setWorkbook(null);
+    setActiveSheetName(null);
+    setDrift(null);
+    setIngestionIntel(null);
+    setCrossSheet(null);
+    if (isWorkbookFile(f.name)) {
+      setDatasetName(f.name.replace(/\.(xlsx|xls|xlsm|ods)$/i, ""));
+      handleWorkbookFile(f);
+    } else {
+      setDatasetName(f.name.replace(/\.csv$/i, ""));
+      // Phase 4: route large CSVs (>1MB) through the Web Worker pipeline so the
+      // UI thread stays free. Smaller files keep the fast synchronous path.
+      if (f.size > 1024 * 1024) {
+        ingestion.start(f).catch((err) => {
+          toast({
+            title: "Ingestion failed to start",
+            description: err instanceof Error ? err.message : String(err),
+            variant: "destructive",
+          });
+        });
+      } else {
+        const reader = new FileReader();
+        reader.onload = (ev) => handleParse(ev.target?.result as string);
+        reader.readAsText(f);
+      }
+    }
+  }, [handleParse, handleWorkbookFile, ingestion, toast]);
+
+  // Phase 4: when the worker finishes, feed parsed rows into the shared
+  // post-parse pipeline (inference + classification). When the dataset is
+  // routed to the server pipeline, surface a guidance toast instead.
+  useEffect(() => {
+    if (ingestion.status === "done") {
+      if (ingestion.shouldRouteToServer) {
+        toast({
+          title: "Routed to server pipeline",
+          description: `${(ingestion.progress.totalRowsEstimate ?? 0).toLocaleString()} rows exceeds the in-browser ceiling. Use Data Connectors to finish ingestion server-side.`,
+        });
+      } else if (ingestion.result) {
+        ingestParsed(ingestion.result.headers, ingestion.result.rows);
+      }
+    }
+    if (ingestion.status === "error" && ingestion.error) {
+      toast({ title: "Ingestion error", description: ingestion.error, variant: "destructive" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ingestion.status]);
+
+  const retryIngestion = useCallback(() => {
+    const last = lastFileRef.current;
+    if (!last) return;
+    ingestion.reset();
+    acceptFile(last);
+  }, [acceptFile, ingestion]);
+
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) acceptFile(f);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const f = e.dataTransfer.files[0];
-    if (!f || !f.name.endsWith(".csv")) {
-      toast({ title: "Only CSV files supported", variant: "destructive" });
-      return;
-    }
-    if (f.size > 20 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum 20MB.", variant: "destructive" });
-      return;
-    }
-    setFile(f);
-    setDatasetName(f.name.replace(/\.csv$/i, ""));
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      handleParse(ev.target?.result as string);
-      setStep("autodetect");
-    };
-    reader.readAsText(f);
+    if (f) acceptFile(f);
   };
 
   // Helper: find colIdx mapped to a target type
@@ -264,7 +409,7 @@ const DataUpload = () => {
     }
 
     try {
-      const diag = computeDiagnostics(allRows, headers, mapping);
+      const diag = computeDiagnostics(allRows, headers, mapping, detectedSchema);
       setDiagnostics(diag);
     } catch (err) {
       console.error("[DataUpload] computeDiagnostics threw:", err);
@@ -344,6 +489,9 @@ const DataUpload = () => {
       if (dsError) throw dsError;
 
       // Create dataset version
+      const ingestionMetadataSnapshot = ingestionIntel
+        ? toIngestionMetadataSnapshot(ingestionIntel, crossSheet)
+        : null;
       const { data: versionData } = await supabase.from("dataset_versions").insert({
         dataset_id: dataset.id,
         organization_id: currentOrgId,
@@ -355,10 +503,118 @@ const DataUpload = () => {
         change_summary: importMode === "multi" ? `Multi-metric import (${findAllMappedColIdx("value").length} metrics normalized)` : "Initial upload",
         created_by: user.id,
         is_active: true,
+        metadata: (ingestionMetadataSnapshot ?? {}) as never,
       }).select("id").single();
 
       // ═══════════════════════════════════════════════════════
-      // TIER 1: RAW LAYER — Write immutable raw records
+      // SCHEMA EVOLUTION & DATA LINEAGE — Automated tracking
+      // ═══════════════════════════════════════════════════════
+
+      // Record schema evolution (what columns were detected and mapped)
+      const schemaColumns = Object.entries(storedMapping).map(([key, target]) => ({
+        column: key.split(":")[1] || key,
+        mappedAs: target,
+      }));
+
+      // Phase 5: detect drift against the most recent prior dataset with the
+      // same name in this org. First snapshot is recorded as 'initial_upload'.
+      const toSnapshotColumns = (cols: { column: string; mappedAs: string }[]): SchemaColumn[] =>
+        cols.map((c) => {
+          const det = detectedSchema.find((d) => d.column === c.column);
+          const role = (c.mappedAs as SchemaColumn["role"]) ?? "skip";
+          const type: SchemaColumn["type"] = det
+            ? det.inferredType === "date"
+              ? "date"
+              : det.inferredType === "value"
+                ? "number"
+                : "text"
+            : "unknown";
+          return { name: c.column, type, role };
+        });
+
+      let driftReport: DriftReport | null = null;
+      try {
+        const { data: priorDatasets } = await supabase
+          .from("datasets")
+          .select("id, current_version, column_mapping")
+          .eq("organization_id", currentOrgId)
+          .eq("name", datasetName)
+          .neq("id", dataset.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const prior = priorDatasets?.[0];
+        if (prior?.column_mapping && typeof prior.column_mapping === "object") {
+          const priorCols = Object.entries(prior.column_mapping as Record<string, string>).map(
+            ([key, target]) => ({ column: key.split(":")[1] || key, mappedAs: target }),
+          );
+          const prevSnap = buildSnapshot(prior.id, prior.current_version ?? 1, toSnapshotColumns(priorCols));
+          const nextSnap = buildSnapshot(dataset.id, 1, toSnapshotColumns(schemaColumns));
+          driftReport = detectDrift(prevSnap, nextSnap);
+        }
+      } catch (err) {
+        console.warn("[SchemaEvolution] drift detection skipped:", err);
+      }
+      setDrift(driftReport);
+
+      const driftRows = driftReport && driftReport.totalChanges > 0
+        ? driftReport.changes.map((c) => ({
+            organization_id: currentOrgId,
+            dataset_id: dataset.id,
+            change_type: c.changeType,
+            column_name: c.columnName,
+            old_type: c.oldType ?? null,
+            new_type: c.newType ?? null,
+            detected_by: user.id,
+            metadata: {
+              confidence: c.confidence,
+              recommendation: c.recommendation,
+              old_name: c.oldName,
+              old_role: c.oldRole,
+              new_role: c.newRole,
+            },
+          }))
+        : [];
+
+      const { error: schemaErr } = await supabase.from("schema_evolution_log").insert([
+        {
+          organization_id: currentOrgId,
+          dataset_id: dataset.id,
+          change_type: "initial_upload",
+          detected_by: user.id,
+          metadata: {
+            columns: schemaColumns,
+            row_count: allRows.length,
+            import_mode: importMode,
+            drift_summary: driftReport
+              ? {
+                  total: driftReport.totalChanges,
+                  backward_compatible: driftReport.backwardCompatible,
+                }
+              : null,
+          },
+        },
+        ...driftRows,
+      ]);
+      if (schemaErr) console.error("[SchemaEvolution] Failed to log:", schemaErr.message, schemaErr.details);
+
+
+      // Record data lineage: CSV file → dataset → metrics
+      const { error: lineageErr } = await supabase.from("data_lineage").insert([{
+        organization_id: currentOrgId,
+        source_type: "file",
+        source_id: dataset.id,
+        source_name: file?.name ?? "unknown",
+        target_type: "dataset",
+        target_id: dataset.id,
+        target_name: datasetName,
+        transformation: "csv_import",
+        transformation_details: { 
+          columns_mapped: Object.keys(storedMapping).length,
+          rows: allRows.length,
+          import_mode: importMode,
+        },
+      }]);
+      if (lineageErr) console.error("[DataLineage] Failed to log:", lineageErr.message, lineageErr.details);
       // ═══════════════════════════════════════════════════════
 
       // Create pipeline run for observability
@@ -455,9 +711,17 @@ const DataUpload = () => {
       }> = [];
 
       let rowCounter = 0;
+      // Counts raw rows that produced at least one metric, as opposed to
+      // `inserted` below (metric ROWS upserted) -- in multi-metric mode one
+      // raw row fans out into N metric rows, so using `inserted` for
+      // pipeline_runs.transformed_count made the "Clean" pipeline stage
+      // display a larger count than "Raw", which reads as backwards for a
+      // funnel that's supposed to only ever hold steady or shrink.
+      let rawRowsCleaned = 0;
       for (const row of allRows) {
         if (row.every(cell => !cell || !cell.trim())) continue;
         rowCounter++;
+        let rowProducedMetric = false;
 
         let dateVal: string;
         if (dateIdx >= 0) {
@@ -504,6 +768,7 @@ const DataUpload = () => {
               segment: segmentVal,
               source_id: NULL_SOURCE,
             });
+            rowProducedMetric = true;
           }
         } else {
           const valueIdx = valueColIndices[0];
@@ -526,7 +791,9 @@ const DataUpload = () => {
             segment: segmentVal,
             source_id: NULL_SOURCE,
           });
+          rowProducedMetric = true;
         }
+        if (rowProducedMetric) rawRowsCleaned++;
       }
 
       // Deduplicate metrics by conflict key before upserting
@@ -553,7 +820,7 @@ const DataUpload = () => {
 
       // Update pipeline
       if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({ transformed_count: inserted, stage: "transform_complete" }).eq("id", pipelineRunId);
+        await supabase.from("pipeline_runs").update({ transformed_count: rawRowsCleaned, stage: "transform_complete" }).eq("id", pipelineRunId);
       }
 
       // Quality gate: verify dataset status transition
@@ -589,31 +856,97 @@ const DataUpload = () => {
       // TIER 3: ANALYTICAL LAYER — Compute aggregates + insights
       // ═══════════════════════════════════════════════════════
 
-      // Fire aggregates + insights + data profiling in parallel (non-blocking)
+      // Fire aggregates + insights + data profiling in parallel (with retry for reliability)
       const [aggResult] = await Promise.allSettled([
-        supabase.functions.invoke("refresh-aggregates", {
+        invokeWithRetry("refresh-aggregates", {
           body: { organization_id: currentOrgId, dataset_id: dataset.id, pipeline_run_id: pipelineRunId },
         }),
-        supabase.functions.invoke("generate-insights", {
+        invokeWithRetry("generate-insights", {
           body: { organization_id: currentOrgId, dataset_id: dataset.id },
         }),
-        supabase.functions.invoke("data-profiler", {
+        invokeWithRetry("data-profiler", {
           body: { organization_id: currentOrgId, dataset_id: dataset.id },
         }),
       ]);
 
-      if (aggResult.status === "rejected") {
-        console.warn("[Pipeline] Aggregate refresh failed:", aggResult.reason);
+      // Embed new insights into institutional memory (non-blocking)
+      embedInsightsBatch(currentOrgId);
+
+      // invokeWithRetry never rejects -- it always resolves { data, error },
+      // even after exhausting retries -- so aggResult.status is "fulfilled"
+      // whether or not the call actually succeeded. Checking only
+      // aggResult.status === "rejected" here meant a real refresh-aggregates
+      // failure (aggregated_count stuck at 0) was never detected, and the
+      // pipeline got finalized as "complete" below regardless, showing an
+      // Analytical stage of 0 next to a "Complete" badge.
+      const aggFailed = aggResult.status === "rejected" ? true : !!aggResult.value.error;
+      if (aggFailed) {
+        const reason = aggResult.status === "rejected" ? aggResult.reason : aggResult.value.error?.message;
+        console.warn("[Pipeline] Aggregate refresh failed:", reason);
       }
 
-      // Finalize pipeline run
+      // ═══════════════════════════════════════════════════════
+      // TIER 4: DECISION LAYER — Auto-generate advisory → decisions
+      // ═══════════════════════════════════════════════════════
+      try {
+        await invokeWithRetry("prescriptive-advisory", {
+          body: { organization_id: currentOrgId, dataset_id: dataset.id, role_type: "ceo" },
+        });
+        await invokeWithRetry("auto-create-decisions", {
+          body: { organization_id: currentOrgId, dataset_id: dataset.id },
+        });
+      } catch (decisionErr) {
+        console.warn("[Pipeline] Auto-decision creation failed (non-blocking):", decisionErr);
+      }
+
+      // Record lineage: dataset → metrics → aggregates
+      const { error: lineage2Err } = await supabase.from("data_lineage").insert([
+        {
+          organization_id: currentOrgId,
+          source_type: "dataset",
+          source_id: dataset.id,
+          source_name: datasetName,
+          target_type: "metrics",
+          target_id: dataset.id,
+          target_name: `${datasetName} metrics`,
+          transformation: "normalize_clean",
+          transformation_details: { records_inserted: verifiedCount ?? inserted },
+        },
+        {
+          organization_id: currentOrgId,
+          source_type: "metrics",
+          source_id: dataset.id,
+          source_name: `${datasetName} metrics`,
+          target_type: "aggregates",
+          target_id: dataset.id,
+          target_name: `${datasetName} aggregates`,
+          transformation: "refresh_aggregates",
+          transformation_details: { period_types: ["monthly", "quarterly", "yearly"] },
+        },
+      ]);
+      if (lineage2Err) console.error("[DataLineage] Post-import lineage failed:", lineage2Err.message, lineage2Err.details);
+
+      // Finalize pipeline run. Only claim the Analytical stage completed if
+      // refresh-aggregates actually succeeded -- otherwise the run stays
+      // reported at the "aggregating" stage it failed at, with a "failed"
+      // status, instead of a false "complete".
       if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({
-          status: "completed",
-          stage: "complete",
-          completed_at: new Date().toISOString(),
-          duration_ms: Date.now() - pipelineStartedAt,
-        }).eq("id", pipelineRunId);
+        await supabase.from("pipeline_runs").update(
+          aggFailed
+            ? {
+                status: "failed",
+                stage: "aggregating",
+                error_message: "Analytical aggregation failed after the raw and clean layers completed successfully.",
+                completed_at: new Date().toISOString(),
+                duration_ms: Date.now() - pipelineStartedAt,
+              }
+            : {
+                status: "completed",
+                stage: "complete",
+                completed_at: new Date().toISOString(),
+                duration_ms: Date.now() - pipelineStartedAt,
+              }
+        ).eq("id", pipelineRunId);
       }
 
       setImportCount(verifiedCount ?? inserted);
@@ -659,7 +992,7 @@ const DataUpload = () => {
         <header className="h-14 border-b border-border/30 flex items-center px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Data Import</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Data Import</h1>
           </div>
         </header>
 
@@ -684,7 +1017,22 @@ const DataUpload = () => {
         <main className="flex-1 p-8 overflow-auto">
           <AnimatePresence mode="wait">
             {/* Step: Upload */}
-            {step === "upload" && (
+            {step === "upload" && ingestion.status !== "idle" && ingestion.status !== "done" && (
+              <motion.div
+                key="upload-progress"
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
+              >
+                <IngestionProgressCard
+                  fileName={file?.name ?? "dataset"}
+                  status={ingestion.status}
+                  progress={ingestion.progress}
+                  error={ingestion.error}
+                  onCancel={ingestion.cancel}
+                  onRetry={retryIngestion}
+                />
+              </motion.div>
+            )}
+            {step === "upload" && (ingestion.status === "idle" || ingestion.status === "done") && (
               <motion.div
                 key="upload"
                 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
@@ -694,10 +1042,10 @@ const DataUpload = () => {
                 onClick={() => document.getElementById("csv-input")?.click()}
               >
                 <Upload className="w-16 h-16 text-muted-foreground mb-4" />
-                <h2 className="text-xl font-semibold font-display mb-2">Upload CSV File</h2>
+                <h2 className="text-[16px] font-semibold tracking-tight mb-2">Upload Dataset</h2>
                 <p className="text-muted-foreground text-sm mb-4">Drag & drop or click to browse</p>
-                <p className="text-xs text-muted-foreground">Supports: CSV files up to 20MB — date column optional</p>
-                <input id="csv-input" type="file" accept=".csv" className="hidden" onChange={handleFileSelect} />
+                <p className="text-xs text-muted-foreground">CSV, XLSX, XLS, XLSM, ODS · up to 20MB · up to 50,000 rows in-browser · larger routes to server pipeline</p>
+                <input id="csv-input" type="file" accept=".csv,.xlsx,.xls,.xlsm,.ods" className="hidden" onChange={handleFileSelect} />
                 <UploadTrustBadges />
               </motion.div>
             )}
@@ -712,11 +1060,8 @@ const DataUpload = () => {
                 <Card>
                   <CardContent className="p-6">
                     <div className="flex items-center gap-3 mb-1">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Sparkles className="w-4 h-4 text-primary" />
-                      </div>
                       <div>
-                        <h2 className="text-lg font-semibold font-display">Dataset Structure Detected</h2>
+                        <h2 className="text-lg font-semibold tracking-tight">Dataset Structure Detected</h2>
                         <p className="text-xs text-muted-foreground">
                           {file?.name} · {allRows.length.toLocaleString()} rows · {headers.length} columns
                         </p>
@@ -738,7 +1083,7 @@ const DataUpload = () => {
                             </p>
                           </div>
                           <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceColor(classification.confidence)}`}>
-                            {classification.confidence}% confidence
+                            {Math.round(classification.confidence)}% confidence
                           </Badge>
                         </div>
                         {classification.recommendedWorkflows.length > 0 && (
@@ -749,6 +1094,50 @@ const DataUpload = () => {
                             ))}
                           </div>
                         )}
+                      </motion.div>
+                    )}
+
+                    {/* Workbook sheet selector — only when an XLSX/ODS contained multiple sheets */}
+                    {workbook && workbook.sheets.filter(s => !s.hidden && s.rows.length > 0).length > 1 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                        className="mt-4 p-3 rounded-lg border border-border bg-muted/20"
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div className="flex items-center gap-2">
+                            <FileSpreadsheet className="w-4 h-4 text-primary" />
+                            <p className="text-sm font-medium">
+                              Workbook: <span className="text-primary">{workbook.workbookName}</span>
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="text-[10px]">
+                            {workbook.sheetCount} sheet{workbook.sheetCount === 1 ? "" : "s"}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mb-2">
+                          Select the sheet to import. Hidden sheets are excluded.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {workbook.sheets
+                            .filter(s => !s.hidden && s.rows.length > 0)
+                            .map(s => (
+                              <button
+                                key={s.name}
+                                type="button"
+                                onClick={() => loadWorkbookSheet(workbook, s.name)}
+                                className={`text-xs px-2.5 py-1 rounded-md border transition-colors ${
+                                  activeSheetName === s.name
+                                    ? "bg-primary/15 border-primary/40 text-primary"
+                                    : "bg-background border-border hover:border-primary/40"
+                                }`}
+                              >
+                                {s.name}
+                                <span className="ml-1.5 text-[10px] text-muted-foreground">
+                                  {s.rowCount.toLocaleString()}r · {s.columnCount}c
+                                </span>
+                              </button>
+                            ))}
+                        </div>
                       </motion.div>
                     )}
 
@@ -795,52 +1184,156 @@ const DataUpload = () => {
                         )}
                       </motion.div>
                     )}
+                  </CardContent>
+                </Card>
 
-                    <div className="mt-6 space-y-2">
-                      {detectedSchema.map((det) => (
-                        <div key={det.colIdx} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/40">
-                          <div className="flex items-center gap-2 w-44 shrink-0">
-                            {typeIcon(det.inferredType)}
-                            <div className="min-w-0">
-                              <span className="text-sm font-medium truncate block">
-                                {det.column}
-                                <span className="text-[9px] text-muted-foreground/50 ml-1">#{det.colIdx}</span>
-                              </span>
-                              {/* Sample value chips */}
-                              <div className="flex gap-1 mt-0.5">
-                                {(det.sampleValues || []).slice(0, 3).map((sv, i) => (
-                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground truncate max-w-[80px]">
-                                    {sv}
-                                  </span>
-                                ))}
+
+                {/* Ingestion Intelligence — surfaced BEFORE mapping rows & sample data */}
+                {ingestionIntel && (
+                  <MappingIntelligencePanel intelligence={ingestionIntel} relationships={crossSheet} />
+                )}
+
+                <Card>
+                  <CardContent className="p-6">
+                    <h2 className="text-lg font-semibold tracking-tight mb-1">Column Mapping</h2>
+                    <p className="text-xs text-muted-foreground mb-4">Detected field types and confidence per column.</p>
+                    {/* Column header strip */}
+                    <div className="hidden md:grid grid-cols-[1.6fr_1.4fr_1.6fr_1fr_1.1fr] gap-3 px-3 pb-2 mb-1 border-b border-border/50 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                      <div>Column</div>
+                      <div>Badges</div>
+                      <div>Sample Values</div>
+                      <div>Detected Type</div>
+                      <div>Confidence</div>
+                    </div>
+                    <div className="space-y-2">
+                      {detectedSchema.map((det) => {
+                        const profile = ingestionIntel?.semanticSchema.profiles.find((p) => p.colIdx === det.colIdx);
+                        const tags: string[] = [];
+                        if (profile?.semanticType === "pii") tags.push("PII");
+                        if (profile?.semanticType === "identifier" || profile?.businessRole === "entity_key") {
+                          tags.push(profile?.businessRole === "entity_key" ? "Entity" : "Identifier");
+                        }
+                        if (det.inferredType === "date") tags.push("Date");
+                        if (profile?.businessRole === "financial_kpi") tags.push("Currency");
+                        if (
+                          profile?.businessRole &&
+                          ["financial_kpi", "operational_kpi", "customer_kpi", "workforce_kpi", "risk_kpi"].includes(profile.businessRole)
+                        ) {
+                          tags.push("KPI");
+                        }
+                        const confBar =
+                          det.confidence >= 85 ? "bg-success" : det.confidence >= 65 ? "bg-warning" : "bg-destructive";
+
+                        return (
+                          <div
+                            key={det.colIdx}
+                            className="grid grid-cols-1 md:grid-cols-[1.6fr_1.4fr_1.6fr_1fr_1.1fr] gap-3 p-3 rounded-lg bg-muted/30 border border-border/40 items-center"
+                          >
+                            {/* Column */}
+                            <div className="flex items-center gap-2 min-w-0">
+                              {typeIcon(det.inferredType)}
+                              <div className="min-w-0">
+                                <span className="text-sm font-medium truncate block">
+                                  {det.column}
+                                  <span className="text-[9px] text-muted-foreground/50 ml-1">#{det.colIdx}</span>
+                                </span>
                               </div>
                             </div>
-                          </div>
-                          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className={`text-xs ${confidenceColor(det.confidence)}`}>
+
+                            {/* Badges */}
+                            <div className="flex flex-wrap gap-1">
+                              {tags.length === 0 ? (
+                                <span className="text-[10px] text-muted-foreground italic">—</span>
+                              ) : (
+                                tags.map((t) => (
+                                  <Badge
+                                    key={t}
+                                    variant="outline"
+                                    className={`text-[10px] ${
+                                      t === "PII"
+                                        ? "border-destructive/40 text-destructive bg-destructive/5"
+                                        : t === "Identifier" || t === "Entity"
+                                          ? "border-primary/40 text-primary bg-primary/5"
+                                          : t === "Date"
+                                            ? "border-warning/40 text-warning bg-warning/5"
+                                            : t === "KPI"
+                                              ? "border-accent/40 text-accent-foreground bg-accent/10"
+                                              : "border-success/40 text-success bg-success/5"
+                                    }`}
+                                  >
+                                    {t}
+                                  </Badge>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Sample values */}
+                            <div className="flex flex-wrap gap-1 min-w-0">
+                              {(det.sampleValues || []).slice(0, 3).map((sv, i) => (
+                                <span
+                                  key={i}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-background border border-border/60 text-muted-foreground truncate max-w-[110px]"
+                                >
+                                  {sv}
+                                </span>
+                              ))}
+                              {(!det.sampleValues || det.sampleValues.length === 0) && (
+                                <span className="text-[10px] text-muted-foreground italic">No samples</span>
+                              )}
+                            </div>
+
+                            {/* Detected Type */}
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                              <Badge variant="outline" className={`text-xs w-fit ${confidenceColor(det.confidence)}`}>
                                 {det.inferredType === "skip" ? "Not mapped" : det.inferredType}
                               </Badge>
-                              <span className="text-xs text-muted-foreground">{det.reason}</span>
+                              <span className="text-[10px] text-muted-foreground line-clamp-1">{det.reason}</span>
                             </div>
-                            {/* Rules applied (Why this mapping?) */}
-                            {det.rulesApplied && det.rulesApplied.length > 0 && (
-                              <div className="flex gap-1 mt-1 flex-wrap">
-                                {det.rulesApplied.map((rule, ri) => (
-                                  <span key={ri} className="text-[9px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground font-mono">
-                                    {rule}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+
+                            {/* Confidence with progress bar */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="cursor-help">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className={`text-xs font-semibold ${confidenceColor(det.confidence)}`}>
+                                      {Math.round(det.confidence)}%
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                    <div
+                                      className={`h-full ${confBar} transition-all`}
+                                      style={{ width: `${Math.max(4, Math.min(100, det.confidence))}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-xs text-xs p-3 space-y-1">
+                                <p className="font-semibold">Confidence is based on:</p>
+                                <ul className="space-y-0.5 text-muted-foreground">
+                                  <li>• Column name patterns</li>
+                                  <li>• Sample value distribution</li>
+                                  <li>• Schema-level heuristics</li>
+                                  <li>• Industry ontology match</li>
+                                </ul>
+                                {det.rulesApplied && det.rulesApplied.length > 0 && (
+                                  <div className="pt-1 mt-1 border-t border-border/40">
+                                    <p className="font-semibold mb-0.5">Rules applied:</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {det.rulesApplied.map((rule, ri) => (
+                                        <span key={ri} className="font-mono text-[10px] px-1 py-0.5 rounded bg-muted/60">
+                                          {rule}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
-                          <Badge variant="outline" className={`text-[10px] shrink-0 ${confidenceColor(det.confidence)}`}>
-                            {det.confidence}%
-                          </Badge>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
+
 
                     {/* Year-to-date auto-fix prompt */}
                     {hasYearOnlyDates && !yearAutoFixed && (
@@ -900,6 +1393,7 @@ const DataUpload = () => {
                   </CardContent>
                 </Card>
 
+
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={() => setStep("mapping")} className="gap-2">
                     <Eye className="w-4 h-4" /> Adjust Mapping
@@ -918,9 +1412,16 @@ const DataUpload = () => {
                 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
                 className="space-y-6"
               >
+                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 items-start">
+                  {ingestionIntel && (
+                    <aside className="xl:col-span-2 xl:sticky xl:top-6 space-y-4">
+                      <MappingIntelligencePanel intelligence={ingestionIntel} relationships={crossSheet} />
+                    </aside>
+                  )}
+                  <div className={ingestionIntel ? "xl:col-span-3 space-y-6" : "xl:col-span-5 space-y-6"}>
                 <Card>
                   <CardContent className="p-6">
-                    <h2 className="text-lg font-semibold font-display mb-1">Adjust Column Mapping</h2>
+                    <h2 className="text-lg font-semibold tracking-tight mb-1">Adjust Column Mapping</h2>
                     <p className="text-xs text-muted-foreground mb-4">Fine-tune the auto-detected mapping. At least one Value column is required. Date is optional.</p>
 
                     {/* Date column warning with auto-fix */}
@@ -980,45 +1481,99 @@ const DataUpload = () => {
                     <div className="space-y-3">
                       {headers.map((h, colIdx) => {
                         const currentTarget = mapping[colIdx] || "skip";
+                        const det = detectedSchema.find((d) => d.colIdx === colIdx);
+                        const conf = det?.confidence ?? 0;
+                        const confTone =
+                          conf >= 90 ? "text-success border-success/30 bg-success/5"
+                            : conf >= 70 ? "text-warning border-warning/30 bg-warning/5"
+                              : "text-destructive border-destructive/30 bg-destructive/5";
+                        const semantic = ingestionIntel?.semanticSchema.profiles.find((p) => p.colIdx === colIdx);
+                        const semBadge = (() => {
+                          if (!semantic) return null;
+                          const map: Record<string, { label: string; cls: string }> = {
+                            identifier: { label: "Identifier", cls: "bg-primary/10 text-primary border-primary/30" },
+                            currency: { label: "Currency", cls: "bg-success/10 text-success border-success/30" },
+                            percentage: { label: "Percentage", cls: "bg-success/10 text-success border-success/30" },
+                            ratio: { label: "Ratio", cls: "bg-success/10 text-success border-success/30" },
+                            pii: { label: "PII", cls: "bg-warning/10 text-warning border-warning/30" },
+                            date: { label: "Date", cls: "bg-primary/10 text-primary border-primary/30" },
+                            location: { label: "Location", cls: "bg-primary/10 text-primary border-primary/30" },
+                            boolean: { label: "Boolean", cls: "bg-muted text-foreground border-border" },
+                            categorical: { label: "Categorical", cls: "bg-muted text-foreground border-border" },
+                            metric: { label: "Metric", cls: "bg-success/10 text-success border-success/30" },
+                          };
+                          return map[semantic.semanticType] ?? null;
+                        })();
                         const displayLabel = (t: string) => {
                           if (t === "value" && importMode === "multi") return "metric";
                           if (t === "region_code") return "region_code (ID/ISO)";
                           return t;
                         };
                         return (
-                          <div key={colIdx} className="flex items-center gap-4">
-                            <div className="w-44 shrink-0">
-                              <span className="text-sm font-medium truncate block">
-                                {h}
-                                <span className="text-[9px] text-muted-foreground/50 ml-1">#{colIdx}</span>
-                              </span>
-                              <div className="flex gap-1 mt-0.5">
-                                {(sampleValuesByColIdx[colIdx] || []).slice(0, 3).map((sv, i) => (
-                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground truncate max-w-[80px]">
-                                    {sv}
-                                  </span>
-                                ))}
+                          <SectionErrorBoundary key={colIdx} sectionName="Data Upload">
+                            <div className="flex items-center gap-4">
+                              <div className="w-48 shrink-0">
+                                <span className="text-sm font-medium truncate block">
+                                  {h}
+                                  <span className="text-[9px] text-muted-foreground/50 ml-1">#{colIdx}</span>
+                                </span>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {semBadge && (
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${semBadge.cls}`}>
+                                      {semBadge.label}
+                                    </span>
+                                  )}
+                                  {semantic?.reviewRequired && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-warning/30 bg-warning/5 text-warning">
+                                      Review
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex gap-1 mt-1">
+                                  {(sampleValuesByColIdx[colIdx] || []).slice(0, 3).map((sv, i) => (
+                                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground truncate max-w-[80px]">
+                                      {sv}
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
+                              <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                              <div className="flex-1 flex flex-col gap-1">
+                                <select
+                                  value={currentTarget}
+                                  onChange={(e) => setMapping((prev) => ({ ...prev, [colIdx]: e.target.value as ColumnTarget }))}
+                                  className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                                >
+                                  {COLUMN_TARGETS.map((t) => (
+                                    <option key={t} value={t}>{displayLabel(t)}</option>
+                                  ))}
+                                </select>
+                                {det && currentTarget !== "skip" && (
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${confTone}`}>
+                                      {conf}%
+                                    </span>
+                                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                                      <div
+                                        className={`h-full transition-all ${
+                                          conf >= 90 ? "bg-success" : conf >= 70 ? "bg-warning" : "bg-destructive"
+                                        }`}
+                                        style={{ width: `${Math.max(4, Math.min(100, conf))}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              {currentTarget !== "skip" && (
+                                <Badge variant="outline" className="text-xs">
+                                  {currentTarget === "value" && importMode === "multi"
+                                    ? <><TrendingUp className="w-3 h-3 mr-1" /> Metric</>
+                                    : <><Check className="w-3 h-3 mr-1" /> Mapped</>
+                                  }
+                                </Badge>
+                              )}
                             </div>
-                            <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                            <select
-                              value={currentTarget}
-                              onChange={(e) => setMapping((prev) => ({ ...prev, [colIdx]: e.target.value as ColumnTarget }))}
-                              className="flex-1 px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                            >
-                              {COLUMN_TARGETS.map((t) => (
-                                <option key={t} value={t}>{displayLabel(t)}</option>
-                              ))}
-                            </select>
-                            {currentTarget !== "skip" && (
-                              <Badge variant="outline" className="text-xs">
-                                {currentTarget === "value" && importMode === "multi"
-                                  ? <><TrendingUp className="w-3 h-3 mr-1" /> Metric</>
-                                  : <><Check className="w-3 h-3 mr-1" /> Mapped</>
-                                }
-                              </Badge>
-                            )}
-                          </div>
+                          </SectionErrorBoundary>
                         );
                       })}
                     </div>
@@ -1050,6 +1605,8 @@ const DataUpload = () => {
                 <Button onClick={runValidation} className="gap-2">
                   Validate Data <ShieldCheck className="w-4 h-4" />
                 </Button>
+                  </div>
+                </div>
               </motion.div>
             )}
 
@@ -1065,7 +1622,7 @@ const DataUpload = () => {
                     <div className="flex items-center gap-3 mb-6">
                       <AlertTriangle className="w-6 h-6 text-warning" />
                       <div>
-                        <h2 className="text-lg font-semibold font-display">Data Issues Found</h2>
+                        <h2 className="text-lg font-semibold tracking-tight">Data Issues Found</h2>
                         <p className="text-xs text-muted-foreground">
                           {validation.validRows} of {validation.totalRows} rows valid · {validation.validPoints.toLocaleString()} of {validation.totalPoints.toLocaleString()} data points valid · {validation.errors.length} issue{validation.errors.length !== 1 ? "s" : ""}
                         </p>
@@ -1119,7 +1676,7 @@ const DataUpload = () => {
                     <Button onClick={() => {
                       const intel = generateIntelligence(headers, allRows, mapping, validation, importMode);
                       setIntelligence(intel);
-                      const diag = computeDiagnostics(allRows, headers, mapping);
+                      const diag = computeDiagnostics(allRows, headers, mapping, detectedSchema);
                       setDiagnostics(diag);
                       setStep("intelligence");
                     }} className="gap-2">
@@ -1142,18 +1699,15 @@ const DataUpload = () => {
                   <Card className="overflow-hidden border-primary/20">
                     <CardContent className="p-4">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                          <Database className="w-5 h-5 text-primary" />
-                        </div>
                         <div className="flex-1">
                           <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Detected Domain</p>
-                          <p className="text-lg font-semibold font-display text-foreground">
+                          <p className="text-lg font-semibold tracking-tight text-foreground">
                             {classification.type}
                             {classification.subType && <span className="text-sm text-muted-foreground font-normal ml-2">· {classification.subType}</span>}
                           </p>
                         </div>
                         <Badge variant="outline" className={`text-xs ${confidenceColor(classification.confidence)}`}>
-                          {classification.confidence}% confidence
+                          {Math.round(classification.confidence)}% confidence
                         </Badge>
                       </div>
                       {classification.recommendedWorkflows.length > 0 && (
@@ -1171,11 +1725,8 @@ const DataUpload = () => {
                 <Card className="overflow-hidden">
                   <div className="bg-gradient-to-r from-primary/5 to-primary/0 p-6 border-b border-border/30">
                     <div className="flex items-center gap-3 mb-1">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Sparkles className="w-4 h-4 text-primary" />
-                      </div>
                       <div>
-                        <h2 className="text-lg font-semibold font-display">Dataset Intelligence</h2>
+                        <h2 className="text-lg font-semibold tracking-tight">Dataset Intelligence</h2>
                         <p className="text-xs text-muted-foreground">{datasetName}</p>
                       </div>
                     </div>
@@ -1277,9 +1828,9 @@ const DataUpload = () => {
                     <CardContent className="p-6">
                       <div className="flex items-center gap-3 mb-4">
                         <Activity className="w-5 h-5 text-primary" />
-                        <h3 className="text-base font-semibold font-display">Data Diagnostics</h3>
+                        <h3 className="text-[13px] font-semibold tracking-tight">Data Diagnostics</h3>
                       </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                         <div className="p-3 rounded-lg bg-muted/30 border border-border/40">
                           <p className={`text-lg font-bold ${diagnostics.missingValuesPct > 5 ? "text-warning" : "text-success"}`}>
                             {diagnostics.missingValuesPct}%
@@ -1304,6 +1855,14 @@ const DataUpload = () => {
                           </p>
                           <p className="text-xs text-muted-foreground">
                             Date continuity{diagnostics.dateGapCount > 0 ? ` (${diagnostics.dateGapCount} gap${diagnostics.dateGapCount > 1 ? "s" : ""})` : ""}
+                          </p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-muted/30 border border-border/40">
+                          <p className={`text-lg font-bold ${diagnostics.piiRisk.level === "high" ? "text-destructive" : diagnostics.piiRisk.level === "low" ? "text-warning" : "text-success"}`}>
+                            {diagnostics.piiRisk.level === "none" ? "None" : diagnostics.piiRisk.level === "low" ? "Low" : "High"}
+                          </p>
+                          <p className="text-xs text-muted-foreground" title={diagnostics.piiRisk.columns.join(", ")}>
+                            PII risk{diagnostics.piiRisk.columns.length > 0 ? ` (${diagnostics.piiRisk.columns.length})` : ""}
                           </p>
                         </div>
                       </div>
@@ -1341,7 +1900,7 @@ const DataUpload = () => {
                 className="bg-card border border-border p-12 rounded-xl flex flex-col items-center justify-center min-h-[400px]"
               >
                 <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin mb-4" />
-                <p className="text-lg font-semibold font-display">Importing data...</p>
+                <p className="text-lg font-semibold tracking-tight">Importing data...</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {importMode === "multi" ? "Normalizing multi-metric dataset and generating intelligence signals" : "Processing and generating intelligence signals"}
                 </p>
@@ -1359,7 +1918,7 @@ const DataUpload = () => {
                   <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center mb-4">
                     <Check className="w-8 h-8 text-success" />
                   </div>
-                  <h2 className="text-xl font-semibold font-display mb-2">Import Complete</h2>
+                  <h2 className="text-[16px] font-semibold tracking-tight mb-2">Import Complete</h2>
                   <p className="text-muted-foreground text-sm mb-6">
                     {importCount.toLocaleString()} data points imported
                     {importMode === "multi" ? " (multi-metric normalized)" : ""}
@@ -1370,6 +1929,7 @@ const DataUpload = () => {
                       setStep("upload"); setFile(null); setRows([]); setAllRows([]); setHeaders([]);
                       setValidation(null); setDetectedSchema([]); setIntelligence(null); setYearAutoFixed(false);
                       setDiagnostics(null); setClassification(null); setImportMode("single");
+                      setDrift(null); ingestion.reset();
                     }}>
                       Upload Another
                     </Button>
@@ -1381,6 +1941,18 @@ const DataUpload = () => {
                     </Button>
                   </div>
                 </div>
+
+
+                <PostUploadSummary
+                  rowsImported={importCount || allRows.length}
+                  healthScore={diagnostics?.healthScore ?? intelligence?.qualityScore ?? 0}
+                  classification={classification}
+                  diagnostics={diagnostics}
+                  drift={drift}
+                  headers={headers}
+                  sampleRows={allRows.slice(0, 500)}
+                  hasLineage
+                />
 
                 {/* Dataset sample preview — user can verify data was imported correctly */}
                 {allRows.length > 0 && headers.length > 0 && (

@@ -1,0 +1,277 @@
+// tests/evidence/pipelines/lib/authz-controls.mjs
+// Canonical control registry for the Authorization & Tenant Isolation
+// evidence pipeline (EE-2).
+//
+// Each control is a contract between the execution adapters
+// (tests/tenant-isolation/run.mjs, tests/e2e/concurrent-browser-sessions.py,
+// route-probe scripts) and the certification engine. The adapter produces a
+// result JSON keyed by control_id; this module defines what the runner will
+// accept.
+//
+// Fields:
+//   control_id            stable identifier (used as JSON key)
+//   control_name          human label rendered in reports
+//   category              logical grouping: browser | tenant | rls | role | edge | realtime
+//   coverage              short description of what is exercised
+//   expected_outcome      what a PASS observation looks like
+//   failure_condition     what turns the observation into a failure
+//   failure_code          taxonomy failure code recorded on the artifact.
+//                         Adapter FAIL is mapped by the pipeline to:
+//                            - STATUS.CRITICAL_LEAK  if severity === "critical_leak"
+//                            - STATUS.SECURITY_FAILURE otherwise (blocking)
+//                            - STATUS.WARNING if blocking === "warning"
+//   blocking              "critical" (blocks release) | "warning" (non-blocking)
+//   severity              "security_failure" | "critical_leak" — controls how a
+//                         FAIL is projected into the frozen status taxonomy.
+//   recommendation        remediation guidance surfaced on the certification report
+
+export const AUTHZ_CONTROLS = Object.freeze([
+  {
+    control_id: "AUTHZ-001",
+    control_name: "Protected dashboard access",
+    category: "browser",
+    coverage: "Authenticated GET /dashboard renders the app shell",
+    expected_outcome: "Route reachable with #main-content visible under a live session",
+    failure_condition: "Selector timeout, redirect to /login, or 4xx/5xx surfaced",
+    failure_code: "PROTECTED_ROUTE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Ensure ProtectedRoute passes for a valid session and dashboard shell renders.",
+  },
+  {
+    control_id: "AUTHZ-002",
+    control_name: "Protected decisions access",
+    category: "browser",
+    coverage: "Authenticated GET /decisions renders the Decision Ledger",
+    expected_outcome: "[data-testid=create-decision] visible with no console errors",
+    failure_condition: "Missing selector, hydration crash, or redirect away",
+    failure_code: "PROTECTED_ROUTE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Verify Decision Ledger route is exposed and RLS-scoped.",
+  },
+  {
+    control_id: "AUTHZ-003",
+    control_name: "Protected reports access",
+    category: "browser",
+    coverage: "Authenticated GET /reports renders the reports surface",
+    expected_outcome: "h1 'Reports' visible for the seeded user",
+    failure_condition: "Missing heading, unauthorized redirect, or render crash",
+    failure_code: "PROTECTED_ROUTE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Confirm /reports gate matches signed-in members with reports permission.",
+  },
+  {
+    control_id: "AUTHZ-004",
+    control_name: "Protected governance access",
+    category: "browser",
+    coverage: "Authenticated GET /auditability renders the Auditability surface",
+    expected_outcome: "h1 'Auditability' visible for the seeded user",
+    failure_condition: "Missing heading, redirect, or crash under valid auth",
+    failure_code: "PROTECTED_ROUTE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Governance/audit routes must render under a valid org member.",
+  },
+  {
+    control_id: "AUTHZ-005",
+    control_name: "Protected admin routes",
+    category: "role",
+    coverage: "Admin-only routes require owner/admin role via ProtectedRoute + has_role",
+    expected_outcome: "Non-admin denied; admin allowed",
+    failure_condition: "Non-admin reaches admin surface OR admin blocked",
+    failure_code: "ADMIN_ROUTE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Verify has_role() checks on admin routes and RPC guards.",
+  },
+  {
+    control_id: "AUTHZ-006",
+    control_name: "Anonymous redirect",
+    category: "browser",
+    coverage: "Anonymous GET on any protected route redirects to /login",
+    expected_outcome: "Redirect chain ends at /login; no protected content flashed",
+    failure_condition: "Protected surface renders without a session OR white-screen",
+    failure_code: "AUTHZ_BYPASS",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "ProtectedRoute must fail closed and Navigate to /login on any auth error.",
+  },
+  {
+    control_id: "AUTHZ-007",
+    control_name: "Authenticated route access",
+    category: "browser",
+    coverage: "Every protected route reachable by a valid session under concurrent load",
+    expected_outcome: "All ROUTE_READY selectors visible for every concurrent user",
+    failure_condition: "Any user misses any route selector",
+    failure_code: "SESSION_STABILITY_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Investigate route hydration or dynamic chunk failures under concurrency.",
+  },
+  {
+    control_id: "AUTHZ-008",
+    control_name: "Tenant A own reads",
+    category: "tenant",
+    coverage: "User A reads seeded canary rows in Org A (decision_ledger, audit_log)",
+    expected_outcome: "PostgREST returns 200 with canary row present",
+    failure_condition: "Own-tenant read empty, non-200, or malformed",
+    failure_code: "OWN_TENANT_READ_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Repair RLS SELECT policy for is_org_member() before proceeding.",
+  },
+  {
+    control_id: "AUTHZ-009",
+    control_name: "Tenant B own reads",
+    category: "tenant",
+    coverage: "User B reads seeded canary rows in Org B (decision_ledger, audit_log)",
+    expected_outcome: "PostgREST returns 200 with canary row present",
+    failure_condition: "Own-tenant read empty, non-200, or malformed",
+    failure_code: "OWN_TENANT_READ_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Repair RLS SELECT policy for is_org_member() before proceeding.",
+  },
+  {
+    control_id: "AUTHZ-010",
+    control_name: "Tenant A cannot read Tenant B",
+    category: "tenant",
+    coverage: "User A queries Org B rows on decision_ledger and audit_log",
+    expected_outcome: "200 with empty array (RLS suppression) on every probe",
+    failure_condition: "Any row returned from Org B",
+    failure_code: "CROSS_TENANT_READ_LEAK",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Cross-tenant read is a P0 leak; freeze release and audit RLS policies.",
+  },
+  {
+    control_id: "AUTHZ-011",
+    control_name: "Tenant B cannot read Tenant A",
+    category: "tenant",
+    coverage: "User B queries Org A rows on decision_ledger and audit_log",
+    expected_outcome: "200 with empty array (RLS suppression) on every probe",
+    failure_condition: "Any row returned from Org A",
+    failure_code: "CROSS_TENANT_READ_LEAK",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Cross-tenant read is a P0 leak; freeze release and audit RLS policies.",
+  },
+  {
+    control_id: "AUTHZ-012",
+    control_name: "Tenant A own write",
+    category: "tenant",
+    coverage: "User A inserts decision_ledger row scoped to Org A",
+    expected_outcome: "2xx with representation returned",
+    failure_condition: "Insert denied or non-2xx",
+    failure_code: "OWN_TENANT_WRITE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "RLS INSERT policy must allow is_org_member(new.organization_id).",
+  },
+  {
+    control_id: "AUTHZ-013",
+    control_name: "Tenant B own write",
+    category: "tenant",
+    coverage: "User B inserts decision_ledger row scoped to Org B",
+    expected_outcome: "2xx with representation returned",
+    failure_condition: "Insert denied or non-2xx",
+    failure_code: "OWN_TENANT_WRITE_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "RLS INSERT policy must allow is_org_member(new.organization_id).",
+  },
+  {
+    control_id: "AUTHZ-014",
+    control_name: "Tenant A cannot write Tenant B",
+    category: "tenant",
+    coverage: "User A attempts insert of decision_ledger row scoped to Org B",
+    expected_outcome: "401/403 or Postgres 42501 (row-level security violation)",
+    failure_condition: "Insert accepted OR unexpected denial class",
+    failure_code: "CROSS_TENANT_WRITE_LEAK",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Cross-tenant write is a P0 leak; freeze release and audit INSERT policies.",
+  },
+  {
+    control_id: "AUTHZ-015",
+    control_name: "Tenant B cannot write Tenant A",
+    category: "tenant",
+    coverage: "User B attempts insert of decision_ledger row scoped to Org A",
+    expected_outcome: "401/403 or Postgres 42501 (row-level security violation)",
+    failure_condition: "Insert accepted OR unexpected denial class",
+    failure_code: "CROSS_TENANT_WRITE_LEAK",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Cross-tenant write is a P0 leak; freeze release and audit INSERT policies.",
+  },
+  {
+    control_id: "AUTHZ-016",
+    control_name: "RLS enforcement",
+    category: "rls",
+    coverage: "Aggregated denial semantics across every cross-tenant probe",
+    expected_outcome: "Every negative probe returns PASS (empty) or EXPECTED_DENIAL",
+    failure_condition: "Any probe returns API_FAILURE (wrong denial class)",
+    failure_code: "RLS_ENFORCEMENT_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Investigate unexpected denial codes; RLS must reject with 401/403/42501.",
+  },
+  {
+    control_id: "AUTHZ-017",
+    control_name: "Permission hierarchy",
+    category: "role",
+    coverage: "Owner ⊇ Admin ⊇ Member ⊇ Viewer capability matrix on role-gated RPCs",
+    expected_outcome: "Every allowed (role, action) succeeds; every denied pair fails closed",
+    failure_condition: "Any (role, action) diverges from the declared matrix",
+    failure_code: "PERMISSION_HIERARCHY_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Reconcile has_role() checks against docs/security-controls-evidence.md.",
+  },
+  {
+    control_id: "AUTHZ-018",
+    control_name: "Role enforcement",
+    category: "role",
+    coverage: "Non-admin cannot mutate user_roles or org security_settings",
+    expected_outcome: "PostgREST/RPC returns 401/403 for non-privileged roles",
+    failure_condition: "Non-privileged role mutates privileged surface",
+    failure_code: "ROLE_ESCALATION",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Ensure user_roles + security-definer RPCs require owner/admin role.",
+  },
+  {
+    control_id: "AUTHZ-019",
+    control_name: "Edge Function authorization",
+    category: "edge",
+    coverage: "Edge Function called without JWT or with cross-tenant JWT",
+    expected_outcome: "401 for missing/invalid JWT; 403 for cross-tenant use",
+    failure_condition: "2xx returned without a valid same-tenant JWT",
+    failure_code: "EDGE_FUNCTION_AUTHZ_FAILURE",
+    blocking: "critical",
+    severity: "security_failure",
+    recommendation: "Every edge function must verify JWT and cross-check organization_id.",
+  },
+  {
+    control_id: "AUTHZ-020",
+    control_name: "Realtime authorization",
+    category: "realtime",
+    coverage: "Realtime channel subscription honors table RLS",
+    expected_outcome: "Cross-tenant subscriber receives no rows",
+    failure_condition: "Any cross-tenant row streamed",
+    failure_code: "REALTIME_AUTHZ_LEAK",
+    blocking: "critical",
+    severity: "critical_leak",
+    recommendation: "Confirm publication + RLS scoping; Realtime respects SELECT policies.",
+  },
+]);
+
+export const AUTHZ_CONTROL_INDEX = Object.freeze(
+  Object.fromEntries(AUTHZ_CONTROLS.map((c) => [c.control_id, c])),
+);
+
+export const AUTHZ_REQUIRED_CONTROL_IDS = Object.freeze(
+  AUTHZ_CONTROLS.map((c) => c.control_id),
+);

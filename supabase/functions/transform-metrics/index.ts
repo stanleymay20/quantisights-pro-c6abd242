@@ -28,6 +28,21 @@ function normalizeDate(val: string | undefined | null): string | null {
   return null;
 }
 
+// Matches src/lib/data-upload-utils.ts's slugifyMetric() exactly -- this
+// function must stay byte-for-byte in sync with the client version so a
+// dataset transformed here produces the same metric_type slugs an org's
+// dashboards were already built against.
+function slugifyMetric(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[%]/g, "_pct")
+    .replace(/[/]/g, "_per_")
+    .replace(/[()]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
@@ -75,13 +90,7 @@ serve(async (req) => {
     const isMultiMetric = valueIndices.length > 1;
     const headerNames: string[] = colHeaders || [];
 
-    const metricSlugs: string[] = valueIndices.map(idx => {
-      const name = headerNames[Number(idx)] || `metric_${idx}`;
-      return name.toLowerCase()
-        .replace(/[%]/g, "_pct").replace(/[/]/g, "_per_")
-        .replace(/[()]/g, "").replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "").replace(/_+/g, "_");
-    });
+    const metricSlugs: string[] = valueIndices.map(idx => slugifyMetric(headerNames[Number(idx)] || `metric_${idx}`));
     const slugCounts = new Map<string, number>();
     const dedupedSlugs = metricSlugs.map(s => {
       const count = (slugCounts.get(s) ?? 0) + 1;
@@ -114,13 +123,20 @@ serve(async (req) => {
 
       for (const raw of rawBatch) {
         const d = raw.raw_data as Record<string, string>;
-        
-        const dateRaw = dateIdx !== undefined ? d[dateIdx] : null;
+
+        // Matches DataUpload.tsx's client-side transform: a synthetic date
+        // is only ever a stand-in for "no date column was mapped at all".
+        // If a date column IS mapped but this particular row's value is
+        // missing or doesn't parse, the row is dropped rather than given a
+        // fabricated date -- silently synthesizing a date for a row that
+        // had a real (bad) one would misrepresent the source data.
         let dateVal: string | null = null;
-        if (dateRaw) {
+        if (dateIdx !== undefined) {
+          const dateRaw = d[dateIdx];
+          if (!dateRaw) { failedUpdates.push({ id: raw.id, error: "Missing date value" }); continue; }
           dateVal = normalizeDate(dateRaw);
-        }
-        if (!dateVal) {
+          if (!dateVal) { failedUpdates.push({ id: raw.id, error: `Invalid date: "${dateRaw}"` }); continue; }
+        } else {
           const syntheticYear = 2024 + Math.floor(raw.row_index / 365);
           const dayOfYear = raw.row_index % 365;
           const syntheticMonth = Math.floor(dayOfYear / 28) % 12 + 1;
@@ -155,7 +171,15 @@ serve(async (req) => {
             failedUpdates.push({ id: raw.id, error: `Invalid value: "${d[valIdx]}"` });
             continue;
           }
-          const mt = metricTypeIdx !== undefined ? (d[metricTypeIdx]?.trim() || default_metric_type || "revenue") : (default_metric_type || "revenue");
+          // Matches the client: when no metric_type column is mapped, name
+          // the metric after the value column's header (slugified) rather
+          // than a generic default -- otherwise every single-metric import
+          // without an explicit metric_type column would collapse to the
+          // same metric_type regardless of what the column was actually called.
+          const valueHeaderName = headerNames[Number(valIdx)];
+          const mt = metricTypeIdx !== undefined
+            ? (d[metricTypeIdx]?.trim() || default_metric_type || "revenue")
+            : (valueHeaderName ? slugifyMetric(valueHeaderName) : (default_metric_type || "revenue"));
           metricsToUpsert.push({
             organization_id, dataset_id,
             workspace_id: workspace_id || null,
@@ -167,9 +191,21 @@ serve(async (req) => {
         transformedIds.push(raw.id);
       }
 
-      if (metricsToUpsert.length > 0) {
-        for (let i = 0; i < metricsToUpsert.length; i += 500) {
-          const batch = metricsToUpsert.slice(i, i + 500);
+      // Dedup by conflict key before upserting: Postgres's ON CONFLICT DO
+      // UPDATE errors ("cannot affect row a second time") if two rows in
+      // the same statement map to the same key -- duplicate dates/regions
+      // in source data make this a real, not theoretical, risk. Matches
+      // the client's pre-upsert dedup (last-write-wins).
+      const dedupedMetrics = new Map<string, Record<string, unknown>>();
+      for (const m of metricsToUpsert) {
+        const key = `${m.organization_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
+        dedupedMetrics.set(key, m);
+      }
+      const uniqueMetrics = Array.from(dedupedMetrics.values());
+
+      if (uniqueMetrics.length > 0) {
+        for (let i = 0; i < uniqueMetrics.length; i += 500) {
+          const batch = uniqueMetrics.slice(i, i + 500);
           const { error } = await supabase.from("metrics").upsert(batch, {
             onConflict: "organization_id,metric_type,date,region,segment,source_id",
           });

@@ -46,9 +46,13 @@ const KeyboardShortcutsModal = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+            aria-hidden="true"
             onClick={() => setOpen(false)}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="shortcuts-dialog-title"
               initial={{ opacity: 0, y: 16, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -59,10 +63,11 @@ const KeyboardShortcutsModal = () => {
               <div className="flex items-center justify-between p-5 pb-3 border-b border-border/30">
                 <div className="flex items-center gap-2.5">
                   <Keyboard className="w-5 h-5 text-primary" />
-                  <h2 className="text-base font-bold font-display">Keyboard Shortcuts</h2>
+                  <h2 id="shortcuts-dialog-title" className="text-base font-bold tracking-tight">Keyboard Shortcuts</h2>
                 </div>
                 <button
                   onClick={() => setOpen(false)}
+                  aria-label="Close keyboard shortcuts"
                   className="p-1.5 rounded-lg hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
                 >
                   <X className="w-4 h-4" />

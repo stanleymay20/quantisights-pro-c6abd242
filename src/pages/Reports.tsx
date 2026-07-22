@@ -4,10 +4,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
+import { embedInsightsBatch } from "@/lib/decision-lifecycle";
 import { useToast } from "@/hooks/use-toast";
 import { FileText, Download, Loader2, Plus, BarChart3, Shield, TrendingUp, Crown } from "lucide-react";
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Report {
   id: string;
@@ -81,24 +84,26 @@ const Reports = () => {
     }
     setGenerating(true);
     try {
-      await supabase.functions.invoke("generate-insights", {
+      await invokeWithRetry("generate-insights", {
         body: { organization_id: currentOrgId, dataset_id: activeDatasetId },
       });
+      // Embed new insights into institutional memory (non-blocking)
+      embedInsightsBatch(currentOrgId);
 
-      const { data, error } = await supabase.functions.invoke("generate-report", {
+      const { data, error } = await invokeWithRetry<any>("generate-report", {
         body: { organization_id: currentOrgId, dataset_id: activeDatasetId, report_type: selectedType },
       });
 
       if (error) throw error;
 
       if (data?.download_url) {
-        window.open(data.download_url, "_blank");
+        window.open(String(data.download_url), "_blank");
       }
 
       toast({ title: "Report generated successfully!" });
       fetchReports();
-    } catch (err: any) {
-      toast({ title: "Failed to generate report", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Failed to generate report", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setGenerating(false);
     }
@@ -112,12 +117,17 @@ const Reports = () => {
   const getTypeConfig = (type: string) => REPORT_TYPES.find(t => t.value === type) || REPORT_TYPES[0];
 
   return (
-    <DatasetRequired moduleName="Reports">
+    <DatasetRequired moduleName="Reports" moduleDescription="Generate board-ready executive reports, KPI summaries, and governance packs from your live decision data.">
     <>
         <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Reports</h1>
+            <div>
+              <h1 className="text-[18px] font-semibold tracking-tight">Board-ready reports</h1>
+              <p className="text-xs text-muted-foreground">
+                Generate board-ready executive reports, KPI summaries, and governance packs.
+              </p>
+            </div>
           </div>
           <button
             onClick={handleGenerate}
@@ -129,6 +139,7 @@ const Reports = () => {
           </button>
         </header>
         <IntelligenceDisclaimer variant="banner" context="report" />
+        <SectionErrorBoundary sectionName="Reports">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Report Type Selector */}
           <div>
@@ -168,7 +179,7 @@ const Reports = () => {
           ) : reports.length === 0 ? (
             <div className="glass-card p-12 rounded-xl flex flex-col items-center justify-center min-h-[300px]">
               <FileText className="w-16 h-16 text-muted-foreground mb-4" />
-              <h2 className="text-xl font-semibold font-display mb-2">No Reports Yet</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight mb-2">No Reports Yet</h2>
               <p className="text-muted-foreground text-sm mb-6">Select a report type and generate your first executive report</p>
               <button
                 onClick={handleGenerate}
@@ -188,9 +199,6 @@ const Reports = () => {
                   return (
                     <div key={report.id} className="glass-card p-5 rounded-xl flex items-center justify-between">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                          <TypeIcon className="w-5 h-5 text-primary" />
-                        </div>
                         <div>
                           <p className="text-sm font-medium">{config.label}</p>
                           <p className="text-xs text-muted-foreground">
@@ -218,6 +226,7 @@ const Reports = () => {
             </div>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

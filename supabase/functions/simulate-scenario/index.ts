@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyRateLimit } from "../_shared/rate-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { arimaForecast } from "../_shared/ml-engine.ts";
 
 const TIER_LIMITS: Record<string, number> = {
   starter: 0,
@@ -285,7 +286,9 @@ serve(async (req) => {
       };
     }
 
-    // Calculate baseline averages per metric (last 30 data points)
+    // Calculate baseline averages per metric (last 30 data points) — used as
+    // the hasDeps gate and as a per-value fallback when a metric's series is
+    // too short/unstable to forecast.
     const metricAverages: Record<string, number> = {};
     const metricByType: Record<string, number[]> = {};
     for (const m of metrics) {
@@ -310,6 +313,19 @@ serve(async (req) => {
     // Cap at 365 days
     const dates = forecastDates.slice(0, 365);
 
+    // Per-metric day-by-day projection. A flat historical average reused for
+    // every date produced identical baseline/simulated/delta values across
+    // the entire forecast horizon — every "projection" was the same number
+    // repeated. arimaForecast (already used elsewhere for real forecasting)
+    // projects the metric's actual trend forward one value per date; it
+    // already degrades to a flat mean when a series is too short (<10
+    // points) to fit, which is honest behavior for genuinely sparse data.
+    const metricForecasts: Record<string, number[]> = {};
+    for (const [type, vals] of Object.entries(metricByType)) {
+      const { forecast } = arimaForecast(vals, dates.length);
+      metricForecasts[type] = forecast.map((v) => (Number.isFinite(v) ? v : metricAverages[type]));
+    }
+
     // Compute results for each KPI × date
     const allResults: {
       scenario_id: string;
@@ -330,12 +346,12 @@ serve(async (req) => {
 
       kpiSummaries[kpi.id] = { name: kpi.name, totalBaseline: 0, totalSimulated: 0 };
 
-      for (const date of dates) {
+      for (const [dateIndex, date] of dates.entries()) {
         const baselineVars: Record<string, number> = {};
         const simulatedVars: Record<string, number> = {};
 
         for (const dep of deps) {
-          const baseVal = metricAverages[dep] || 0;
+          const baseVal = metricForecasts[dep]?.[dateIndex] ?? metricAverages[dep] ?? 0;
           baselineVars[dep] = baseVal;
           const adj = adjustmentMap[dep];
           simulatedVars[dep] = adj ? applyAdjustment(baseVal, adj.type, adj.value) : baseVal;

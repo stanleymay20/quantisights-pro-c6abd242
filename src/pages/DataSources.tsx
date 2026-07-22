@@ -5,11 +5,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import {
   Database, Globe, Webhook, FileSpreadsheet, Plus, Copy, Check,
   RefreshCw, Trash2, Clock, AlertCircle, CheckCircle2, XCircle, Lock, Eye, EyeOff, Play
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 type SourceType = "csv" | "webhook" | "api" | "database";
 
@@ -61,7 +63,7 @@ const SyncButton = ({ source, organizationId, onComplete }: { source: DataSource
     setSyncing(true);
     setResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke("connector-pull", {
+      const { data, error } = await invokeWithRetry<{ records?: number; errors?: string[] }>("connector-pull", {
         body: {
           connector_type: (source.config as any)?.connector_type || "stripe",
           data_source_id: source.id,
@@ -79,9 +81,10 @@ const SyncButton = ({ source, organizationId, onComplete }: { source: DataSource
         variant: syncResult.errors.length > 0 && syncResult.records === 0 ? "destructive" : "default",
       });
       onComplete();
-    } catch (err: any) {
-      setResult({ records: 0, errors: [err.message] });
-      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setResult({ records: 0, errors: [msg] });
+      toast({ title: "Sync failed", description: msg, variant: "destructive" });
     } finally {
       setSyncing(false);
     }
@@ -130,14 +133,14 @@ const DataSources = () => {
   const [revealedKey, setRevealedKey] = useState<{ sourceId: string; rawKey: string } | null>(null);
 
   const fetchSources = async () => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     setLoading(true);
     const { data } = await supabase
       .from("data_sources")
       .select("*")
       .eq("organization_id", currentOrgId)
       .order("created_at", { ascending: false });
-    setSources((data as any) || []);
+    setSources((data as DataSource[]) || []);
     setLoading(false);
   };
 
@@ -148,7 +151,7 @@ const DataSources = () => {
       .eq("data_source_id", sourceId)
       .order("created_at", { ascending: false })
       .limit(10);
-    setSyncJobs((prev) => ({ ...prev, [sourceId]: (data as any) || [] }));
+    setSyncJobs((prev) => ({ ...prev, [sourceId]: (data as SyncJob[]) || [] }));
   };
 
   useEffect(() => { fetchSources(); }, [currentOrgId]);
@@ -246,7 +249,7 @@ const DataSources = () => {
         <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Data Sources</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Data Sources</h1>
           </div>
           <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all">
             <Plus className="w-4 h-4" /> Add Source
@@ -276,7 +279,7 @@ const DataSources = () => {
           {/* Create modal */}
           {showCreate && (
             <div className="glass-card p-6 rounded-xl mb-6 border border-primary/20">
-              <h2 className="text-lg font-semibold font-display mb-4">New Data Source</h2>
+              <h2 className="text-lg font-semibold tracking-tight mb-4">New Data Source</h2>
               <div className="grid md:grid-cols-2 gap-4 mb-4">
                 {SOURCE_TYPES.map((st) => {
                   const Icon = st.icon;
@@ -350,7 +353,7 @@ const DataSources = () => {
           ) : sources.length === 0 ? (
             <div className="glass-card p-12 rounded-xl flex flex-col items-center justify-center">
               <Database className="w-12 h-12 text-muted-foreground mb-4" />
-              <h2 className="text-lg font-semibold font-display mb-2">No data sources</h2>
+              <h2 className="text-lg font-semibold tracking-tight mb-2">No data sources</h2>
               <p className="text-sm text-muted-foreground mb-4">Create a webhook endpoint or connector to start ingesting data.</p>
               <button onClick={() => setShowCreate(true)} className="px-5 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all">
                 Add Your First Source
@@ -362,13 +365,11 @@ const DataSources = () => {
                 {sources.map((src) => {
                   const Icon = SOURCE_TYPES.find((t) => t.value === src.source_type)?.icon || Database;
                   return (
+    <SectionErrorBoundary sectionName="Data Sources">
                     <div key={src.id} onClick={() => setSelectedSource(src.id)}
                       className={`glass-card p-5 rounded-xl cursor-pointer transition-all ${selectedSource === src.id ? "ring-2 ring-primary" : "hover:border-primary/30"}`}>
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Icon className="w-4 h-4 text-primary" />
-                          </div>
                           <div>
                             <h3 className="text-sm font-semibold">{src.name}</h3>
                             <p className="text-xs text-muted-foreground capitalize">{src.source_type}</p>
@@ -418,6 +419,7 @@ const DataSources = () => {
                         <p className="text-xs text-muted-foreground mt-2">Last sync: {new Date(src.last_synced_at).toLocaleString()}</p>
                       )}
                     </div>
+    </SectionErrorBoundary>
                   );
                 })}
               </div>
@@ -425,7 +427,7 @@ const DataSources = () => {
               {/* Sync jobs panel */}
               <div className="space-y-4">
                 <div className="glass-card p-5 rounded-xl">
-                  <h3 className="text-sm font-semibold font-display mb-3">{selectedSource ? "Sync History" : "Select a source"}</h3>
+                  <h3 className="text-sm font-semibold tracking-tight mb-3">{selectedSource ? "Sync History" : "Select a source"}</h3>
                   {selectedSource && (syncJobs[selectedSource] || []).length === 0 && (
                     <p className="text-xs text-muted-foreground">No sync jobs yet</p>
                   )}
@@ -448,7 +450,7 @@ const DataSources = () => {
                 </div>
 
                 <div className="glass-card p-5 rounded-xl">
-                  <h3 className="text-sm font-semibold font-display mb-2">Webhook Quick Start</h3>
+                  <h3 className="text-sm font-semibold tracking-tight mb-2">Webhook Quick Start</h3>
                   <div className="text-xs text-muted-foreground space-y-2">
                     <p>1. Create a webhook source above</p>
                     <p>2. Copy the URL and API key (shown once)</p>

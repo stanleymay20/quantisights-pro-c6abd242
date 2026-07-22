@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,7 @@ interface KpiTemplate {
   name: string;
   industry: string;
   description: string;
-  kpis: any[];
+  kpis: Array<any>;
 }
 
 const INDUSTRIES = [
@@ -69,12 +70,13 @@ const DATA_OPTIONS = [
 
 const Onboarding = () => {
   const { user } = useAuth();
-  const { currentOrgId, currentOrg } = useOrganization();
+  const { currentOrgId, currentOrg, loading: orgLoading } = useOrganization();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(true);
 
   // Step 1 - Org profile
   const [orgName, setOrgName] = useState("");
@@ -96,12 +98,38 @@ const Onboarding = () => {
     if (currentOrg) setOrgName(currentOrg.name);
   }, [currentOrg]);
 
+  // Guard: if this org has already completed onboarding, don't show the wizard again.
+  // Without this, navigating to /onboarding directly (bookmark, back button, stale link)
+  // would always restart from Step 1 even for fully set-up organizations.
+  useEffect(() => {
+    if (!currentOrgId) {
+      if (!orgLoading) setCheckingStatus(false);
+      return;
+    }
+    let active = true;
+    supabase
+      .from("organizations")
+      .select("onboarding_completed")
+      .eq("id", currentOrgId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!active) return;
+        if (data?.onboarding_completed) {
+          sessionStorage.setItem(`onboarding_checked_${currentOrgId}`, "done");
+          navigate("/executive", { replace: true });
+        } else {
+          setCheckingStatus(false);
+        }
+      });
+    return () => { active = false; };
+  }, [currentOrgId, orgLoading, navigate]);
+
   useEffect(() => {
     supabase
       .from("kpi_templates")
       .select("*")
       .then(({ data }) => {
-        if (data) setTemplates(data as any);
+        if (data) setTemplates(data as unknown as KpiTemplate[]);
       });
   }, []);
 
@@ -146,7 +174,7 @@ const Onboarding = () => {
     try {
       await saveOrgProfile();
 
-      const { data, error } = await supabase.functions.invoke("complete-onboarding", {
+      const { data, error } = await invokeWithRetry<any>("complete-onboarding", {
         body: {
           organization_id: currentOrgId,
           roles: selectedRoles,
@@ -155,7 +183,7 @@ const Onboarding = () => {
       });
 
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) throw new Error(String(data.error));
 
       toast({
         title: "Onboarding complete!",
@@ -169,8 +197,8 @@ const Onboarding = () => {
       } else {
         navigate("/executive");
       }
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -189,21 +217,40 @@ const Onboarding = () => {
 
   const totalSteps = 5;
 
+  if (checkingStatus) {
+    return (
+      <div className="min-h-dvh bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-dvh bg-background flex flex-col">
       <div className="border-b border-border/30 px-6 py-4 flex items-center justify-between bg-background/60 backdrop-blur-sm">
-        <img src={logo} alt="Quantivis" className="h-8" />
-        <div className="flex items-center gap-2">
-          {Array.from({ length: totalSteps }).map((_, i) => (
-            <div
-              key={i}
-              className={`h-2 rounded-full transition-all duration-300 ${
-                i + 1 <= step ? "w-8 bg-primary" : "w-2 bg-muted"
-              }`}
-            />
-          ))}
+        <div className="flex-1 flex items-center">
+          <button
+            onClick={() => navigate("/executive")}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Exit setup
+          </button>
         </div>
-        <span className="text-sm text-muted-foreground">Step {step} of {totalSteps}</span>
+        <img src={logo} alt="Quantivis" className="h-8" />
+        <div className="flex-1 flex items-center justify-end gap-4">
+          <div className="flex items-center gap-2">
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <div
+                key={i}
+                className={`h-2 rounded-full transition-all duration-300 ${
+                  i + 1 <= step ? "w-8 bg-primary" : "w-2 bg-muted"
+                }`}
+              />
+            ))}
+          </div>
+          <span className="text-sm text-muted-foreground whitespace-nowrap">Step {step} of {totalSteps}</span>
+        </div>
       </div>
 
       <main className="flex-1 flex items-center justify-center p-8">
@@ -428,19 +475,19 @@ const Onboarding = () => {
                 <CardContent className="p-6 space-y-4">
                   <div className="flex items-center justify-between py-3 border-b border-border">
                     <span className="text-muted-foreground">Organization</span>
-                    <span className="font-medium">{orgName || currentOrg?.name}</span>
+                    <span className="font-medium">{orgName || currentOrg?.name || "Your organization"}</span>
                   </div>
                   <div className="flex items-center justify-between py-3 border-b border-border">
                     <span className="text-muted-foreground">Industry</span>
-                    <span className="font-medium capitalize">{industry || "—"}</span>
+                    <span className="font-medium capitalize">{INDUSTRIES.find(i => i.value === industry)?.label || "Not specified"}</span>
                   </div>
                   <div className="flex items-center justify-between py-3 border-b border-border">
                     <span className="text-muted-foreground">Company Size</span>
-                    <span className="font-medium">{SIZE_BANDS.find(s => s.value === sizeBand)?.label || "—"}</span>
+                    <span className="font-medium">{SIZE_BANDS.find(s => s.value === sizeBand)?.label || "Not specified"}</span>
                   </div>
                   <div className="flex items-center justify-between py-3 border-b border-border">
                     <span className="text-muted-foreground">Revenue Band</span>
-                    <span className="font-medium">{REVENUE_BANDS.find(r => r.value === revenueBand)?.label || "—"}</span>
+                    <span className="font-medium">{REVENUE_BANDS.find(r => r.value === revenueBand)?.label || "Not specified"}</span>
                   </div>
                   <div className="flex items-center justify-between py-3 border-b border-border">
                     <span className="text-muted-foreground">Executive Roles</span>
@@ -458,7 +505,7 @@ const Onboarding = () => {
                   </div>
                   <div className="flex items-center justify-between py-3">
                     <span className="text-muted-foreground">Data Source</span>
-                    <span className="font-medium capitalize">{dataOption}</span>
+                    <span className="font-medium">{DATA_OPTIONS.find(o => o.key === dataOption)?.label || "Connect Later"}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -508,7 +555,7 @@ const Onboarding = () => {
                 ) : (
                   <ArrowRight className="w-4 h-4" />
                 )}
-                {loading ? "Generating..." : "Launch Intelligence Engine"}
+                {loading ? "Setting up..." : "Complete Setup"}
               </Button>
             )}
           </div>

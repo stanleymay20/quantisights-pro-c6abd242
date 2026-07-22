@@ -170,7 +170,7 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                 <h4 className="text-xs text-muted-foreground mb-1">Diagnosis Confidence</h4>
                 <div className="flex items-center gap-3">
                   <Progress value={d.confidence} className="flex-1 h-2" />
-                  <span className="text-sm font-mono font-bold">{d.confidence}%</span>
+                  <span className="text-sm font-mono font-bold">{Math.round(d.confidence)}%</span>
                 </div>
                 <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground/60">
                   <span>Sample: {d.sample_size} pts</span>

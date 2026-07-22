@@ -10,6 +10,7 @@ import {
   CheckCircle2, AlertTriangle, ArrowRight, Award, BarChart3,
   BookOpen, RefreshCw,
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 /**
  * Decision Fitness Framework — from "Decision Intelligence: The Operating System
@@ -173,12 +174,12 @@ const DecisionFitness = () => {
     const grade = getGrade(overallScore);
     const weakest = [...dimensionScores].sort((a, b) => a.score - b.score).slice(0, 3);
     return (
-      <div className="min-h-screen bg-background p-4 sm:p-6 lg:p-8">
+      <div className="min-h-dvh bg-background p-4 sm:p-6 lg:p-8">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center gap-3 mb-8">
             <SidebarMobileToggle />
             <div>
-              <h1 className="text-2xl font-bold font-display">Decision Fitness Results</h1>
+              <h1 className="text-[18px] font-semibold tracking-tight tracking-tight">Decision Fitness Results</h1>
               <p className="text-sm text-muted-foreground">Based on the Decision Fitness Framework</p>
             </div>
           </div>
@@ -187,7 +188,7 @@ const DecisionFitness = () => {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="mb-6 border-primary/20">
               <CardContent className="p-8 text-center">
-                <div className="text-6xl font-bold font-display mb-2">{overallScore}</div>
+                <div className="text-6xl font-bold tracking-tight mb-2">{overallScore}</div>
                 <Badge className={`${grade.bg} ${grade.color} border-0 text-sm px-3 py-1 mb-4`}>
                   {grade.label}
                 </Badge>
@@ -280,12 +281,13 @@ const DecisionFitness = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 sm:p-6 lg:p-8">
+    <SectionErrorBoundary sectionName="Decision Fitness">
+    <div className="min-h-dvh bg-background p-4 sm:p-6 lg:p-8">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-3 mb-2">
           <SidebarMobileToggle />
           <div>
-            <h1 className="text-2xl font-bold font-display">Decision Fitness Assessment</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight tracking-tight">Decision Fitness Assessment</h1>
             <p className="text-sm text-muted-foreground">
               Diagnose your organization's strategic decision-making capacity across 7 dimensions
             </p>
@@ -386,6 +388,7 @@ const DecisionFitness = () => {
         </div>
       </div>
     </div>
+    </SectionErrorBoundary>
   );
 };
 

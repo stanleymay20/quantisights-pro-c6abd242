@@ -80,7 +80,7 @@ export const usePortfolioCompanies = (orgId: string | null, datasetId: string | 
   const updateCompany = async (id: string, updates: Partial<PortfolioCompany>) => {
     if (!orgId || !datasetId) throw new Error("Organization and dataset context required (Active Data Contract)");
     // Prevent mutation of identity fields
-    const { id: _id, organization_id: _o, dataset_id: _d, created_at: _c, ...safeUpdates } = updates as any;
+    const { id: _id, organization_id: _o, dataset_id: _d, created_at: _c, ...safeUpdates } = updates as Partial<Record<string, unknown>>;
     const { error } = await supabase
       .from("portfolio_companies")
       .update({ ...safeUpdates, updated_at: new Date().toISOString() })

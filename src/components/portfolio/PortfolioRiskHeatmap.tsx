@@ -47,7 +47,7 @@ const PortfolioRiskHeatmap = ({ companies, onSelect, selectedId }: Props) => {
     return (
       <div className="rounded-xl border-2 border-dashed border-border/40 p-12 text-center">
         <AlertTriangle className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
-        <h3 className="text-lg font-semibold mb-1">No Portfolio Companies</h3>
+        <h3 className="text-[14px] font-semibold mb-1">No Portfolio Companies</h3>
         <p className="text-sm text-muted-foreground">Add your first portfolio company to start monitoring risk across your fund.</p>
       </div>
     );

@@ -59,9 +59,9 @@ function deriveLearning(d: RecentDecision): string | null {
   }
 
   if (accuracy != null) {
-    if (accuracy >= 70) return `Prediction accuracy ${accuracy}% — model confidence reinforced.`;
-    if (accuracy >= 40) return `Prediction accuracy ${accuracy}% — model recalibrating for this signal class.`;
-    return `Prediction accuracy ${accuracy}% — confidence reduced for similar future cases until more outcome data collected.`;
+    if (accuracy >= 70) return `Prediction accuracy ${Math.round(accuracy)}% — model confidence reinforced.`;
+    if (accuracy >= 40) return `Prediction accuracy ${Math.round(accuracy)}% — model recalibrating for this signal class.`;
+    return `Prediction accuracy ${Math.round(accuracy)}% — confidence reduced for similar future cases until more outcome data collected.`;
   }
 
   return `Outcome recorded (${actual > 0 ? "+" : ""}${actual.toFixed(1)}%). Feeding into calibration engine.`;
@@ -135,10 +135,7 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
     >
       <div className="flex items-center justify-between mb-2 sm:mb-4">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary" />
-          </div>
-          <h3 className="text-xs sm:text-sm font-semibold font-display">Decision Memory</h3>
+          <h3 className="text-xs sm:text-sm font-semibold tracking-tight">Decision Memory</h3>
         </div>
         <Link to="/decisions" className="text-[10px] sm:text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5">
           {isEmpty ? "Log first" : "Full ledger"} <ArrowRight className="w-3 h-3" />
@@ -241,7 +238,7 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
                         </span>
                         {d.prediction_accuracy_score != null && (
                           <span className={`${d.prediction_accuracy_score >= 70 ? "text-success" : d.prediction_accuracy_score >= 40 ? "text-warning" : "text-destructive"}`}>
-                            Accuracy: {d.prediction_accuracy_score}%
+                            Accuracy: {Math.round(d.prediction_accuracy_score)}%
                           </span>
                         )}
                       </div>

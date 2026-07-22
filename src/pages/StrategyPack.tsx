@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { useOrganization } from "@/hooks/useOrganization";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
@@ -22,6 +21,7 @@ interface RoleRisk {
   score: number;
   components: { deviation: number; trend: number; volatility: number; forecast: number };
   escalation_required: boolean;
+  last_updated?: string;
 }
 
 interface Convergence {
@@ -68,7 +68,7 @@ interface Advisory {
   confidence_cap_reason: string | null;
   rationale: string | null;
   impact_score: number | null;
-  source_evidence: any;
+  source_evidence: Array<any> | null;
 }
 
 // ─── Helpers ───
@@ -107,8 +107,7 @@ const RISK_DIMENSIONS = ["deviation", "trend", "volatility", "forecast"] as cons
 const ROLES = ["ceo", "cfo", "cmo", "coo"];
 
 const StrategyPack = () => {
-  const { currentOrgId } = useOrganization();
-  const { datasetId: activeDatasetId } = useActiveDataContext();
+  const { orgId: currentOrgId, datasetId: activeDatasetId } = useActiveDataContext();
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState("");
 
@@ -127,7 +126,7 @@ const StrategyPack = () => {
       setLoading(true);
       const [orgRes, riskRes, eciRes, conflictRes, decRes, simRes, advRes] = await Promise.all([
         supabase.from("organizations").select("name").eq("id", currentOrgId).maybeSingle(),
-        supabase.from("executive_risk_index").select("role_type, score, components, escalation_required").eq("organization_id", currentOrgId),
+        supabase.from("executive_risk_index").select("role_type, score, components, escalation_required, last_updated").eq("organization_id", currentOrgId),
         supabase.from("executive_convergence_index").select("score, alignment_status, dispersion, conflict_penalty").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("executive_conflicts").select("*").eq("organization_id", currentOrgId).is("resolved_at", null),
         supabase.from("decision_ledger").select("id, recommended_action, decision_type, decision_status, capped_confidence, predicted_net_impact, predicted_roi_probability, outcome_delta, execution_status, confidence_cap_reason, raw_confidence").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(50),
@@ -138,8 +137,8 @@ const StrategyPack = () => {
       ]);
 
       setOrgName(orgRes.data?.name || "Organization");
-      setRoleRisks((riskRes.data || []).map((r: any) => ({ ...r, components: r.components || {} })));
-      setConvergence(eciRes.data as any);
+      setRoleRisks((riskRes.data || []).map((r: any) => ({ ...r, components: (r.components as RoleRisk["components"]) || {} })) as RoleRisk[]);
+      setConvergence(eciRes.data as unknown as Convergence | null);
       setConflicts(conflictRes.data || []);
       setDecisions((decRes.data || []) as unknown as DecisionRow[]);
       setSimulations((simRes.data || []) as unknown as SimResult[]);
@@ -150,6 +149,16 @@ const StrategyPack = () => {
   }, [currentOrgId]);
 
   const maxRisk = roleRisks.reduce((m, r) => Math.max(m, r.score), 0);
+  // Risk scores are recomputed periodically (compute-executive-signals),
+  // so this pack and a board report generated moments apart can show
+  // genuinely different current numbers -- both correct, just different
+  // snapshots. Showing "today's date" instead of when the risk data was
+  // actually last computed made that look like an unexplained
+  // contradiction rather than a live-data timing difference.
+  const riskDataAsOf = roleRisks.reduce<string | null>((latest, r) => {
+    if (!r.last_updated) return latest;
+    return !latest || r.last_updated > latest ? r.last_updated : latest;
+  }, null);
   const posture = governancePosture(maxRisk, conflicts.length);
   const completedDecisions = decisions.filter(d => d.execution_status === "completed");
   const successRate = completedDecisions.length > 0
@@ -203,14 +212,17 @@ const StrategyPack = () => {
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4 print:mb-2">
               <Badge variant="outline" className="text-xs font-mono">01</Badge>
-              <h2 className="text-xl font-bold">Executive Posture</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Executive Posture</h2>
             </div>
             <Card className={`${posture.bg} border-none`}>
               <CardContent className="p-6 flex items-center justify-between">
                 <div>
                   <p className={`text-2xl font-bold ${posture.color}`}>{posture.label}</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {orgName} • {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+                    {orgName} • Compiled {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+                    {riskDataAsOf && (
+                      <> • Risk data as of {new Date(riskDataAsOf).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>
+                    )}
                   </p>
                 </div>
                 <div className="text-right">
@@ -233,7 +245,7 @@ const StrategyPack = () => {
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">02</Badge>
-              <h2 className="text-xl font-bold">Risk Heatmap</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Risk Heatmap</h2>
             </div>
             <Card>
               <CardContent className="p-0">
@@ -294,7 +306,7 @@ const StrategyPack = () => {
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">03</Badge>
-              <h2 className="text-xl font-bold">Probabilistic Outlook</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Probabilistic Outlook</h2>
             </div>
             {simulations.length === 0 ? (
               <Card><CardContent className="p-8 text-center text-muted-foreground">No simulations available. Run Monte Carlo from the Simulations module.</CardContent></Card>
@@ -322,7 +334,7 @@ const StrategyPack = () => {
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground">Decline Risk</p>
-                          <p className="font-mono font-semibold">{sim.probability_negative}%</p>
+                          <p className="font-mono font-semibold">{Math.round(sim.probability_negative)}%</p>
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground">Data Quality</p>
@@ -345,7 +357,7 @@ const StrategyPack = () => {
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">04</Badge>
-              <h2 className="text-xl font-bold">Decision Comparison</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Decision Comparison</h2>
               <span className="text-xs text-muted-foreground ml-2">Select up to 4 decisions to compare</span>
             </div>
 
@@ -392,7 +404,7 @@ const StrategyPack = () => {
                     <tbody>
                       <CompRow label="Type" values={comparedDecisions.map(d => d.decision_type)} />
                       <CompRow label="Status" values={comparedDecisions.map(d => d.decision_status)} />
-                      <CompRow label="Confidence" values={comparedDecisions.map(d => d.capped_confidence != null ? `${d.capped_confidence}%` : "—")} />
+                      <CompRow label="Confidence" values={comparedDecisions.map(d => d.capped_confidence != null ? `${Math.round(d.capped_confidence)}%` : "—")} />
                       <CompRow label="ROI Prob." values={comparedDecisions.map(d => d.predicted_roi_probability != null ? `${Number(d.predicted_roi_probability).toFixed(0)}%` : "—")} />
                       <CompRow label="Net Impact" values={comparedDecisions.map(d => d.predicted_net_impact != null ? fmt(Number(d.predicted_net_impact)) : "—")} />
                       <CompRow label="Outcome Δ" values={comparedDecisions.map(d => d.outcome_delta != null ? `${Number(d.outcome_delta) > 0 ? "+" : ""}${Number(d.outcome_delta).toFixed(1)}%` : "—")} />
@@ -410,7 +422,7 @@ const StrategyPack = () => {
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">05</Badge>
-              <h2 className="text-xl font-bold">Strategic Recommendations</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight">Strategic Recommendations</h2>
             </div>
             {advisories.length === 0 ? (
               <Card><CardContent className="p-8 text-center text-muted-foreground">No active advisories.</CardContent></Card>

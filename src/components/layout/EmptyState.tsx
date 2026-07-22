@@ -40,7 +40,7 @@ const EmptyState = ({
       <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
         <Icon className="w-8 h-8 text-primary" />
       </div>
-      <h2 className="text-xl font-bold font-display mb-2">{title}</h2>
+      <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">{title}</h2>
       <p className="text-sm text-muted-foreground leading-relaxed mb-6">{description}</p>
       <div className="flex items-center gap-3">
         {actionLabel && (

@@ -96,7 +96,7 @@ const ValueOfInformation = ({ decisions }: { decisions: Decision[] }) => {
               <div>
                 <p className="text-[10px] text-muted-foreground">Confidence</p>
                 <p className={`text-sm font-bold font-mono ${item.confidence >= 75 ? "text-success" : item.confidence >= 50 ? "text-warning" : "text-destructive"}`}>
-                  {item.confidence}%
+                  {Math.round(item.confidence)}%
                 </p>
               </div>
               <div>

@@ -202,13 +202,13 @@ serve(async (req) => {
         .select("metric_type")
         .eq("organization_id", kpi.organization_id)
         .eq("dataset_id", dataset_id);
-      const knownTypes = new Set((knownMetrics || []).map((m: any) => m.metric_type));
+      const knownTypes: Set<string> = new Set((knownMetrics || []).map((m: any) => String(m.metric_type)));
 
-      deps = uniqueTokens.filter((t: string) => knownTypes.has(t));
+      deps = (uniqueTokens as string[]).filter((t: string) => knownTypes.has(t));
 
       if (deps.length === 0) {
-        deps = [...knownTypes].filter((mt: string) =>
-          uniqueTokens.some((t: string) => mt.includes(t) || t.includes(mt))
+        deps = ([...knownTypes] as string[]).filter((mt: string) =>
+          (uniqueTokens as string[]).some((t: string) => mt.includes(t) || t.includes(mt))
         );
       }
 

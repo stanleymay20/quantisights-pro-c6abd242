@@ -47,8 +47,8 @@ const QuickDecisionLog = ({ organizationId, onLogged }: QuickDecisionLogProps) =
         setConfidence([65]);
         onLogged?.();
       }, 1500);
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
@@ -78,9 +78,6 @@ const QuickDecisionLog = ({ organizationId, onLogged }: QuickDecisionLogProps) =
         onClick={() => setExpanded(true)}
         className="w-full flex items-center gap-3 p-4 rounded-xl border border-dashed border-primary/20 bg-primary/[0.02] hover:bg-primary/[0.05] hover:border-primary/30 transition-all group"
       >
-        <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 group-hover:bg-primary/15 transition-colors">
-          <Plus className="w-4 h-4 text-primary" />
-        </div>
         <div className="text-left flex-1 min-w-0">
           <p className="text-sm font-semibold">Log a strategic decision</p>
           <p className="text-xs text-muted-foreground">3 clicks. The system learns from every call you make.</p>

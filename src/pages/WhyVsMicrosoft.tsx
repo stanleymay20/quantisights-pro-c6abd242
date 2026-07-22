@@ -47,7 +47,7 @@ const renderCell = (value: boolean | string) => {
 };
 
 const WhyVsMicrosoft = () => (
-  <div className="min-h-screen bg-background">
+  <div className="min-h-dvh bg-background flex flex-col">
     {/* Header */}
     <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
       <div className="container mx-auto px-6 h-14 flex items-center justify-between">
@@ -58,11 +58,11 @@ const WhyVsMicrosoft = () => (
       </div>
     </header>
 
-    <main className="container mx-auto px-6 py-16 max-w-4xl">
+    <main className="flex-1 container mx-auto px-6 py-16 max-w-4xl">
       {/* Hero */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-16">
         <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-4">Quantivis vs. Microsoft</p>
-        <h1 className="text-3xl md:text-4xl font-bold font-display mb-4 leading-tight">
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-4 leading-tight">
           You already have the data.<br />
           <span className="gradient-text">Who's governing the decisions?</span>
         </h1>
@@ -95,7 +95,7 @@ const WhyVsMicrosoft = () => (
 
       {/* Comparison Table */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-        <h2 className="text-xl font-bold font-display text-center mb-6">
+        <h2 className="text-[16px] font-semibold tracking-tight tracking-tight text-center mb-6">
           Feature-by-Feature Comparison
         </h2>
         <div className="glass-card overflow-hidden">
@@ -157,7 +157,7 @@ const WhyVsMicrosoft = () => (
         transition={{ delay: 0.6 }}
         className="text-center mt-16"
       >
-        <h3 className="text-lg font-bold font-display mb-3">
+        <h3 className="text-lg font-bold tracking-tight mb-3">
           Ready to govern your decisions, not just visualize your data?
         </h3>
         <p className="text-sm text-muted-foreground mb-6">

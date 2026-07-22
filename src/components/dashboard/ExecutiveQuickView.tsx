@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import type { Insight } from "@/hooks/useInsights";
 import type { MetricTypeSummary } from "@/hooks/useMetrics";
+import { filterCriticalInsights } from "@/lib/insight-filters";
+import { getSeverityStyle } from "@/lib/severity-colors";
 import CrossWorkspaceIntelligence from "./CrossWorkspaceIntelligence";
 
 interface ExecutiveQuickViewProps {
@@ -40,9 +42,7 @@ const ExecutiveQuickView = memo(({
   const metricTypesList = quickMetrics.map(m => m.metricType);
 
   // Top 3 insights
-  const topInsights = insights
-    .filter(i => i.severity === "high" || i.severity === "medium")
-    .slice(0, 3);
+  const topInsights = filterCriticalInsights(insights).slice(0, 3);
 
   return (
     <motion.div
@@ -83,12 +83,12 @@ const ExecutiveQuickView = memo(({
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Calibration</span>
           </div>
           <p className="text-2xl font-bold text-foreground">
-            {calibrationScore != null ? `${calibrationScore}%` : "—"}
+            {calibrationScore != null ? `${calibrationScore}%` : "Learning"}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             {calibrationScore != null
-              ? calibrationScore >= 70 ? "Well-calibrated" : "Needs improvement"
-              : "Needs more decisions"
+              ? calibrationScore >= 70 ? "Well-calibrated" : "Improving with each outcome"
+              : "Collecting outcome data"
             }
           </p>
         </div>
@@ -148,9 +148,7 @@ const ExecutiveQuickView = memo(({
                 key={insight.id}
                 className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border/30"
               >
-                <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                  insight.severity === "high" ? "bg-destructive" : "bg-warning"
-                }`} />
+                <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${getSeverityStyle(insight.severity).dot}`} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium line-clamp-2">{insight.message}</p>
                 </div>

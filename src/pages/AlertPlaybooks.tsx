@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Bell, Plus, Loader2, Play, Pause, Zap, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Playbook {
   id: string;
@@ -22,7 +23,7 @@ interface Playbook {
   trigger_condition: string;
   trigger_threshold: number;
   severity: string;
-  escalation_steps: any[];
+  escalation_steps: Array<any>;
   cooldown_minutes: number;
   is_active: boolean;
   last_triggered_at: string | null;
@@ -62,7 +63,7 @@ const AlertPlaybooks = () => {
 
   // Dynamically discover metric types
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     const fetchTypes = async () => {
       const { data } = await supabase
         .from("metrics")
@@ -93,7 +94,7 @@ const AlertPlaybooks = () => {
   const [pbSteps, setPbSteps] = useState('[\n  {"action": "notify_slack", "channel": "#alerts", "delay_minutes": 0},\n  {"action": "email_executive", "role": "cfo", "delay_minutes": 15},\n  {"action": "create_advisory", "priority": "high", "delay_minutes": 30}\n]');
 
   const fetchData = useCallback(async () => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     setLoading(true);
     const [pbRes, exRes] = await Promise.all([
       supabase.from("alert_playbooks").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
@@ -110,7 +111,7 @@ const AlertPlaybooks = () => {
     if (!currentOrgId || !user || !pbName.trim()) return;
     setSaving(true);
     try {
-      let steps: any[];
+      let steps: Array<any>;
       try { steps = JSON.parse(pbSteps); } catch { throw new Error("Invalid escalation steps JSON"); }
 
       const { error } = await supabase.from("alert_playbooks").insert({
@@ -130,8 +131,8 @@ const AlertPlaybooks = () => {
       setAddOpen(false);
       setPbName("");
       fetchData();
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     }
     setSaving(false);
   };
@@ -147,7 +148,7 @@ const AlertPlaybooks = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <Bell className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Alert Playbooks</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Alert Playbooks</h1>
           </div>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -188,6 +189,7 @@ const AlertPlaybooks = () => {
           </Dialog>
         </header>
 
+        <SectionErrorBoundary sectionName="Alert Playbooks">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Stats */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -268,6 +270,7 @@ const AlertPlaybooks = () => {
             </div>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
   );
 };

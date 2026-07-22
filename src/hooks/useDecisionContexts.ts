@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { Json } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 export interface DecisionContext {
   id: string;
@@ -112,7 +112,7 @@ export const useDecisionContexts = (organizationId: string | null) => {
   const updateContext = useCallback(async (id: string, updates: Partial<CreateDecisionContextInput>) => {
     if (!organizationId) throw new Error("Organization context required");
 
-    const dbUpdates: Record<string, unknown> = {};
+    const dbUpdates: Database["public"]["Tables"]["decision_contexts"]["Update"] = {};
     if (updates.name !== undefined) dbUpdates.name = updates.name;
     if (updates.description !== undefined) dbUpdates.description = updates.description || null;
     if (updates.industry !== undefined) dbUpdates.industry = updates.industry || null;

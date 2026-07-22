@@ -1,151 +1,115 @@
 project_id = "itpwpnwzzitkelffttyx"
 
-[functions.generate-insights]
-verify_jwt = false
-
-[functions.generate-report]
-verify_jwt = false
-
-[functions.create-checkout]
-verify_jwt = false
-
-[functions.check-subscription]
-verify_jwt = false
-
-[functions.customer-portal]
-verify_jwt = false
-
-[functions.stripe-webhook]
-verify_jwt = false
-
-[functions.webhook-ingest]
-verify_jwt = false
-
-[functions.rollback-dataset-version]
-verify_jwt = false
-
-[functions.compute-kpi]
-verify_jwt = false
-
-[functions.ai-kpi-analysis]
-verify_jwt = false
-
-[functions.simulate-scenario]
-verify_jwt = false
-
-[functions.ai-scenario-analysis]
-verify_jwt = false
-
-[functions.executive-brief]
-verify_jwt = false
-
-[functions.compute-executive-signals]
-verify_jwt = false
-
-[functions.weekly-executive-brief]
-verify_jwt = false
-
-[functions.send-executive-alert]
-verify_jwt = false
-
-[functions.test-executive-alert]
-verify_jwt = false
-
-[functions.executive-copilot]
-verify_jwt = false
-
-[functions.strategic-simulation]
-verify_jwt = false
-
-[functions.executive-convergence]
-verify_jwt = false
-
-[functions.convergence-reconcile]
-verify_jwt = false
-
-[functions.generate-board-report]
-verify_jwt = false
-
-[functions.diagnostic-engine]
-verify_jwt = false
-
-[functions.prescriptive-advisory]
-verify_jwt = false
-
-[functions.executive-orchestration]
-verify_jwt = false
-
-[functions.delete-account]
-verify_jwt = false
-
-[functions.data-export]
-verify_jwt = false
-
-[functions.monte-carlo-sim]
-verify_jwt = false
-
-[functions.decision-impact-sim]
-verify_jwt = false
-
-[functions.weekly-calibration-digest]
-verify_jwt = false
-
-[functions.adaptive-calibration]
-verify_jwt = false
-
-[functions.cognitive-bias-detect]
-verify_jwt = false
-
-[functions.transform-metrics]
-verify_jwt = false
-
-[functions.refresh-aggregates]
-verify_jwt = false
-
-[functions.predictive-forecast]
-verify_jwt = false
-
-[functions.fetch-market-signals]
-verify_jwt = false
-
-[functions.causal-inference]
-verify_jwt = false
-
-[functions.counterfactual-explain]
-verify_jwt = false
-
-[functions.nlq-query]
-verify_jwt = false
-
-[functions.morning-brief]
-verify_jwt = false
-
-[functions.explain-ai]
-verify_jwt = false
-
-[functions.seed-demo-data]
-verify_jwt = false
-
-[functions.complete-onboarding]
-verify_jwt = false
-
-[functions.connector-pull]
-verify_jwt = false
-
-[functions.invite-team-member]
-verify_jwt = false
-
-[functions.create-demo-session]
-verify_jwt = false
-
-[functions.login-anomaly-detect]
-verify_jwt = false
-
-[functions.execute-decision-action]
-verify_jwt = false
-
-[functions.decision-replay]
-verify_jwt = false
-
-[functions.strategy-session]
+[functions]
+  [functions.adaptive-calibration]
+    verify_jwt = false
+  [functions.ai-kpi-analysis]
+    verify_jwt = false
+  [functions.ai-scenario-analysis]
+    verify_jwt = false
+  [functions.auth-email-hook]
+    verify_jwt = false
+  [functions.causal-inference]
+    verify_jwt = false
+  [functions.check-subscription]
+    verify_jwt = false
+  [functions.cognitive-bias-detect]
+    verify_jwt = false
+  [functions.complete-onboarding]
+    verify_jwt = false
+  [functions.compute-executive-signals]
+    verify_jwt = false
+  [functions.compute-kpi]
+    verify_jwt = false
+  [functions.connector-pull]
+    verify_jwt = false
+  [functions.connector-dynamics-pull]
+    verify_jwt = false
+  [functions.connector-netsuite-pull]
+    verify_jwt = false
+  [functions.connector-sheets-pull]
+    verify_jwt = false
+  [functions.convergence-reconcile]
+    verify_jwt = false
+  [functions.counterfactual-explain]
+    verify_jwt = false
+  [functions.create-checkout]
+    verify_jwt = false
+  [functions.create-demo-session]
+    verify_jwt = false
+  [functions.customer-portal]
+    verify_jwt = false
+  [functions.data-export]
+    verify_jwt = false
+  [functions.decision-impact-sim]
+    verify_jwt = false
+  [functions.decision-replay]
+    verify_jwt = false
+  [functions.delete-account]
+    verify_jwt = false
+  [functions.diagnostic-engine]
+    verify_jwt = false
+  [functions.execute-decision-action]
+    verify_jwt = false
+  [functions.executive-brief]
+    verify_jwt = false
+  [functions.executive-convergence]
+    verify_jwt = false
+  [functions.executive-copilot]
+    verify_jwt = false
+  [functions.executive-orchestration]
+    verify_jwt = false
+  [functions.explain-ai]
+    verify_jwt = false
+  [functions.fetch-market-signals]
+    verify_jwt = false
+  [functions.generate-board-report]
+    verify_jwt = false
+  [functions.generate-insights]
+    verify_jwt = false
+  [functions.generate-report]
+    verify_jwt = false
+  [functions.invite-team-member]
+    verify_jwt = false
+  [functions.login-anomaly-detect]
+    verify_jwt = false
+  [functions.monte-carlo-sim]
+    verify_jwt = false
+  [functions.morning-brief]
+    verify_jwt = false
+  [functions.nlq-query]
+    verify_jwt = false
+  [functions.predictive-forecast]
+    verify_jwt = false
+  [functions.prescriptive-advisory]
+    verify_jwt = false
+  [functions.process-email-queue]
+    verify_jwt = true
+  [functions.refresh-aggregates]
+    verify_jwt = false
+  [functions.rollback-dataset-version]
+    verify_jwt = false
+  [functions.seed-demo-data]
+    verify_jwt = false
+  [functions.send-executive-alert]
+    verify_jwt = false
+  [functions.simulate-scenario]
+    verify_jwt = false
+  [functions.strategic-simulation]
+    verify_jwt = false
+  [functions.strategy-session]
+    verify_jwt = false
+  [functions.stripe-webhook]
+    verify_jwt = false
+  [functions.test-executive-alert]
+    verify_jwt = false
+  [functions.transform-metrics]
+    verify_jwt = false
+  [functions.webhook-ingest]
+    verify_jwt = false
+  [functions.weekly-calibration-digest]
+    verify_jwt = false
+  [functions.weekly-executive-brief]
+    verify_jwt = false
+[functions.public-system-status]
 verify_jwt = false

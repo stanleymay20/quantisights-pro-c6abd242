@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { FlipVertical, Loader2, AlertTriangle, ArrowUpDown, Gauge } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Factor {
   factor: string;
@@ -82,14 +84,15 @@ const CounterfactualExplanation = () => {
     if (!currentOrgId || !datasetId || !entityId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("counterfactual-explain", {
+      const { data, error } = await invokeWithRetry<CounterfactualResult & { error?: string }>("counterfactual-explain", {
         body: { organization_id: currentOrgId, dataset_id: datasetId, entity_type: entityType, entity_id: entityId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      setResult(data);
-    } catch (e: any) {
-      toast({ title: "Analysis failed", description: e.message, variant: "destructive" });
+      if (data) setResult(data);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Analysis failed";
+      toast({ title: "Analysis failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -105,11 +108,12 @@ const CounterfactualExplanation = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <FlipVertical className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Counterfactual Explanations</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Counterfactual Explanations</h1>
             <Badge variant="outline" className="text-xs">What-If Reversal</Badge>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Counterfactual Explanation">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Selection Controls */}
           <Card>
@@ -137,7 +141,7 @@ const CounterfactualExplanation = () => {
                       <SelectItem key={e.id} value={e.id}>
                         <span className="truncate">
                           {e.recommended_action || e.title}
-                          {e.capped_confidence && <span className="text-muted-foreground ml-2">({e.capped_confidence}%)</span>}
+                          {e.capped_confidence && <span className="text-muted-foreground ml-2">({Math.round(e.capped_confidence)}%)</span>}
                         </span>
                       </SelectItem>
                     ))}
@@ -200,7 +204,7 @@ const CounterfactualExplanation = () => {
                             {factor.current_mean} → {factor.threshold_to_flip}
                           </span>
                           <span className={`font-mono font-bold ${sensitivityColor(factor.sensitivity)}`}>
-                            {factor.change_required_pct}%
+                            {Math.round(factor.change_required_pct)}%
                           </span>
                           <Badge variant="outline" className={`text-[10px] ${sensitivityColor(factor.sensitivity)}`}>
                             {factor.sensitivity}
@@ -266,6 +270,7 @@ const CounterfactualExplanation = () => {
             </>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

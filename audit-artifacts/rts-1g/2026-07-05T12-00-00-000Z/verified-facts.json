@@ -1,0 +1,371 @@
+[
+  {
+    "fact_id": "evf-d42f06c2",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "supplier_delivery_risk",
+    "assertion": "Supplier X delivery is at risk within 36 hours.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_erp_a823a87a"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-clean-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-clean-001"
+    ],
+    "quality_score": 100,
+    "confidence": 96,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 96, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-clean-001"
+      ],
+      "signals": [
+        "signal_tenant-a_erp_a823a87a"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_erp_a823a87a"
+      ],
+      "contradictions": [],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-clean-operational-signal",
+    "certification_reference": "cert-clean-operational-signal",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-59199721"
+  },
+  {
+    "fact_id": "evf-4d73c2b2",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "operational_delay",
+    "assertion": "Operational process delay has an accepted medium contradiction.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_ops-system-a_fe8037e3",
+      "signal_tenant-a_ops-system-b_5f5aa22c"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-ops-001",
+      "evt-ops-002"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-ops-001",
+      "evidence:evt-ops-002"
+    ],
+    "quality_score": 100,
+    "confidence": 90,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 90, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 2
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [
+      "contradiction-23226d66",
+      "contradiction-70d38381"
+    ],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-ops-001",
+        "evt-ops-002"
+      ],
+      "signals": [
+        "signal_tenant-a_ops-system-a_fe8037e3",
+        "signal_tenant-a_ops-system-b_5f5aa22c"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_ops-system-a_fe8037e3",
+        "signal_tenant-a_ops-system-b_5f5aa22c"
+      ],
+      "contradictions": [
+        "contradiction-23226d66",
+        "contradiction-70d38381"
+      ],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-accepted-medium-contradiction",
+    "certification_reference": "cert-accepted-medium-contradiction",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-97bcc86f"
+  },
+  {
+    "fact_id": "evf-f1ed0f83",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "supplier_strategic_delivery_risk",
+    "assertion": "Strategic supplier will miss delivery within 72 hours.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_supplier-portal_3078bd89"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-supplier-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-supplier-001"
+    ],
+    "quality_score": 100,
+    "confidence": 97,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 97, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-supplier-001"
+      ],
+      "signals": [
+        "signal_tenant-a_supplier-portal_3078bd89"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_supplier-portal_3078bd89"
+      ],
+      "contradictions": [],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-high-impact-supplier-risk",
+    "certification_reference": "cert-high-impact-supplier-risk",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-58878fed"
+  },
+  {
+    "fact_id": "evf-888012ed",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "regulatory_compliance_evidence_gap",
+    "assertion": "Regulatory compliance evidence gap requires governance review.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_policy-register_603e7480"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-compliance-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-compliance-001"
+    ],
+    "quality_score": 100,
+    "confidence": 95,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 95, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-compliance-001"
+      ],
+      "signals": [
+        "signal_tenant-a_policy-register_603e7480"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_policy-register_603e7480"
+      ],
+      "contradictions": [],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-compliance-regulatory-signal",
+    "certification_reference": "cert-compliance-regulatory-signal",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-e24bfd9e"
+  },
+  {
+    "fact_id": "evf-cd3a4aea",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "operational_observation",
+    "assertion": "Low materiality observation should remain below candidate threshold.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_ops-system_bc83f699"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-low-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-low-001"
+    ],
+    "quality_score": 90,
+    "confidence": 75,
+    "promotion_policy": "PERMISSIVE",
+    "promotion_reason": "Promoted because PERMISSIVE policy thresholds were met with quality 90, confidence 75, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 90,
+      "minimum_quality": 90,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-low-001"
+      ],
+      "signals": [
+        "signal_tenant-a_ops-system_bc83f699"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_ops-system_bc83f699"
+      ],
+      "contradictions": [],
+      "promotion_policy": "PERMISSIVE",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-low-materiality-signal",
+    "certification_reference": "cert-low-materiality-signal",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-c44c3159"
+  },
+  {
+    "fact_id": "evf-cff11069",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "supplier_delivery_risk",
+    "assertion": "Supplier Z decision candidate should expire before handoff.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_erp_1917fda6"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-candidate-expired-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-candidate-expired-001"
+    ],
+    "quality_score": 100,
+    "confidence": 95,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 95, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-candidate-expired-001"
+      ],
+      "signals": [
+        "signal_tenant-a_erp_1917fda6"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_erp_1917fda6"
+      ],
+      "contradictions": [],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-expired-decision-candidate",
+    "certification_reference": "cert-expired-decision-candidate",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-f5659845"
+  },
+  {
+    "fact_id": "evf-c89a6181",
+    "fact_version": 1,
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "fact_type": "supplier_delivery_risk",
+    "assertion": "Replay supplier risk produces identical deterministic hashes.",
+    "supporting_signal_ids": [
+      "signal_tenant-a_erp_2328bdc8"
+    ],
+    "supporting_raw_event_ids": [
+      "evt-replay-001"
+    ],
+    "supporting_evidence": [
+      "evidence:evt-replay-001"
+    ],
+    "quality_score": 100,
+    "confidence": 96,
+    "promotion_policy": "NORMAL",
+    "promotion_reason": "Promoted because NORMAL policy thresholds were met with quality 100, confidence 96, evidence present, and no disallowed contradictions.",
+    "promotion_engine_version": "rts-1d.1",
+    "signal_quality_summary": {
+      "average_quality": 100,
+      "minimum_quality": 100,
+      "signal_count": 1
+    },
+    "resolved_contradictions": [],
+    "accepted_contradictions": [],
+    "created_at": "2026-07-05T12:00:00.000Z",
+    "expires_at": "2026-07-05T13:00:00.000Z",
+    "status": "VERIFIED",
+    "lineage": {
+      "raw_events": [
+        "evt-replay-001"
+      ],
+      "signals": [
+        "signal_tenant-a_erp_2328bdc8"
+      ],
+      "quality_assessments": [
+        "signal_tenant-a_erp_2328bdc8"
+      ],
+      "contradictions": [],
+      "promotion_policy": "NORMAL",
+      "promotion_engine_version": "rts-1d.1",
+      "previous_fact_hashes": []
+    },
+    "audit_reference": "audit-deterministic-replay",
+    "certification_reference": "cert-deterministic-replay",
+    "schema_version": "quantivis.enterprise-verified-fact.v1",
+    "fact_hash": "fnv1a-0f17fe47"
+  }
+]

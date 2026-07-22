@@ -9,6 +9,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
 import {
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { CONTACT } from "@/lib/contact-config";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface UsageData {
   simulations: number;
@@ -27,9 +29,9 @@ interface UsageData {
 }
 
 const TIER_LIMITS: Record<string, { simulations: number; convergence: number; copilot: number; seats: number }> = {
-  starter: { simulations: 5, convergence: 3, copilot: 10, seats: 2 },
-  growth: { simulations: 50, convergence: 30, copilot: 100, seats: 5 },
-  enterprise: { simulations: -1, convergence: -1, copilot: -1, seats: -1 },
+  starter:    { simulations: 5,  convergence: 3,  copilot: 20,  seats: 5  },
+  growth:     { simulations: 50, convergence: 30, copilot: -1,  seats: 15 },  // -1 = unlimited
+  enterprise: { simulations: -1, convergence: -1, copilot: -1,  seats: -1 },
 };
 
 const Billing = () => {
@@ -68,17 +70,17 @@ const Billing = () => {
   const openPortal = async () => {
     setPortalLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("customer-portal");
+      const { data, error } = await invokeWithRetry<{ url?: string }>("customer-portal");
       if (error) throw error;
       if (data?.url) window.location.href = data.url;
-    } catch (err: any) {
-      toast({ title: "Could not open billing portal", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Could not open billing portal", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setPortalLoading(false);
     }
   };
 
-  const UsageBar = ({ label, current, max, icon: Icon }: { label: string; current: number; max: number; icon: any }) => {
+  const UsageBar = ({ label, current, max, icon: Icon }: { label: string; current: number; max: number; icon: React.ElementType }) => {
     const isUnlimited = max === -1;
     const pct = isUnlimited ? 10 : max > 0 ? Math.min((current / max) * 100, 100) : 0;
     const atLimit = !isUnlimited && current >= max;
@@ -110,10 +112,11 @@ const Billing = () => {
         <header className="h-14 border-b border-border/30 flex items-center px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Billing & Subscription</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Billing & Subscription</h1>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Billing">
         <main className="flex-1 p-8 overflow-auto space-y-8">
           {/* Current Plan */}
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
@@ -127,13 +130,17 @@ const Billing = () => {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h2 className="text-2xl font-bold font-display">{tierConfig.name}</h2>
+                          <h2 className="text-[18px] font-semibold tracking-tight">{tierConfig.name}</h2>
                           <Badge className="bg-primary/10 text-primary border-none">
-                            {subscribed ? "Active" : "Free Trial"}
+                            {subscribed ? "Active" : "Trial"}
                           </Badge>
                         </div>
                         <p className="text-muted-foreground text-sm">
-                          {tierConfig.price !== null ? `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval}` : "Custom pricing"}
+                          {tierConfig.price !== null
+                            ? subscribed
+                              ? `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval}`
+                              : `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval} after trial`
+                            : "Custom pricing"}
                         </p>
                       </div>
                     </div>
@@ -236,13 +243,13 @@ const Billing = () => {
               <Card className="bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
                 <CardContent className="p-8 flex items-center justify-between flex-wrap gap-6">
                   <div className="space-y-2">
-                    <h3 className="text-lg font-bold font-display">
+                    <h3 className="text-lg font-bold tracking-tight">
                       {activeTier === "starter" ? "Unlock AI Decision Intelligence" : "Go Enterprise"}
                     </h3>
                     <p className="text-sm text-muted-foreground max-w-md">
                       {activeTier === "starter"
-                        ? "Upgrade to Growth for AI Prescriptive Advisory, Causal Inference, Predictive Forecasting, Monte Carlo Simulations, and Board Governance Reports."
-                        : "Upgrade to Enterprise for Cognitive Bias Detection, Counterfactual Explanations, Executive Convergence Index, unlimited simulations, and dedicated support."}
+                        ? "Upgrade to Governance for AI Prescriptive Advisory, Causal Inference, Predictive Forecasting, Monte Carlo Simulations, Board Governance Reports, AICIS geopolitical signals, and unlimited Copilot."
+                        : "Upgrade to Enterprise for Cognitive Bias Detection, Counterfactual Explanations, Executive Convergence Index, unlimited simulations, multi-org management, and dedicated support."}
                     </p>
                     <div className="flex flex-wrap gap-2 pt-1">
                       {(activeTier === "starter" ? TIERS.growth : TIERS.enterprise).features.slice(0, 3).map((f) => (
@@ -255,7 +262,7 @@ const Billing = () => {
                   {activeTier === "starter" ? (
                     <Button onClick={() => navigate("/pricing")} size="lg" className="gap-2 shadow-lg shadow-primary/20">
                       <Zap className="w-4 h-4" />
-                      Upgrade to Growth — €249/mo
+                      Upgrade to Governance — €{TIERS.growth.price}/mo
                     </Button>
                   ) : (
                     <Button asChild size="lg" className="gap-2 shadow-lg shadow-primary/20">
@@ -279,7 +286,7 @@ const Billing = () => {
                     <CreditCard className="w-5 h-5 text-warning" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold font-display">Implementation & Strategic Services</h3>
+                    <h3 className="text-lg font-bold tracking-tight">Implementation & Strategic Services</h3>
                     <p className="text-sm text-muted-foreground">Premium services layered on top of your subscription for enterprise-grade outcomes.</p>
                   </div>
                 </div>
@@ -365,6 +372,7 @@ const Billing = () => {
             </Card>
           </motion.div>
         </main>
+        </SectionErrorBoundary>
     </>
   );
 };

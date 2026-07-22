@@ -1,14 +1,44 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { cronGuard } from "../_shared/cron-guard.ts";
+import { verifyCronSecret, cronSecretUnauthorized } from "../_shared/cron-secret.ts";
+import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * auth.admin.listUsers() defaults to page 1 / 50 users per page. Called
+ * without pagination, any org whose owner/admin/executive isn't among the
+ * platform's first 50 signups silently never gets a brief -- the filter
+ * on line ~92 (original) just never matches. Page through every user once,
+ * up front, instead of once per org inside the loop.
+ */
+async function listAllUsers(supabase: ReturnType<typeof createClient>): Promise<Map<string, string>> {
+  const emailByUserId = new Map<string, string>();
+  let page = 1;
+  const perPage = 1000;
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) break;
+    for (const u of data.users) {
+      if (u.email) emailByUserId.set(u.id, u.email);
+    }
+    if (data.users.length < perPage) break;
+    page++;
+  }
+  return emailByUserId;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
+  if (!verifyCronSecret(req)) return cronSecretUnauthorized(corsHeaders);
+
   // Advisory lock — prevent overlapping cron runs
   const guard = await cronGuard("morning-brief");
   if (!guard.acquired) return guard.earlyResponse(corsHeaders);
+
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -28,9 +58,23 @@ Deno.serve(async (req) => {
       });
     }
 
-    let totalSent = 0;
+    // Fetch every user once, up front, instead of once per org.
+    const emailByUserId = await listAllUsers(supabase);
 
-    for (const org of orgs) {
+    let totalSent = 0;
+    let orgsProcessed = 0;
+    const startedAt = Date.now();
+    const deadline = makeDeadline(startedAt);
+    // Deterministic daily rotation: if the org list ever grows too large to
+    // fully process within one invocation's time budget, a fixed processing
+    // order would let the same prefix of orgs win every single day while
+    // the tail never gets a brief. Rotating the starting point once per
+    // day spreads that shortfall across the whole org list over time.
+    const rotatedOrgs = rotateForFairness(orgs, startedAt, DAY_MS);
+
+    for (const org of rotatedOrgs) {
+      if (deadline.expired()) break;
+      orgsProcessed++;
       // Get pending decisions count
       const { count: pendingCount } = await supabase
         .from("decision_ledger")
@@ -82,10 +126,12 @@ Deno.serve(async (req) => {
 
       if (!members || members.length === 0) continue;
 
-      // Get user emails
+      // Resolve member emails from the pre-fetched map instead of an
+      // admin API call per org.
       const userIds = members.map((m) => m.user_id);
-      const { data: { users } } = await supabase.auth.admin.listUsers();
-      const orgUsers = users?.filter((u) => userIds.includes(u.id)) ?? [];
+      const orgUsers = userIds
+        .map((id) => ({ id, email: emailByUserId.get(id) }))
+        .filter((u): u is { id: string; email: string } => !!u.email);
 
       if (orgUsers.length === 0) continue;
 
@@ -195,9 +241,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    await guard.succeed({ sent: totalSent });
+    const truncated = orgsProcessed < rotatedOrgs.length;
+    await guard.succeed({ sent: totalSent, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated });
     return new Response(
-      JSON.stringify({ success: true, sent: totalSent }),
+      JSON.stringify({ success: true, sent: totalSent, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {

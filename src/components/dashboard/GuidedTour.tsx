@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,14 +38,28 @@ interface GuidedTourProps {
 const GuidedTour = ({ onComplete }: GuidedTourProps) => {
   const [step, setStep] = useState(0);
   const [visible, setVisible] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { if (visible) dialogRef.current?.focus(); }, [visible]);
+  useEffect(() => {
+    if (!visible) return;
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const els = dialogRef.current.querySelectorAll<HTMLElement>('button,[href],input,[tabindex]:not([tabindex="-1"])');
+      const first = els[0]; const last = els[els.length - 1];
+      if (e.shiftKey ? document.activeElement === first : document.activeElement === last) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    };
+    document.addEventListener("keydown", trap);
+    return () => document.removeEventListener("keydown", trap);
+  }, [visible]);
 
   useEffect(() => {
-    const completed = localStorage.getItem(TOUR_STORAGE_KEY);
-    if (!completed) {
-      // Small delay so dashboard renders first
-      const timer = setTimeout(() => setVisible(true), 800);
-      return () => clearTimeout(timer);
-    }
+    const tourCompleted = localStorage.getItem(TOUR_STORAGE_KEY);
+    const welcomeCompleted = localStorage.getItem("quantivis_welcome_completed");
+    // Skip tour if already completed OR if the welcome flow was shown (it covers onboarding)
+    if (tourCompleted || welcomeCompleted) return;
+    const timer = setTimeout(() => setVisible(true), 800);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleNext = () => {
@@ -74,14 +88,20 @@ const GuidedTour = ({ onComplete }: GuidedTourProps) => {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          aria-hidden="true"
         >
           <motion.div
+            ref={dialogRef}
             key={step}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tour-dialog-title"
+            tabIndex={-1}
             initial={{ opacity: 0, y: 20, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.97 }}
             transition={{ duration: 0.3 }}
-            className="relative w-full max-w-md bg-card border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
+            className="relative w-full max-w-md bg-card border border-border/50 rounded-2xl shadow-2xl overflow-hidden outline-none"
           >
             {/* Progress bar */}
             <div className="h-1 bg-muted">
@@ -126,7 +146,7 @@ const GuidedTour = ({ onComplete }: GuidedTourProps) => {
               </div>
 
               {/* Text */}
-              <h2 className="text-xl font-bold font-display mb-2">{current.title}</h2>
+              <h2 id="tour-dialog-title" className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">{current.title}</h2>
               <p className="text-sm text-muted-foreground leading-relaxed mb-4">
                 {current.description}
               </p>

@@ -6,6 +6,9 @@
 const ALLOWED_ORIGINS = [
   "https://quantisights-pro.lovable.app",
   "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app",
+  "https://28b43e06-9231-4c54-bc18-a49be01a6516.lovableproject.com",
+  "https://www.quantivis.io",
+  "https://quantivis.io",
   "http://localhost:5173",
   "http://localhost:8080",
 ];

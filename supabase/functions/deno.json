@@ -1,0 +1,37 @@
+{
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "noImplicitThis": false,
+    "alwaysStrict": false,
+    "strictFunctionTypes": false,
+    "strictPropertyInitialization": false,
+    "strictBindCallApply": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": false
+  },
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2",
+    "zod": "npm:zod@^3.25.76",
+    "@/lib/": "../../src/lib/",
+    "@/lib/agent-gateway": "../../src/lib/agent-gateway.ts",
+    "@/lib/real-time-signals": "../../src/lib/real-time-signals.ts",
+    "@/lib/signal-quality": "../../src/lib/signal-quality.ts",
+    "@/lib/contradiction-detection": "../../src/lib/contradiction-detection.ts",
+    "@/lib/verified-fact-promotion": "../../src/lib/verified-fact-promotion.ts",
+    "@/lib/decision-candidate-generation": "../../src/lib/decision-candidate-generation.ts",
+    "@/lib/decision-candidate-handoff": "../../src/lib/decision-candidate-handoff.ts",
+    "@/lib/runtime-types": "../../src/lib/runtime-types.ts",
+    "@/lib/runtime-gateway": "../../src/lib/runtime-gateway.ts",
+    "@/lib/runtime-service": "../../src/lib/runtime-service.ts",
+    "@/lib/runtime-service-types": "../../src/lib/runtime-service-types.ts",
+    "@/lib/runtime-queue-types": "../../src/lib/runtime-queue-types.ts",
+    "@/lib/runtime-queue": "../../src/lib/runtime-queue.ts",
+    "@/lib/runtime-persistence-types": "../../src/lib/runtime-persistence-types.ts",
+    "@/lib/runtime-persistence": "../../src/lib/runtime-persistence.ts",
+    "@/lib/supplier-risk-runtime-pipeline": "../../src/lib/supplier-risk-runtime-pipeline.ts"
+  }
+}

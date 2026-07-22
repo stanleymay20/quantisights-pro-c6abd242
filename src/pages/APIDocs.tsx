@@ -208,7 +208,7 @@ curl -X POST \\
         <div className="flex items-center gap-3 mb-2">
           <SidebarMobileToggle />
           <Terminal className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold font-display text-foreground">API Reference</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight tracking-tight text-foreground">API Reference</h1>
           <Badge variant="outline" className="text-xs">v1</Badge>
         </div>
         <p className="text-sm text-muted-foreground mb-8 max-w-2xl">

@@ -29,9 +29,10 @@ import {
   Brain, TrendingUp, AlertTriangle, GitCompare, BarChart3,
   Layers, RefreshCw, Target, Gauge, CheckCircle2
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 /* ──────── Counterfactual Analysis ──────── */
-const CounterfactualPanel = ({ decisions }: { decisions: any[] }) => {
+const CounterfactualPanel = ({ decisions }: { decisions: Array<any> }) => {
   const resolved = decisions.filter(d => d.decision_status === "approved" && d.actual_value != null);
 
   if (resolved.length === 0) {
@@ -79,7 +80,7 @@ const CounterfactualPanel = ({ decisions }: { decisions: any[] }) => {
                 <div>
                   <p className="text-[10px] text-muted-foreground">Prediction Accuracy</p>
                   <p className={`text-sm font-bold font-mono ${accuracyIsGood ? "text-success" : "text-warning"}`}>
-                    {accuracyPct === "—" ? accuracyPct : `${accuracyPct}%`}
+                    {accuracyPct === "—" ? accuracyPct : `${Math.round(accuracyPct)}%`}
                   </p>
                 </div>
               </div>
@@ -92,7 +93,7 @@ const CounterfactualPanel = ({ decisions }: { decisions: any[] }) => {
 };
 
 /* ──────── Decision Fatigue Detector ──────── */
-const DecisionFatiguePanel = ({ decisions }: { decisions: any[] }) => {
+const DecisionFatiguePanel = ({ decisions }: { decisions: Array<any> }) => {
   const pending = decisions.filter(d => d.decision_status === "pending");
   const inProgress = decisions.filter(d => d.execution_status === "in_progress");
   const stale = pending.filter(d => {
@@ -100,6 +101,22 @@ const DecisionFatiguePanel = ({ decisions }: { decisions: any[] }) => {
     const daysSince = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
     return daysSince > 7;
   });
+
+  // Guard: don't show fatigue index on accounts with no meaningful history
+  if (decisions.length < 3) {
+    return (
+      <div className="glass-card p-6 rounded-xl">
+        <div className="flex items-center gap-2 mb-4">
+          <Gauge className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold">Decision Fatigue Index</h3>
+        </div>
+        <div className="text-center py-8 text-xs text-muted-foreground">
+          Fatigue index activates after 3 decisions are logged.
+        </div>
+      </div>
+    );
+  }
+
 
   const fatigueScore = Math.min(100, pending.length * 15 + stale.length * 25 + inProgress.length * 10);
   const fatigueLevel = fatigueScore >= 70 ? "critical" : fatigueScore >= 40 ? "elevated" : "healthy";
@@ -112,7 +129,7 @@ const DecisionFatiguePanel = ({ decisions }: { decisions: any[] }) => {
         <h3 className="text-sm font-semibold">Decision Fatigue Index</h3>
       </div>
       <div className="text-center py-4">
-        <p className={`text-4xl font-bold font-display ${fatigueColor}`}>{fatigueScore}</p>
+        <p className={`text-4xl font-bold tracking-tight ${fatigueColor}`}>{fatigueScore}</p>
         <p className={`text-xs font-semibold uppercase tracking-wider mt-1 ${fatigueColor}`}>{fatigueLevel}</p>
       </div>
       <div className="grid grid-cols-3 gap-2 mt-4 text-center">
@@ -143,7 +160,7 @@ const DecisionFatiguePanel = ({ decisions }: { decisions: any[] }) => {
 };
 
 /* ──────── Portfolio Simulation View ──────── */
-const PortfolioSimulation = ({ simulations }: { simulations: any[] }) => {
+const PortfolioSimulation = ({ simulations }: { simulations: Array<any> }) => {
   const portfolio = useMemo(() => {
     if (simulations.length === 0) return null;
 
@@ -181,13 +198,13 @@ const PortfolioSimulation = ({ simulations }: { simulations: any[] }) => {
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-muted/20 rounded-lg p-3 text-center">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Expected Net</p>
-          <p className="text-xl font-bold font-display text-primary">
+          <p className="text-xl font-bold tracking-tight text-primary">
             €{portfolio.totalExpected >= 1000 ? `${(portfolio.totalExpected / 1000).toFixed(0)}K` : portfolio.totalExpected.toLocaleString()}
           </p>
         </div>
         <div className="bg-muted/20 rounded-lg p-3 text-center">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Portfolio ROI</p>
-          <p className="text-xl font-bold font-display">{portfolio.portfolioROI}%</p>
+          <p className="text-xl font-bold tracking-tight">{portfolio.portfolioROI}%</p>
         </div>
       </div>
       <div className="space-y-2">
@@ -215,7 +232,7 @@ const PortfolioSimulation = ({ simulations }: { simulations: any[] }) => {
 };
 
 /* ──────── Prediction Calibration ──────── */
-const CalibrationPanel = ({ decisions }: { decisions: any[] }) => {
+const CalibrationPanel = ({ decisions }: { decisions: Array<any> }) => {
   const calibrated = decisions.filter(d => d.prediction_accuracy_score != null);
 
   if (calibrated.length === 0) {
@@ -247,13 +264,13 @@ const CalibrationPanel = ({ decisions }: { decisions: any[] }) => {
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="text-center bg-muted/20 rounded-lg p-3">
           <p className="text-[10px] text-muted-foreground uppercase">Avg Accuracy</p>
-          <p className={`text-2xl font-bold font-display ${avgAccuracy >= 70 ? "text-success" : "text-warning"}`}>
+          <p className={`text-[18px] font-semibold tracking-tight ${avgAccuracy >= 70 ? "text-success" : "text-warning"}`}>
             {avgAccuracy.toFixed(0)}%
           </p>
         </div>
         <div className="text-center bg-muted/20 rounded-lg p-3">
           <p className="text-[10px] text-muted-foreground uppercase">Calibration Error</p>
-          <p className="text-2xl font-bold font-display">{avgCalibrationError.toFixed(1)}%</p>
+          <p className="text-[18px] font-semibold tracking-tight">{avgCalibrationError.toFixed(1)}%</p>
         </div>
       </div>
       <div className="space-y-2">
@@ -282,7 +299,7 @@ const DecisionIntelligence = () => {
   const { performance: performanceData, loading: perfLoading } = useDecisionPerformance(currentOrgId);
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     const fetch = async () => {
       setLoading(true);
       const [decRes, simRes] = await Promise.all([
@@ -303,10 +320,11 @@ const DecisionIntelligence = () => {
           <div className="flex items-center gap-2">
             <SidebarMobileToggle />
             <Brain className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Decision Intelligence</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Decision Intelligence</h1>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Decision Intelligence">
         <main className="flex-1 p-8 overflow-auto">
           <IntelligenceDisclaimer variant="banner" context="advisory" />
 
@@ -372,6 +390,7 @@ const DecisionIntelligence = () => {
             </div>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

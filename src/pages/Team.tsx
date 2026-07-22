@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Member {
   id: string;
@@ -93,7 +95,7 @@ const Team = () => {
       );
     }
 
-    setInvitations((invitesRes.data as any) || []);
+    setInvitations((invitesRes.data as unknown as typeof invitations) || []);
     setUserRole(roleRes.data as string | null);
     setLoading(false);
   }, [currentOrgId, user]);
@@ -106,18 +108,18 @@ const Team = () => {
     if (!inviteEmail || !currentOrgId) return;
     setInviting(true);
     try {
-      const { data, error } = await supabase.functions.invoke("invite-team-member", {
+      const { data, error } = await invokeWithRetry<any>("invite-team-member", {
         body: { email: inviteEmail, role: inviteRole, organization_id: currentOrgId },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) throw new Error(String(data.error));
 
       toast({ title: "Invitation sent", description: `Invited ${inviteEmail} as ${inviteRole}` });
       setInviteEmail("");
       setInviteOpen(false);
       fetchData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setInviting(false);
     }
@@ -132,8 +134,8 @@ const Team = () => {
       if (error) throw error;
       toast({ title: "Role updated" });
       fetchData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     }
   };
 
@@ -150,8 +152,8 @@ const Team = () => {
       if (error) throw error;
       toast({ title: "Member removed" });
       fetchData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     }
   };
 
@@ -164,8 +166,8 @@ const Team = () => {
       if (error) throw error;
       toast({ title: "Invitation cancelled" });
       fetchData();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     }
   };
 
@@ -174,7 +176,7 @@ const Team = () => {
         <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Team Management</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Team Management</h1>
           </div>
           {canManage && (
             <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
@@ -226,6 +228,7 @@ const Team = () => {
           )}
         </header>
 
+        <SectionErrorBoundary sectionName="Team Management">
         <main className="flex-1 p-8 overflow-auto">
           <div className="max-w-4xl mx-auto space-y-8">
             <p className="text-sm text-muted-foreground">
@@ -285,7 +288,7 @@ const Team = () => {
                                 value={member.role}
                                 onValueChange={(val) => updateMemberRole(member.id, val as "admin" | "analyst" | "executive" | "viewer")}
                               >
-                                <SelectTrigger className="w-32 h-8 text-xs">
+                                <SelectTrigger className="w-32 h-8 text-xs" aria-label={`Change role for ${member.profile?.full_name ?? "member"}`}>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -298,6 +301,7 @@ const Team = () => {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label="Remove member"
                                 className="h-8 w-8 text-destructive hover:text-destructive"
                                 onClick={() => removeMember(member.id, member.user_id)}
                               >
@@ -409,6 +413,7 @@ const Team = () => {
             )}
           </div>
         </main>
+        </SectionErrorBoundary>
     </>
   );
 };

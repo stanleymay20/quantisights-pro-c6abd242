@@ -22,7 +22,7 @@ const PitchDeck = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background flex flex-col">
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-2xl">
         <div className="container mx-auto flex items-center justify-between py-4 px-6">
           <Link to="/" className="flex items-center gap-3">
@@ -49,11 +49,12 @@ const PitchDeck = () => {
         </div>
       </nav>
 
-      <main className="pt-24 pb-16">
+      <main className="flex-1 pt-24 pb-16">
         <div className="container mx-auto px-6 text-center mb-12">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <h1 className="text-3xl sm:text-4xl font-bold font-display mb-3">Pitch Deck</h1>
-            <p className="text-muted-foreground mb-6">Decision Governance Infrastructure — investor-ready presentation.</p>
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">Berkeley 2-Minute Pitch</h1>
+            <p className="text-muted-foreground mb-1">Quantivis · Governed Operational Reasoning Infrastructure</p>
+            <p className="text-xs text-muted-foreground mb-6">Stanley Osei-Wusu (Founder) · Souley Kassoum (Co-Founder)</p>
             <Button onClick={handleDownload} disabled={downloading} size="lg" className="gap-2">
               {downloading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
               {downloading ? "Generating PDF…" : "Download Pitch Deck"}

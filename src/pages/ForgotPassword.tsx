@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthThrottle } from "@/hooks/useAuthThrottle";
-import logo from "@/assets/quantivis-logo.png";
+import AuthLayout from "@/components/auth/AuthLayout";
+import { MailCheck } from "lucide-react";
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState("");
@@ -16,7 +17,11 @@ const ForgotPassword = () => {
     e.preventDefault();
     const { allowed, waitSeconds } = throttle.check();
     if (!allowed) {
-      toast({ title: "Too many attempts", description: `Please wait ${waitSeconds}s before trying again.`, variant: "destructive" });
+      toast({
+        title: "Too many attempts",
+        description: `Please wait ${waitSeconds}s before trying again.`,
+        variant: "destructive",
+      });
       return;
     }
     setIsLoading(true);
@@ -27,67 +32,80 @@ const ForgotPassword = () => {
       if (error) throw error;
       setSent(true);
       toast({ title: "Check your email", description: "We sent you a password reset link." });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-[120px]" />
-      </div>
-      <div className="glass-card p-8 w-full max-w-md relative z-10">
-        <div className="flex justify-center mb-8">
-          <Link to="/"><img src={logo} alt="Quantivis Global" className="h-10" /></Link>
+  if (sent) {
+    return (
+      <AuthLayout
+        title="Check your inbox"
+        subtitle="If an account exists for this email, a secure reset link is on its way."
+        footer={
+          <Link to="/login" className="text-primary hover:underline font-medium">
+            Back to sign in
+          </Link>
+        }
+      >
+        <div className="text-center space-y-4 py-2">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Sent to{" "}
+            <span className="text-foreground font-medium">{email}</span>. The link
+            expires in 60 minutes for your security.
+          </p>
+          <p className="text-[11px] text-muted-foreground/80">
+            Didn't get it? Check spam, or wait a minute and request again.
+          </p>
         </div>
+      </AuthLayout>
+    );
+  }
 
-        {sent ? (
-          <div className="text-center space-y-4">
-            <h1 className="text-2xl font-bold font-display">Check Your Email</h1>
-            <p className="text-muted-foreground text-sm">
-              If an account exists for <span className="text-foreground font-medium">{email}</span>, you'll receive a password reset link shortly.
-            </p>
-            <Link to="/login" className="inline-block mt-4 text-sm text-primary hover:underline">
-              Back to Sign In
-            </Link>
-          </div>
-        ) : (
-          <>
-            <h1 className="text-2xl font-bold font-display text-center mb-2">Reset Password</h1>
-            <p className="text-muted-foreground text-center mb-8 text-sm">
-              Enter your email and we'll send you a reset link
-            </p>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 rounded-lg bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
-                  placeholder="you@company.com"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:brightness-110 transition-all disabled:opacity-50"
-              >
-                {isLoading ? "Sending…" : "Send Reset Link"}
-              </button>
-            </form>
-            <p className="text-center text-sm text-muted-foreground mt-6">
-              Remember your password?{" "}
-              <Link to="/login" className="text-primary hover:underline">Sign in</Link>
-            </p>
-          </>
-        )}
-      </div>
-    </div>
+  return (
+    <AuthLayout
+      title="Reset your password"
+      subtitle="Enter your email and we'll send you a secure reset link."
+      footer={
+        <p>
+          Remember your password?{" "}
+          <Link to="/login" className="text-primary hover:underline font-medium">
+            Sign in
+          </Link>
+        </p>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="forgot-email" className="block text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wider">
+            Work email
+          </label>
+          <input
+            id="forgot-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            className="w-full h-11 px-4 rounded-lg bg-secondary/60 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 text-sm transition-all"
+            placeholder="you@company.com"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="w-full h-11 rounded-lg bg-primary text-primary-foreground font-semibold text-sm hover:brightness-110 transition-all disabled:opacity-50 shadow-[0_8px_24px_-8px_hsl(var(--primary)/0.5)]"
+        >
+          {isLoading ? "Sending…" : "Send reset link"}
+        </button>
+      </form>
+    </AuthLayout>
   );
 };
 

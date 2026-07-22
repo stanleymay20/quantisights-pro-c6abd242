@@ -132,7 +132,7 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
             Avg. Time to Decision
           </p>
-          <p className="text-xl font-bold font-display text-primary">
+          <p className="text-xl font-bold tracking-tight text-primary">
             {metrics.avgTTD.toFixed(1)}d
           </p>
         </div>
@@ -140,7 +140,7 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
             Avg. Execution Time
           </p>
-          <p className="text-xl font-bold font-display">
+          <p className="text-xl font-bold tracking-tight">
             {metrics.avgTTE != null ? `${metrics.avgTTE.toFixed(1)}d` : "—"}
           </p>
         </div>
@@ -148,7 +148,7 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
             Total Cycle Time
           </p>
-          <p className="text-xl font-bold font-display">
+          <p className="text-xl font-bold tracking-tight">
             {metrics.avgCycle != null ? `${metrics.avgCycle.toFixed(1)}d` : "—"}
           </p>
         </div>

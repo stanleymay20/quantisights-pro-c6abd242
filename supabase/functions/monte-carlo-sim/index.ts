@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyAdaptiveConfidenceWithFetch, computeVariance } from "../_shared/adaptive-confidence.ts";
 import { applyRateLimit } from "../_shared/rate-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { requireFeatureAccess } from "../_shared/feature-access.ts";
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
@@ -119,6 +120,20 @@ serve(async (req) => {
       logReturns.reduce((s, v) => s + (v - mu) ** 2, 0) / (logReturns.length - 1)
     );
 
+    // GBM's drift term includes a -0.5*sigma^2 "volatility drag" correction.
+    // For real-world business metrics (which can swing far more than the
+    // financial-asset prices GBM was designed for), a large per-period sigma
+    // compounded over multiple steps makes that drag term dominate and
+    // collapses almost every simulated path toward zero — producing a
+    // degenerate "Expected Value/P10/P90 all 0.00" result while still
+    // correctly reporting ~100% probability of decline (every path really
+    // did end up near zero; the model just isn't informative there). Cap
+    // sigma before simulating so the forecast stays non-degenerate; report
+    // the uncapped value and whether the cap fired so this is never silent.
+    const SIGMA_CAP = 0.75; // 75% per-period volatility — already far beyond typical business metrics
+    const volatilityCapped = sigma > SIGMA_CAP;
+    const simSigma = Math.min(sigma, SIGMA_CAP);
+
     const lastValue = values[values.length - 1];
     const steps = forecast_horizon;
     const dt = 1;
@@ -136,8 +151,8 @@ serve(async (req) => {
     for (let r = 0; r < runs; r++) {
       let price = lastValue;
       for (let t = 0; t < steps; t++) {
-        const drift = (mu - 0.5 * sigma * sigma) * dt;
-        const diffusion = sigma * Math.sqrt(dt) * randn();
+        const drift = (mu - 0.5 * simSigma * simSigma) * dt;
+        const diffusion = simSigma * Math.sqrt(dt) * randn();
         price = price * Math.exp(drift + diffusion);
       }
       finalValues.push(price);
@@ -167,6 +182,10 @@ serve(async (req) => {
       supabaseUrl, serviceKey, organization_id,
     );
 
+    const volatilityCapNote = volatilityCapped
+      ? `Volatility ${round2(sigma * 100)}% exceeds the ${SIGMA_CAP * 100}% simulation ceiling; capped to keep the forecast from collapsing toward zero.`
+      : null;
+
     const result = {
       organization_id,
       dataset_id,
@@ -186,7 +205,9 @@ serve(async (req) => {
       // Map adaptive confidence to table columns
       capped_confidence: conf.capped_confidence,
       raw_confidence: conf.raw_confidence,
-      confidence_cap_reason: conf.confidence_cap_reason,
+      confidence_cap_reason: volatilityCapNote
+        ? [conf.confidence_cap_reason, volatilityCapNote].filter(Boolean).join(" ")
+        : conf.confidence_cap_reason,
       variance_score: conf.variance_score,
       sample_size: sampleSize,
       data_sufficiency: conf.data_sufficiency,

@@ -5,10 +5,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Brain, Send, Loader2, Sparkles, RotateCcw, Activity, Database,
+  Brain, Send, Loader2, Sparkles, RotateCcw, Activity, Database, Clock,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { supabase } from "@/integrations/supabase/client";
+import { getVerifiedAuth, authHeaders } from "@/lib/auth-helpers";
+import { useRateLimitFeedback } from "@/hooks/useRateLimitFeedback";
 
 interface CopilotMessage {
   role: "user" | "assistant";
@@ -49,6 +50,7 @@ const ExecutiveCopilot = ({ organizationId, roleType, riskScore, tier, datasetId
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { isThrottled, remainingCooldown, handleError: handleRateLimitError } = useRateLimitFeedback();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -57,7 +59,7 @@ const ExecutiveCopilot = ({ organizationId, roleType, riskScore, tier, datasetId
   }, [messages]);
 
   const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || isLoading) return;
+    if (!text.trim() || isLoading || isThrottled) return;
     setError(null);
 
     const userMsg: CopilotMessage = { role: "user", content: text.trim() };
@@ -68,9 +70,9 @@ const ExecutiveCopilot = ({ organizationId, roleType, riskScore, tier, datasetId
     let assistantSoFar = "";
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error("Not authenticated");
+      const auth = await getVerifiedAuth();
+      if (!auth) throw new Error("Not authenticated");
+      const token = auth.token;
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
@@ -161,16 +163,18 @@ const ExecutiveCopilot = ({ organizationId, roleType, riskScore, tier, datasetId
           } catch { /* ignore */ }
         }
       }
-    } catch (e: any) {
-      console.error("Copilot error:", e);
-      setError(e.message);
+    } catch (e: unknown) {
+      const errorObj = e instanceof Error ? e : new Error(String(e));
+      console.error("Copilot error:", errorObj);
+      const wasRateLimited = handleRateLimitError(errorObj);
+      if (!wasRateLimited) setError(errorObj.message);
       if (!assistantSoFar) {
         setMessages(prev => prev.slice(0, -1));
       }
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, sessionId, roleType, organizationId, datasetId, datasetName]);
+  }, [isLoading, isThrottled, sessionId, roleType, organizationId, datasetId, datasetName, handleRateLimitError]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -300,21 +304,29 @@ const ExecutiveCopilot = ({ organizationId, roleType, riskScore, tier, datasetId
             </div>
           )}
 
+          {isThrottled && (
+            <div className="flex-none mt-2 p-3 rounded-lg bg-warning/10 border border-warning/20 text-sm text-warning flex items-center gap-2">
+              <Clock className="w-4 h-4 shrink-0" />
+              Rate limit reached — please wait {remainingCooldown}s
+            </div>
+          )}
+
           <div className="flex-none mt-3 flex gap-2">
             <Textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a strategic question…"
+              placeholder={isThrottled ? `Rate limited — wait ${remainingCooldown}s…` : "Ask a strategic question…"}
               className="min-h-[44px] max-h-[120px] resize-none"
               rows={1}
-              disabled={isLoading}
+              disabled={isLoading || isThrottled}
             />
             <Button
               onClick={() => sendMessage(input)}
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isLoading || isThrottled}
               size="icon"
+              aria-label="Send message"
               className="shrink-0 h-[44px] w-[44px]"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

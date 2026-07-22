@@ -219,6 +219,7 @@ export function useBuildDecisionQueue({
         .select("id, recommended_action, confidence_at_decision, raw_confidence, capped_confidence, confidence_cap_reason, created_at, decision_type")
         .eq("organization_id", organizationId)
         .eq("execution_status", "not_started")
+        .eq("is_suppressed", false)
         .order("created_at", { ascending: false })
         .limit(2);
 

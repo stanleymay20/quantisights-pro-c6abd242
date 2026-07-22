@@ -195,7 +195,6 @@ serve(async (req) => {
 
     const result = {
       organization_id,
-      dataset_id,
       decision_id: decision_id || null,
       revenue_delta_pct,
       cost_delta_pct,
@@ -217,15 +216,18 @@ serve(async (req) => {
       sample_size: sampleSize,
       data_sufficiency: conf.data_sufficiency,
       correlation_assumptions: correlations,
-      baselines_used: {
-        revenue: baseRevenue !== null ? { value: baseRevenue, source: "dataset", data_points: revenueValues.length } : { value: null, source: "unavailable" },
-        cost: baseCost !== null ? { value: baseCost, source: "dataset", data_points: costValues.length } : { value: null, source: "unavailable" },
-        churn_rate: baseChurn !== null ? { value: baseChurn, source: "dataset", data_points: churnValues.length } : { value: null, source: "unavailable" },
-      },
       model_version: 1,
       simulation_runs: runs,
       created_by: user.id,
     };
+
+
+    const baselines_used = {
+      revenue: baseRevenue !== null ? { value: baseRevenue, source: "dataset", data_points: revenueValues.length } : { value: null, source: "unavailable" },
+      cost: baseCost !== null ? { value: baseCost, source: "dataset", data_points: costValues.length } : { value: null, source: "unavailable" },
+      churn_rate: baseChurn !== null ? { value: baseChurn, source: "dataset", data_points: churnValues.length } : { value: null, source: "unavailable" },
+    };
+
 
     // Extended metadata for response only (not stored in DB)
     const responseMeta = {
@@ -258,7 +260,8 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, simulation_id: inserted.id, ...result, ...responseMeta }),
+      JSON.stringify({ success: true, simulation_id: inserted.id, ...result, dataset_id, baselines_used, ...responseMeta }),
+
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {

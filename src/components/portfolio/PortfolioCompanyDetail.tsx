@@ -78,8 +78,8 @@ const PortfolioCompanyDetail = ({ company, onClose, onUpdate, onDelete }: Props)
       });
       setEditing(false);
       toast({ title: "Company updated" });
-    } catch (err: any) {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Update failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -90,8 +90,8 @@ const PortfolioCompanyDetail = ({ company, onClose, onUpdate, onDelete }: Props)
     try {
       await onDelete();
       toast({ title: "Company removed from portfolio" });
-    } catch (err: any) {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Delete failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setDeleting(false);
     }
@@ -104,7 +104,7 @@ const PortfolioCompanyDetail = ({ company, onClose, onUpdate, onDelete }: Props)
     { label: "EBITDA Margin", value: `${n(company.ebitda_margin_pct).toFixed(1)}%`, icon: Target },
     { label: "Valuation", value: fmtCurrency(company.current_valuation), icon: DollarSign },
     { label: "Headcount", value: company.headcount?.toString() ?? "—", icon: Users },
-    { label: "Ownership", value: company.ownership_pct ? `${company.ownership_pct}%` : "—", icon: Target },
+    { label: "Ownership", value: company.ownership_pct ? `${Math.round(company.ownership_pct)}%` : "—", icon: Target },
     { label: "Cash Runway", value: company.cash_runway_months ? `${company.cash_runway_months} mo` : "—", icon: Calendar },
   ];
 

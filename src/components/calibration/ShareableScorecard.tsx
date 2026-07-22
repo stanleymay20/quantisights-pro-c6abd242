@@ -49,7 +49,7 @@ const ShareableScorecard = (props: ScorecardProps) => {
           <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-medium mb-1">
             Calibration Tier
           </p>
-          <h2 className={`text-2xl font-bold ${props.tierColor}`}>
+          <h2 className={`text-[18px] font-semibold tracking-tight ${props.tierColor}`}>
             {props.tierLabel}
           </h2>
         </div>

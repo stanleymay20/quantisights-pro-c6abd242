@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { GitCompare } from "lucide-react";
 
 interface Props {
-  simulations: any[];
+  simulations: Array<{ id: string; scenario_name?: string; expected_value?: number; confidence_interval_low?: number; confidence_interval_high?: number; [key: string]: unknown }>;
 }
 
 const ScenarioComparison = ({ simulations }: Props) => {
@@ -14,7 +14,12 @@ const ScenarioComparison = ({ simulations }: Props) => {
     const [a, b] = simulations.slice(0, 2);
 
     const metrics = [
-      { label: "Expected Net", a: Number(a.expected_net_impact) || 0, b: Number(b.expected_net_impact) || 0 },
+      // median_net_impact, not expected_net_impact (the arithmetic mean): the
+      // underlying simulation is log-normal/right-skewed, so the mean can
+      // legitimately fall outside the P10-P90 band for volatile scenarios.
+      // Median is the P50 percentile of the same sorted path array, so it is
+      // always bounded by P10 and P90.
+      { label: "Expected Net", a: Number(a.median_net_impact) || 0, b: Number(b.median_net_impact) || 0 },
       { label: "P10 (Downside)", a: Number(a.p10_impact) || 0, b: Number(b.p10_impact) || 0 },
       { label: "P90 (Upside)", a: Number(a.p90_impact) || 0, b: Number(b.p90_impact) || 0 },
       { label: "P(+ROI) %", a: Number(a.probability_positive_roi) || 0, b: Number(b.probability_positive_roi) || 0 },

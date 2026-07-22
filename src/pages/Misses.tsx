@@ -10,6 +10,7 @@ import {
   AlertTriangle, TrendingDown, Target, XCircle, CheckCircle2, Activity, Crosshair,
 } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Decision {
   id: string;
@@ -139,16 +140,17 @@ const MissesPage = () => {
   };
 
   return (
-    <DatasetRequired moduleName="Prediction Accuracy">
+    <DatasetRequired moduleName="Missed Signals">
     <>
         <header className="h-14 border-b border-border/30 flex items-center px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <SidebarMobileToggle />
           <div className="ml-3">
-            <h1 className="text-xl font-semibold font-display">Prediction Accuracy</h1>
-            <p className="text-xs text-muted-foreground">Where predictions diverged from reality — transparency builds trust</p>
+            <h1 className="text-[18px] font-semibold tracking-tight">Missed Signals</h1>
+            <p className="text-xs text-muted-foreground">Prediction accuracy — where predictions diverged from reality. Transparency builds trust.</p>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Missed Signals">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Summary */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -294,6 +296,7 @@ const MissesPage = () => {
             </CardContent>
           </Card>
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

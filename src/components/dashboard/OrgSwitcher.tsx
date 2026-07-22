@@ -28,7 +28,7 @@ const OrgSwitcher = ({ organizations, currentOrg, onSwitch }: OrgSwitcherProps) 
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-1.5 text-xs sm:text-sm font-medium max-w-[120px] sm:max-w-[200px] h-8 px-2">
           <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />
-          <span className="truncate">{currentOrg?.name}</span>
+          <span className="truncate">{currentOrg?.name?.trim()}</span>
           <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
@@ -40,7 +40,7 @@ const OrgSwitcher = ({ organizations, currentOrg, onSwitch }: OrgSwitcherProps) 
             className="flex items-center justify-between"
           >
             <div className="min-w-0">
-              <div className="font-medium truncate">{org.name}</div>
+              <div className="font-medium truncate">{org.name?.trim()}</div>
               <div className="text-xs text-muted-foreground capitalize">{org.role}</div>
             </div>
             {org.id === currentOrg?.id && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}

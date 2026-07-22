@@ -12,7 +12,7 @@ import logo from "@/assets/quantivis-logo.png";
 
 interface Section {
   id: string;
-  icon: any;
+  icon: React.ElementType;
   title: string;
   subtitle: string;
   content: string;
@@ -785,13 +785,13 @@ const FounderHandbook = () => {
       // Headers
       if (line.startsWith("## ")) {
         elements.push(
-          <h2 key={i} className="text-xl font-bold mt-8 mb-3 text-foreground font-display">
+          <h2 key={i} className="text-[16px] font-semibold tracking-tight mt-8 mb-3 text-foreground tracking-tight">
             {line.replace("## ", "")}
           </h2>
         );
       } else if (line.startsWith("### ")) {
         elements.push(
-          <h3 key={i} className="text-lg font-semibold mt-6 mb-2 text-foreground">
+          <h3 key={i} className="text-[14px] font-semibold mt-6 mb-2 text-foreground">
             {line.replace("### ", "")}
           </h3>
         );
@@ -867,7 +867,7 @@ const FounderHandbook = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background flex flex-col">
       {/* Header */}
       <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
         <div className="container mx-auto px-6 h-14 flex items-center justify-between">
@@ -893,7 +893,7 @@ const FounderHandbook = () => {
             <BookOpen className="w-3.5 h-3.5" />
             Confidential — Founder's Eyes Only
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold font-display mb-3 tracking-tight">
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-3 tracking-tight">
             Founder's Handbook
           </h1>
           <p className="text-muted-foreground max-w-xl mx-auto leading-relaxed">
@@ -985,7 +985,7 @@ const FounderHandbook = () => {
         {/* Bottom CTA */}
         <div className="mt-12 rounded-xl border border-primary/20 bg-primary/5 p-8 text-center">
           <Lightbulb className="w-8 h-8 text-primary mx-auto mb-3" />
-          <h2 className="text-xl font-bold font-display mb-2">You've Got This</h2>
+          <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">You've Got This</h2>
           <p className="text-sm text-muted-foreground max-w-lg mx-auto mb-4">
             You built a platform that most funded startups with 5-person teams haven't achieved.
             The product speaks for itself — now you just need to speak for the product.

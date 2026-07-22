@@ -114,8 +114,8 @@ const FreeAnalysis = () => {
           }
         }
       }
-    } catch (err: any) {
-      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
       setStep("input");
     } finally {
       setIsStreaming(false);
@@ -123,9 +123,9 @@ const FreeAnalysis = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       <Navbar />
-      <main className="pt-24 pb-16">
+      <main className="flex-1 pt-24 pb-16">
         <div className="container mx-auto px-6 max-w-4xl">
 
           {/* Header */}
@@ -138,7 +138,7 @@ const FreeAnalysis = () => {
               <Sparkles className="w-3.5 h-3.5" />
               Free AI-Powered Business Diagnosis
             </div>
-            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">
+            <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
               Discover What Your Business Is{" "}
               <span className="gradient-text">Really Telling You</span>
             </h1>
@@ -231,7 +231,7 @@ const FreeAnalysis = () => {
                 className="flex flex-col items-center justify-center py-20"
               >
                 <Loader2 className="w-12 h-12 text-primary animate-spin mb-6" />
-                <h2 className="text-xl font-semibold mb-2">Analyzing your business...</h2>
+                <h2 className="text-[16px] font-semibold mb-2">Analyzing your business...</h2>
                 <p className="text-muted-foreground text-sm">
                   Running diagnostic models, detecting anomalies, estimating hidden losses
                 </p>
@@ -268,7 +268,7 @@ const FreeAnalysis = () => {
                     transition={{ delay: 0.5 }}
                     className="border border-primary/20 rounded-xl bg-primary/5 p-8 text-center"
                   >
-                    <h3 className="text-xl font-bold mb-2">
+                    <h3 className="text-[16px] font-semibold tracking-tight mb-2">
                       Want deeper insights? Continuous monitoring?
                     </h3>
                     <p className="text-muted-foreground mb-6 max-w-lg mx-auto">

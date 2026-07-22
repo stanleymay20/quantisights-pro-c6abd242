@@ -178,7 +178,7 @@ const EBITDABridgeChart = ({ metrics, datasetLabel }: Props) => {
             <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [formatCurrency(Math.abs(v), { compact: false }), "Amount"]} />
             <ReferenceLine y={0} stroke="hsl(var(--border))" />
             <Bar dataKey="bottom" stackId="bridge" fill="transparent" isAnimationActive={false} />
-            <Bar dataKey="height" stackId="bridge" radius={[4, 4, 0, 0]} label={({ x, y, width, index }: any) => {
+            <Bar dataKey="height" stackId="bridge" radius={[4, 4, 0, 0]} label={({ x, y, width, index }: { x: number; y: number; width: number; index: number }) => {
               const entry = analysis.steps![index];
               if (!entry) return null;
               return <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))" opacity={0.7}>{formatCurrency(Math.abs(entry.value))}</text>;

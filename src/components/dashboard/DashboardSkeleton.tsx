@@ -1,3 +1,4 @@
+import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 
@@ -5,14 +6,18 @@ interface DashboardSkeletonProps {
   className?: string;
 }
 
-const Pulse = ({ className, delay = 0 }: { className?: string; delay?: number }) => (
-  <motion.div
-    initial={{ opacity: 0.4 }}
-    animate={{ opacity: [0.4, 0.7, 0.4] }}
-    transition={{ duration: 1.8, repeat: Infinity, delay }}
-    className={cn("rounded-lg bg-muted/50", className)}
-  />
+const Pulse = forwardRef<HTMLDivElement, { className?: string; delay?: number }>(
+  ({ className, delay = 0 }, ref) => (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0.4 }}
+      animate={{ opacity: [0.4, 0.7, 0.4] }}
+      transition={{ duration: 1.8, repeat: Infinity, delay }}
+      className={cn("rounded-lg bg-muted/50", className)}
+    />
+  )
 );
+Pulse.displayName = "Pulse";
 
 const DashboardSkeleton = ({ className }: DashboardSkeletonProps) => (
   <motion.div

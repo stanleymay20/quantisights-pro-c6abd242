@@ -1,0 +1,821 @@
+[
+  {
+    "scenario_id": "clean-operational-signal",
+    "gateway_request": {
+      "agent_id": "aicis-rts-1g-evidence-agent",
+      "tenant_id": "tenant-a",
+      "organization_id": "org-a",
+      "idempotency_key": "candidate-56e8d686",
+      "decision_type": "supplier_risk_mitigation",
+      "requested_action": "Review supplier mitigation options and approve an operational response before the delivery risk materializes.",
+      "evidence_references": [
+        "evf:evf-d42f06c2",
+        "evf-hash:fnv1a-59199721"
+      ],
+      "confidence": 96,
+      "business_impact": {
+        "amount": 750000,
+        "description": "Estimated value at stake is 750000. Operational exposure is high for supplier_risk_mitigation. No direct compliance action identified by RTS-1E."
+      },
+      "risk_level": "high",
+      "justification": "EVF evf-d42f06c2 supports candidate generation: Supplier X delivery is at risk within 36 hours. All supporting EVFs are VERIFIED or ACTIVE. Generation policy STANDARD thresholds were satisfied. No blocking contradictions were present. Candidate is deterministic and contains complete lineage.",
+      "metadata": {
+        "candidate_id": "candidate-56e8d686",
+        "candidate_hash": "fnv1a-c646203b",
+        "candidate_class": "OPERATIONAL",
+        "candidate_status": "READY_FOR_GATEWAY",
+        "required_approvals": [
+          "Decision Owner",
+          "Operations Lead",
+          "Finance Approver"
+        ],
+        "recommended_option": {
+          "option_id": "supplier_risk_mitigation-recommended",
+          "description": "Mitigate supplier delivery risk using the governed recommended action.",
+          "advantages": [
+            "Uses verified enterprise facts",
+            "Creates auditable decision lineage",
+            "Can be routed to AG-2 when ready"
+          ],
+          "disadvantages": [
+            "Requires approval effort",
+            "May require cross-functional coordination"
+          ],
+          "expected_impact": "Reduces supplier delivery risk exposure while preserving governance evidence."
+        },
+        "alternative_options": [
+          {
+            "option_id": "supplier_risk_mitigation-alternative-a",
+            "description": "Escalate supplier delivery risk for manual review",
+            "advantages": [
+              "Adds human scrutiny",
+              "Useful when accountability is unclear"
+            ],
+            "disadvantages": [
+              "Slower response",
+              "May delay measurable mitigation"
+            ],
+            "expected_impact": "Improves oversight but may defer operational benefit."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-alternative-b",
+            "description": "Monitor supplier delivery risk until the next verified fact refresh",
+            "advantages": [
+              "Avoids premature action",
+              "Preserves optionality"
+            ],
+            "disadvantages": [
+              "Risk may increase during the waiting period",
+              "May miss execution window"
+            ],
+            "expected_impact": "Reduces immediate workload but increases time sensitivity."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-no-action",
+            "description": "Take no immediate action",
+            "advantages": [
+              "No execution cost",
+              "Avoids operational disruption"
+            ],
+            "disadvantages": [
+              "Known risk remains unmanaged",
+              "May weaken audit defensibility"
+            ],
+            "expected_impact": "No mitigation occurs; risk remains dependent on external change."
+          }
+        ],
+        "expected_outcomes": [
+          "Supplier delivery risk is reduced or escalated with accountable owner.",
+          "Potential value protected: 750000.",
+          "Decision lineage is ready for AG-2 governance."
+        ],
+        "success_metrics": [
+          "Delivery variance reduced",
+          "At-risk revenue protected",
+          "Supplier mitigation completed before deadline"
+        ],
+        "evf_ids": [
+          "evf-d42f06c2"
+        ],
+        "evf_hashes": [
+          "fnv1a-59199721"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_erp_a823a87a"
+        ],
+        "raw_event_ids": [
+          "evt-clean-001"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ],
+        "gateway_version": "ag-2.0.0",
+        "handoff_version": "rts-1f.1",
+        "decision_candidate_schema_version": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway_schema_version": "quantivis.decision-record.v1",
+        "handoff_schema_version": "quantivis.gateway-submission-record.v1"
+      }
+    },
+    "submission_record": {
+      "submission_id": "gateway-submission-92e4fa1b",
+      "candidate_id": "candidate-56e8d686",
+      "gateway_request_hash": "fnv1a-9318a9fb",
+      "submitted_at": "2026-07-05T12:00:00.000Z",
+      "status": "READY_FOR_SUBMISSION",
+      "gateway_version": "ag-2.0.0",
+      "schema_versions": {
+        "decision_candidate": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway": "quantivis.decision-record.v1",
+        "handoff": "quantivis.gateway-submission-record.v1"
+      },
+      "lineage": {
+        "enterprise_verified_facts": [
+          "evf-d42f06c2"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_erp_a823a87a"
+        ],
+        "raw_event_ids": [
+          "evt-clean-001"
+        ],
+        "candidate_hash": "fnv1a-c646203b",
+        "evf_hashes": [
+          "fnv1a-59199721"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ]
+      }
+    },
+    "explanation": [
+      "RTS-1F validates candidate candidate-56e8d686 before AG-2 handoff.",
+      "candidate status is READY_FOR_GATEWAY.",
+      "candidate class is OPERATIONAL.",
+      "candidate expires at 2026-07-06T12:00:00.000Z.",
+      "handoff payload built for AG-2 version ag-2.0.0.",
+      "gateway request hash is fnv1a-9318a9fb."
+    ]
+  },
+  {
+    "scenario_id": "accepted-medium-contradiction",
+    "gateway_request": {
+      "agent_id": "aicis-rts-1g-evidence-agent",
+      "tenant_id": "tenant-a",
+      "organization_id": "org-a",
+      "idempotency_key": "candidate-bf2fe492",
+      "decision_type": "operational_decision",
+      "requested_action": "Review the verified fact and determine whether governed action is needed.",
+      "evidence_references": [
+        "evf:evf-4d73c2b2",
+        "evf-hash:fnv1a-97bcc86f"
+      ],
+      "confidence": 90,
+      "business_impact": {
+        "amount": 250000,
+        "description": "Estimated value at stake is 250000. Operational exposure is medium for operational_decision. No direct compliance action identified by RTS-1E."
+      },
+      "risk_level": "medium",
+      "justification": "EVF evf-4d73c2b2 supports candidate generation: Operational process delay has an accepted medium contradiction. All supporting EVFs are VERIFIED or ACTIVE. Generation policy STANDARD thresholds were satisfied. No blocking contradictions were present. Candidate is deterministic and contains complete lineage.",
+      "metadata": {
+        "candidate_id": "candidate-bf2fe492",
+        "candidate_hash": "fnv1a-928d3fd0",
+        "candidate_class": "OPERATIONAL",
+        "candidate_status": "READY_FOR_GATEWAY",
+        "required_approvals": [
+          "Decision Owner",
+          "Operations Lead"
+        ],
+        "recommended_option": {
+          "option_id": "operational_decision-recommended",
+          "description": "Mitigate operational decision using the governed recommended action.",
+          "advantages": [
+            "Uses verified enterprise facts",
+            "Creates auditable decision lineage",
+            "Can be routed to AG-2 when ready"
+          ],
+          "disadvantages": [
+            "Requires approval effort",
+            "May require cross-functional coordination"
+          ],
+          "expected_impact": "Reduces operational decision exposure while preserving governance evidence."
+        },
+        "alternative_options": [
+          {
+            "option_id": "operational_decision-alternative-a",
+            "description": "Escalate operational decision for manual review",
+            "advantages": [
+              "Adds human scrutiny",
+              "Useful when accountability is unclear"
+            ],
+            "disadvantages": [
+              "Slower response",
+              "May delay measurable mitigation"
+            ],
+            "expected_impact": "Improves oversight but may defer operational benefit."
+          },
+          {
+            "option_id": "operational_decision-alternative-b",
+            "description": "Monitor operational decision until the next verified fact refresh",
+            "advantages": [
+              "Avoids premature action",
+              "Preserves optionality"
+            ],
+            "disadvantages": [
+              "Risk may increase during the waiting period",
+              "May miss execution window"
+            ],
+            "expected_impact": "Reduces immediate workload but increases time sensitivity."
+          },
+          {
+            "option_id": "operational_decision-no-action",
+            "description": "Take no immediate action",
+            "advantages": [
+              "No execution cost",
+              "Avoids operational disruption"
+            ],
+            "disadvantages": [
+              "Known risk remains unmanaged",
+              "May weaken audit defensibility"
+            ],
+            "expected_impact": "No mitigation occurs; risk remains dependent on external change."
+          }
+        ],
+        "expected_outcomes": [
+          "Verified fact receives governed review.",
+          "Action path is documented.",
+          "Outcome can be measured after execution."
+        ],
+        "success_metrics": [
+          "Decision reviewed",
+          "Owner assigned",
+          "Outcome tracked"
+        ],
+        "evf_ids": [
+          "evf-4d73c2b2"
+        ],
+        "evf_hashes": [
+          "fnv1a-97bcc86f"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_ops-system-a_fe8037e3",
+          "signal_tenant-a_ops-system-b_5f5aa22c"
+        ],
+        "raw_event_ids": [
+          "evt-ops-001",
+          "evt-ops-002"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ],
+        "gateway_version": "ag-2.0.0",
+        "handoff_version": "rts-1f.1",
+        "decision_candidate_schema_version": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway_schema_version": "quantivis.decision-record.v1",
+        "handoff_schema_version": "quantivis.gateway-submission-record.v1"
+      }
+    },
+    "submission_record": {
+      "submission_id": "gateway-submission-cba117fb",
+      "candidate_id": "candidate-bf2fe492",
+      "gateway_request_hash": "fnv1a-84e071b0",
+      "submitted_at": "2026-07-05T12:00:00.000Z",
+      "status": "READY_FOR_SUBMISSION",
+      "gateway_version": "ag-2.0.0",
+      "schema_versions": {
+        "decision_candidate": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway": "quantivis.decision-record.v1",
+        "handoff": "quantivis.gateway-submission-record.v1"
+      },
+      "lineage": {
+        "enterprise_verified_facts": [
+          "evf-4d73c2b2"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_ops-system-a_fe8037e3",
+          "signal_tenant-a_ops-system-b_5f5aa22c"
+        ],
+        "raw_event_ids": [
+          "evt-ops-001",
+          "evt-ops-002"
+        ],
+        "candidate_hash": "fnv1a-928d3fd0",
+        "evf_hashes": [
+          "fnv1a-97bcc86f"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ]
+      }
+    },
+    "explanation": [
+      "RTS-1F validates candidate candidate-bf2fe492 before AG-2 handoff.",
+      "candidate status is READY_FOR_GATEWAY.",
+      "candidate class is OPERATIONAL.",
+      "candidate expires at 2026-07-06T12:00:00.000Z.",
+      "handoff payload built for AG-2 version ag-2.0.0.",
+      "gateway request hash is fnv1a-84e071b0."
+    ]
+  },
+  {
+    "scenario_id": "high-impact-supplier-risk",
+    "gateway_request": {
+      "agent_id": "aicis-rts-1g-evidence-agent",
+      "tenant_id": "tenant-a",
+      "organization_id": "org-a",
+      "idempotency_key": "candidate-a58e3664",
+      "decision_type": "supplier_risk_mitigation",
+      "requested_action": "Review supplier mitigation options and approve an operational response before the delivery risk materializes.",
+      "evidence_references": [
+        "evf:evf-f1ed0f83",
+        "evf-hash:fnv1a-58878fed"
+      ],
+      "confidence": 97,
+      "business_impact": {
+        "amount": 2500000,
+        "description": "Estimated value at stake is 2500000. Operational exposure is high for supplier_risk_mitigation. No direct compliance action identified by RTS-1E."
+      },
+      "risk_level": "high",
+      "justification": "EVF evf-f1ed0f83 supports candidate generation: Strategic supplier will miss delivery within 72 hours. All supporting EVFs are VERIFIED or ACTIVE. Generation policy STANDARD thresholds were satisfied. No blocking contradictions were present. Candidate is deterministic and contains complete lineage.",
+      "metadata": {
+        "candidate_id": "candidate-a58e3664",
+        "candidate_hash": "fnv1a-c17b904c",
+        "candidate_class": "STRATEGIC",
+        "candidate_status": "READY_FOR_GATEWAY",
+        "required_approvals": [
+          "Decision Owner",
+          "Operations Lead",
+          "Finance Approver",
+          "Executive Sponsor"
+        ],
+        "recommended_option": {
+          "option_id": "supplier_risk_mitigation-recommended",
+          "description": "Mitigate supplier delivery risk using the governed recommended action.",
+          "advantages": [
+            "Uses verified enterprise facts",
+            "Creates auditable decision lineage",
+            "Can be routed to AG-2 when ready"
+          ],
+          "disadvantages": [
+            "Requires approval effort",
+            "May require cross-functional coordination"
+          ],
+          "expected_impact": "Reduces supplier delivery risk exposure while preserving governance evidence."
+        },
+        "alternative_options": [
+          {
+            "option_id": "supplier_risk_mitigation-alternative-a",
+            "description": "Escalate supplier delivery risk for manual review",
+            "advantages": [
+              "Adds human scrutiny",
+              "Useful when accountability is unclear"
+            ],
+            "disadvantages": [
+              "Slower response",
+              "May delay measurable mitigation"
+            ],
+            "expected_impact": "Improves oversight but may defer operational benefit."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-alternative-b",
+            "description": "Monitor supplier delivery risk until the next verified fact refresh",
+            "advantages": [
+              "Avoids premature action",
+              "Preserves optionality"
+            ],
+            "disadvantages": [
+              "Risk may increase during the waiting period",
+              "May miss execution window"
+            ],
+            "expected_impact": "Reduces immediate workload but increases time sensitivity."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-no-action",
+            "description": "Take no immediate action",
+            "advantages": [
+              "No execution cost",
+              "Avoids operational disruption"
+            ],
+            "disadvantages": [
+              "Known risk remains unmanaged",
+              "May weaken audit defensibility"
+            ],
+            "expected_impact": "No mitigation occurs; risk remains dependent on external change."
+          }
+        ],
+        "expected_outcomes": [
+          "Supplier delivery risk is reduced or escalated with accountable owner.",
+          "Potential value protected: 2500000.",
+          "Decision lineage is ready for AG-2 governance."
+        ],
+        "success_metrics": [
+          "Delivery variance reduced",
+          "At-risk revenue protected",
+          "Supplier mitigation completed before deadline"
+        ],
+        "evf_ids": [
+          "evf-f1ed0f83"
+        ],
+        "evf_hashes": [
+          "fnv1a-58878fed"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_supplier-portal_3078bd89"
+        ],
+        "raw_event_ids": [
+          "evt-supplier-001"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ],
+        "gateway_version": "ag-2.0.0",
+        "handoff_version": "rts-1f.1",
+        "decision_candidate_schema_version": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway_schema_version": "quantivis.decision-record.v1",
+        "handoff_schema_version": "quantivis.gateway-submission-record.v1"
+      }
+    },
+    "submission_record": {
+      "submission_id": "gateway-submission-a65504c5",
+      "candidate_id": "candidate-a58e3664",
+      "gateway_request_hash": "fnv1a-55d30e25",
+      "submitted_at": "2026-07-05T12:00:00.000Z",
+      "status": "READY_FOR_SUBMISSION",
+      "gateway_version": "ag-2.0.0",
+      "schema_versions": {
+        "decision_candidate": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway": "quantivis.decision-record.v1",
+        "handoff": "quantivis.gateway-submission-record.v1"
+      },
+      "lineage": {
+        "enterprise_verified_facts": [
+          "evf-f1ed0f83"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_supplier-portal_3078bd89"
+        ],
+        "raw_event_ids": [
+          "evt-supplier-001"
+        ],
+        "candidate_hash": "fnv1a-c17b904c",
+        "evf_hashes": [
+          "fnv1a-58878fed"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ]
+      }
+    },
+    "explanation": [
+      "RTS-1F validates candidate candidate-a58e3664 before AG-2 handoff.",
+      "candidate status is READY_FOR_GATEWAY.",
+      "candidate class is STRATEGIC.",
+      "candidate expires at 2026-07-06T12:00:00.000Z.",
+      "handoff payload built for AG-2 version ag-2.0.0.",
+      "gateway request hash is fnv1a-55d30e25."
+    ]
+  },
+  {
+    "scenario_id": "compliance-regulatory-signal",
+    "gateway_request": {
+      "agent_id": "aicis-rts-1g-evidence-agent",
+      "tenant_id": "tenant-a",
+      "organization_id": "org-a",
+      "idempotency_key": "candidate-320d33cd",
+      "decision_type": "regulatory_governance_review",
+      "requested_action": "Initiate governance review and assign compliance ownership before downstream decisioning.",
+      "evidence_references": [
+        "evf:evf-888012ed",
+        "evf-hash:fnv1a-e24bfd9e"
+      ],
+      "confidence": 95,
+      "business_impact": {
+        "amount": 500000,
+        "description": "Estimated value at stake is 500000. Operational exposure is critical for regulatory_governance_review. Compliance action is directly implicated."
+      },
+      "risk_level": "critical",
+      "justification": "EVF evf-888012ed supports candidate generation: Regulatory compliance evidence gap requires governance review. All supporting EVFs are VERIFIED or ACTIVE. Generation policy STANDARD thresholds were satisfied. No blocking contradictions were present. Candidate is deterministic and contains complete lineage.",
+      "metadata": {
+        "candidate_id": "candidate-320d33cd",
+        "candidate_hash": "fnv1a-46a06d2e",
+        "candidate_class": "REGULATORY",
+        "candidate_status": "READY_FOR_GATEWAY",
+        "required_approvals": [
+          "Decision Owner",
+          "Compliance Officer",
+          "Finance Approver"
+        ],
+        "recommended_option": {
+          "option_id": "regulatory_governance_review-recommended",
+          "description": "Mitigate regulatory governance review using the governed recommended action.",
+          "advantages": [
+            "Uses verified enterprise facts",
+            "Creates auditable decision lineage",
+            "Can be routed to AG-2 when ready"
+          ],
+          "disadvantages": [
+            "Requires approval effort",
+            "May require cross-functional coordination"
+          ],
+          "expected_impact": "Reduces regulatory governance review exposure while preserving governance evidence."
+        },
+        "alternative_options": [
+          {
+            "option_id": "regulatory_governance_review-alternative-a",
+            "description": "Escalate regulatory governance review for manual review",
+            "advantages": [
+              "Adds human scrutiny",
+              "Useful when accountability is unclear"
+            ],
+            "disadvantages": [
+              "Slower response",
+              "May delay measurable mitigation"
+            ],
+            "expected_impact": "Improves oversight but may defer operational benefit."
+          },
+          {
+            "option_id": "regulatory_governance_review-alternative-b",
+            "description": "Monitor regulatory governance review until the next verified fact refresh",
+            "advantages": [
+              "Avoids premature action",
+              "Preserves optionality"
+            ],
+            "disadvantages": [
+              "Risk may increase during the waiting period",
+              "May miss execution window"
+            ],
+            "expected_impact": "Reduces immediate workload but increases time sensitivity."
+          },
+          {
+            "option_id": "regulatory_governance_review-no-action",
+            "description": "Take no immediate action",
+            "advantages": [
+              "No execution cost",
+              "Avoids operational disruption"
+            ],
+            "disadvantages": [
+              "Known risk remains unmanaged",
+              "May weaken audit defensibility"
+            ],
+            "expected_impact": "No mitigation occurs; risk remains dependent on external change."
+          }
+        ],
+        "expected_outcomes": [
+          "Compliance owner assigned.",
+          "Evidence gap is tracked before downstream approval.",
+          "Audit trail remains defensible."
+        ],
+        "success_metrics": [
+          "Evidence gap closed",
+          "Compliance owner assigned",
+          "Governance review completed"
+        ],
+        "evf_ids": [
+          "evf-888012ed"
+        ],
+        "evf_hashes": [
+          "fnv1a-e24bfd9e"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_policy-register_603e7480"
+        ],
+        "raw_event_ids": [
+          "evt-compliance-001"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ],
+        "gateway_version": "ag-2.0.0",
+        "handoff_version": "rts-1f.1",
+        "decision_candidate_schema_version": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway_schema_version": "quantivis.decision-record.v1",
+        "handoff_schema_version": "quantivis.gateway-submission-record.v1"
+      }
+    },
+    "submission_record": {
+      "submission_id": "gateway-submission-4994b4e4",
+      "candidate_id": "candidate-320d33cd",
+      "gateway_request_hash": "fnv1a-68655d00",
+      "submitted_at": "2026-07-05T12:00:00.000Z",
+      "status": "READY_FOR_SUBMISSION",
+      "gateway_version": "ag-2.0.0",
+      "schema_versions": {
+        "decision_candidate": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway": "quantivis.decision-record.v1",
+        "handoff": "quantivis.gateway-submission-record.v1"
+      },
+      "lineage": {
+        "enterprise_verified_facts": [
+          "evf-888012ed"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_policy-register_603e7480"
+        ],
+        "raw_event_ids": [
+          "evt-compliance-001"
+        ],
+        "candidate_hash": "fnv1a-46a06d2e",
+        "evf_hashes": [
+          "fnv1a-e24bfd9e"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ]
+      }
+    },
+    "explanation": [
+      "RTS-1F validates candidate candidate-320d33cd before AG-2 handoff.",
+      "candidate status is READY_FOR_GATEWAY.",
+      "candidate class is REGULATORY.",
+      "candidate expires at 2026-07-06T12:00:00.000Z.",
+      "handoff payload built for AG-2 version ag-2.0.0.",
+      "gateway request hash is fnv1a-68655d00."
+    ]
+  },
+  {
+    "scenario_id": "deterministic-replay",
+    "gateway_request": {
+      "agent_id": "aicis-rts-1g-evidence-agent",
+      "tenant_id": "tenant-a",
+      "organization_id": "org-a",
+      "idempotency_key": "candidate-d9a001b5",
+      "decision_type": "supplier_risk_mitigation",
+      "requested_action": "Review supplier mitigation options and approve an operational response before the delivery risk materializes.",
+      "evidence_references": [
+        "evf:evf-c89a6181",
+        "evf-hash:fnv1a-0f17fe47"
+      ],
+      "confidence": 96,
+      "business_impact": {
+        "amount": 750000,
+        "description": "Estimated value at stake is 750000. Operational exposure is high for supplier_risk_mitigation. No direct compliance action identified by RTS-1E."
+      },
+      "risk_level": "high",
+      "justification": "EVF evf-c89a6181 supports candidate generation: Replay supplier risk produces identical deterministic hashes. All supporting EVFs are VERIFIED or ACTIVE. Generation policy STANDARD thresholds were satisfied. No blocking contradictions were present. Candidate is deterministic and contains complete lineage.",
+      "metadata": {
+        "candidate_id": "candidate-d9a001b5",
+        "candidate_hash": "fnv1a-a5f46a87",
+        "candidate_class": "OPERATIONAL",
+        "candidate_status": "READY_FOR_GATEWAY",
+        "required_approvals": [
+          "Decision Owner",
+          "Operations Lead",
+          "Finance Approver"
+        ],
+        "recommended_option": {
+          "option_id": "supplier_risk_mitigation-recommended",
+          "description": "Mitigate supplier delivery risk using the governed recommended action.",
+          "advantages": [
+            "Uses verified enterprise facts",
+            "Creates auditable decision lineage",
+            "Can be routed to AG-2 when ready"
+          ],
+          "disadvantages": [
+            "Requires approval effort",
+            "May require cross-functional coordination"
+          ],
+          "expected_impact": "Reduces supplier delivery risk exposure while preserving governance evidence."
+        },
+        "alternative_options": [
+          {
+            "option_id": "supplier_risk_mitigation-alternative-a",
+            "description": "Escalate supplier delivery risk for manual review",
+            "advantages": [
+              "Adds human scrutiny",
+              "Useful when accountability is unclear"
+            ],
+            "disadvantages": [
+              "Slower response",
+              "May delay measurable mitigation"
+            ],
+            "expected_impact": "Improves oversight but may defer operational benefit."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-alternative-b",
+            "description": "Monitor supplier delivery risk until the next verified fact refresh",
+            "advantages": [
+              "Avoids premature action",
+              "Preserves optionality"
+            ],
+            "disadvantages": [
+              "Risk may increase during the waiting period",
+              "May miss execution window"
+            ],
+            "expected_impact": "Reduces immediate workload but increases time sensitivity."
+          },
+          {
+            "option_id": "supplier_risk_mitigation-no-action",
+            "description": "Take no immediate action",
+            "advantages": [
+              "No execution cost",
+              "Avoids operational disruption"
+            ],
+            "disadvantages": [
+              "Known risk remains unmanaged",
+              "May weaken audit defensibility"
+            ],
+            "expected_impact": "No mitigation occurs; risk remains dependent on external change."
+          }
+        ],
+        "expected_outcomes": [
+          "Supplier delivery risk is reduced or escalated with accountable owner.",
+          "Potential value protected: 750000.",
+          "Decision lineage is ready for AG-2 governance."
+        ],
+        "success_metrics": [
+          "Delivery variance reduced",
+          "At-risk revenue protected",
+          "Supplier mitigation completed before deadline"
+        ],
+        "evf_ids": [
+          "evf-c89a6181"
+        ],
+        "evf_hashes": [
+          "fnv1a-0f17fe47"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_erp_2328bdc8"
+        ],
+        "raw_event_ids": [
+          "evt-replay-001"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ],
+        "gateway_version": "ag-2.0.0",
+        "handoff_version": "rts-1f.1",
+        "decision_candidate_schema_version": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway_schema_version": "quantivis.decision-record.v1",
+        "handoff_schema_version": "quantivis.gateway-submission-record.v1"
+      }
+    },
+    "submission_record": {
+      "submission_id": "gateway-submission-5cd85721",
+      "candidate_id": "candidate-d9a001b5",
+      "gateway_request_hash": "fnv1a-426a204f",
+      "submitted_at": "2026-07-05T12:00:00.000Z",
+      "status": "READY_FOR_SUBMISSION",
+      "gateway_version": "ag-2.0.0",
+      "schema_versions": {
+        "decision_candidate": "quantivis.enterprise-decision-candidate.v1",
+        "agent_gateway": "quantivis.decision-record.v1",
+        "handoff": "quantivis.gateway-submission-record.v1"
+      },
+      "lineage": {
+        "enterprise_verified_facts": [
+          "evf-c89a6181"
+        ],
+        "signal_ids": [
+          "signal_tenant-a_erp_2328bdc8"
+        ],
+        "raw_event_ids": [
+          "evt-replay-001"
+        ],
+        "candidate_hash": "fnv1a-a5f46a87",
+        "evf_hashes": [
+          "fnv1a-0f17fe47"
+        ],
+        "promotion_policies": [
+          "NORMAL"
+        ],
+        "promotion_engine_versions": [
+          "rts-1d.1"
+        ]
+      }
+    },
+    "explanation": [
+      "RTS-1F validates candidate candidate-d9a001b5 before AG-2 handoff.",
+      "candidate status is READY_FOR_GATEWAY.",
+      "candidate class is OPERATIONAL.",
+      "candidate expires at 2026-07-06T12:00:00.000Z.",
+      "handoff payload built for AG-2 version ag-2.0.0.",
+      "gateway request hash is fnv1a-426a204f."
+    ]
+  }
+]

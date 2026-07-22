@@ -15,6 +15,17 @@ const DeviceIcon = ({ ua }: { ua: string | null }) => {
   return <Monitor className="w-5 h-5 text-primary" />;
 };
 
+// user_sessions rows are only updated by a 5-minute heartbeat ping while the
+// tab is open, and otherwise only cleared by explicit revoke — there is no
+// expiry-based cleanup job. A row can sit here for months looking like a
+// live, revocable session long after Supabase's actual refresh token for it
+// has expired. 30 days is well beyond any realistic refresh-token lifetime,
+// so anything older is almost certainly already dead; flag it rather than
+// present it with the same confidence as a genuinely active session.
+const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;
+const isLikelyExpired = (lastActiveAt: string) =>
+  Date.now() - new Date(lastActiveAt).getTime() > STALE_THRESHOLD_MS;
+
 const SessionManagement = () => {
   const {
     activeSessions, revokedSessions, isLoading,
@@ -82,6 +93,11 @@ const SessionManagement = () => {
                             Current
                           </Badge>
                         )}
+                        {!isCurrentSession(session.user_agent) && isLikelyExpired(session.last_active_at) && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-muted-foreground/30">
+                            Likely expired
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                         <Clock className="w-3 h-3" />
@@ -112,6 +128,11 @@ const SessionManagement = () => {
           )}
         </CardContent>
       </Card>
+      {activeSessions.some((s) => !isCurrentSession(s.user_agent) && isLikelyExpired(s.last_active_at)) && (
+        <p className="text-xs text-muted-foreground/70 px-1">
+          Sessions marked "Likely expired" haven't checked in for 30+ days. Their underlying login token has almost certainly already expired on its own — Revoke removes the row from this list, but isn't required for security.
+        </p>
+      )}
 
       {isAdmin && revokedSessions.length > 0 && (
         <Card>

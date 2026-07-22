@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Search, AlertTriangle, BarChart3, Layers } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface DiagnosticSummaryCardsProps {
   analyzedCount: number;
@@ -8,18 +9,20 @@ interface DiagnosticSummaryCardsProps {
   totalDiagnosed: number;
   metricTypesAnalyzed?: number;
   skippedMetrics?: string[];
+  loading?: boolean;
 }
 
-const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, totalDiagnosed, metricTypesAnalyzed, skippedMetrics }: DiagnosticSummaryCardsProps) => (
+const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, totalDiagnosed, metricTypesAnalyzed, skippedMetrics, loading }: DiagnosticSummaryCardsProps) => (
   <div className="space-y-3">
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Search className="w-5 h-5 text-primary" />
-          </div>
           <div>
-            <p className="text-2xl font-bold">{analyzedCount.toLocaleString()}</p>
+            {loading ? (
+              <Skeleton className="h-7 w-12 mb-1" />
+            ) : (
+              <p className="text-2xl font-bold">{analyzedCount.toLocaleString()}</p>
+            )}
             <p className="text-xs text-muted-foreground">Data Points Analyzed</p>
           </div>
         </CardContent>
@@ -30,7 +33,11 @@ const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, to
             <AlertTriangle className="w-5 h-5 text-destructive" />
           </div>
           <div>
-            <p className="text-2xl font-bold">{criticalCount}</p>
+            {loading ? (
+              <Skeleton className="h-7 w-8 mb-1" />
+            ) : (
+              <p className="text-2xl font-bold">{criticalCount}</p>
+            )}
             <p className="text-xs text-muted-foreground">Critical Issues</p>
           </div>
         </CardContent>
@@ -41,7 +48,11 @@ const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, to
             <AlertTriangle className="w-5 h-5 text-warning" />
           </div>
           <div>
-            <p className="text-2xl font-bold">{warningCount}</p>
+            {loading ? (
+              <Skeleton className="h-7 w-8 mb-1" />
+            ) : (
+              <p className="text-2xl font-bold">{warningCount}</p>
+            )}
             <p className="text-xs text-muted-foreground">Warnings</p>
           </div>
         </CardContent>
@@ -52,7 +63,11 @@ const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, to
             <BarChart3 className="w-5 h-5 text-success" />
           </div>
           <div>
-            <p className="text-2xl font-bold">{totalDiagnosed}</p>
+            {loading ? (
+              <Skeleton className="h-7 w-8 mb-1" />
+            ) : (
+              <p className="text-2xl font-bold">{totalDiagnosed}</p>
+            )}
             <p className="text-xs text-muted-foreground">Metrics Diagnosed</p>
           </div>
         </CardContent>
@@ -60,7 +75,7 @@ const DiagnosticSummaryCards = ({ analyzedCount, criticalCount, warningCount, to
     </div>
 
     {/* Skipped metrics notice */}
-    {skippedMetrics && skippedMetrics.length > 0 && (
+    {!loading && skippedMetrics && skippedMetrics.length > 0 && (
       <div className="flex items-start gap-2 px-4 py-2.5 rounded-lg bg-muted/50 border border-border/40">
         <Layers className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
         <p className="text-xs text-muted-foreground leading-relaxed">

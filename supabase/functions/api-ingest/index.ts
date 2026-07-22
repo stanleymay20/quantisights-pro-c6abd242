@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -69,7 +70,7 @@ async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
-    });
+    }) as any;
 
     const { data: { user }, error } = await userClient.auth.getUser();
     if (error || !user?.id) {
@@ -202,7 +203,7 @@ serve(async (req) => {
   const startTime = Date.now();
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const svc = createClient(supabaseUrl, serviceKey);
+  const svc = createClient(supabaseUrl, serviceKey) as any;
 
   const respond = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });

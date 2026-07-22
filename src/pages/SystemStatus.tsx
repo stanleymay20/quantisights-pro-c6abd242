@@ -12,15 +12,26 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 import logo from "@/assets/quantivis-logo.png";
+import { deriveSystemStatus, type SystemStatus as StatusValue } from "@/lib/system-status";
+import { useSeoHead } from "@/lib/useSeoHead";
 
 interface CronJob {
   job_name: string;
   status: string;
-  started_at: string;
+  started_at?: string | null;
+  last_run_at: string | null;
+  next_expected_run_at: string | null;
+  severity: "critical" | "warning" | "info";
+  evidence_source: string;
   completed_at: string | null;
   duration_ms: number | null;
   error_message: string | null;
   records_processed: number | null;
+}
+
+interface PublicStatusResponse {
+  jobs: CronJob[];
+  generated_at: string;
 }
 
 interface SystemMetrics {
@@ -31,7 +42,7 @@ interface SystemMetrics {
   openAdvisories: number;
   totalDatasets: number;
   lastCronJobs: CronJob[];
-  overallStatus: "operational" | "degraded" | "outage";
+  overallStatus: StatusValue;
 }
 
 const MONITORED_JOBS = [
@@ -44,18 +55,25 @@ const MONITORED_JOBS = [
 ];
 
 const SystemStatus = () => {
+  useSeoHead({
+    title: "System Status | Quantivis",
+    description: "Live Quantivis system status, scheduled-job telemetry, and operational evidence for public trust and procurement review.",
+    canonicalPath: "/status",
+  });
+
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
+  const [telemetryAvailable, setTelemetryAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const [decisionsRes, advisoriesRes, datasetsRes, cronRes, calibrationRes] = await Promise.all([
+      const [decisionsRes, advisoriesRes, datasetsRes, statusRes, calibrationRes] = await Promise.all([
         supabase.from("decision_ledger").select("decision_status, outcome_measured_at", { count: "exact", head: false }).limit(1000),
         supabase.from("advisory_instances").select("id", { count: "exact", head: true }).eq("status", "open"),
         supabase.from("datasets").select("id", { count: "exact", head: true }),
-        supabase.from("cron_run_log").select("*").order("started_at", { ascending: false }).limit(30),
+        supabase.functions.invoke<PublicStatusResponse>("public-system-status"),
         supabase.from("calibration_models").select("id", { count: "exact", head: true }),
       ]);
 
@@ -63,14 +81,36 @@ const SystemStatus = () => {
       const completed = decisions.filter(d => d.decision_status === "completed" || d.decision_status === "executed").length;
       const evaluated = decisions.filter(d => d.outcome_measured_at).length;
 
-      const cronJobs = (cronRes.data ?? []) as CronJob[];
-      const recentFailures = cronJobs.filter(j => j.status === "failed" && new Date(j.started_at) > new Date(Date.now() - 24 * 60 * 60 * 1000));
+      const telemetryAvailable = !statusRes.error && Array.isArray(statusRes.data?.jobs);
+      const cronJobs = telemetryAvailable ? statusRes.data?.jobs ?? [] : [];
+      const recentFailures = cronJobs.filter(j => {
+        const lastRunAt = j.last_run_at ?? j.started_at;
+        return j.status === "failed" && lastRunAt && new Date(lastRunAt) > new Date(Date.now() - 24 * 60 * 60 * 1000);
+      });
       const criticalFailures = recentFailures.filter(j =>
         MONITORED_JOBS.some(m => m.critical && m.name === j.job_name)
       );
 
-      const overallStatus: "operational" | "degraded" | "outage" =
-        criticalFailures.length > 0 ? "outage" : recentFailures.length > 0 ? "degraded" : "operational";
+      const queriesSucceeded = [
+        decisionsRes,
+        advisoriesRes,
+        datasetsRes,
+        statusRes,
+      ].every((result) => !result.error);
+      const staleCriticalJobs = MONITORED_JOBS.filter((job) => {
+        if (!job.critical) return false;
+        const last = cronJobs.find((run) => run.job_name === job.name);
+        const lastRunAt = last?.last_run_at ?? last?.started_at;
+        if (!lastRunAt) return false;
+        return Date.now() - new Date(lastRunAt).getTime() > 24 * 60 * 60 * 1000;
+      }).length;
+      const overallStatus = deriveSystemStatus({
+        queriesSucceeded: queriesSucceeded && telemetryAvailable,
+        recordedRuns: cronJobs.length,
+        criticalFailures: criticalFailures.length,
+        nonCriticalFailures: recentFailures.length - criticalFailures.length,
+        staleCriticalJobs,
+      });
 
       setMetrics({
         totalDecisions: decisions.length,
@@ -82,9 +122,11 @@ const SystemStatus = () => {
         lastCronJobs: cronJobs,
         overallStatus,
       });
+      setTelemetryAvailable(telemetryAvailable);
       setLastRefresh(new Date());
     } catch (err) {
       console.error("[SystemStatus] fetch error:", err);
+      setTelemetryAvailable(false);
     } finally {
       setLoading(false);
     }
@@ -104,12 +146,20 @@ const SystemStatus = () => {
     if (runs.length === 0) return { last: null, status: "never" };
     const last = runs[0];
     if (last.status === "failed") return { last, status: "failed" };
-    const age = Date.now() - new Date(last.started_at).getTime();
+    const lastRunAt = last.last_run_at ?? last.started_at;
+    if (!lastRunAt) return { last, status: "never" };
+    const age = Date.now() - new Date(lastRunAt).getTime();
     if (age > 48 * 60 * 60 * 1000) return { last, status: "stale" };
     return { last, status: "ok" };
   };
 
   const statusConfig = {
+    unknown: {
+      color: "text-muted-foreground",
+      bg: "bg-muted/30 border-border",
+      label: telemetryAvailable ? "Telemetry Partially Available" : "Telemetry Unavailable",
+      icon: Clock,
+    },
     operational: { color: "text-success", bg: "bg-success/10 border-success/20", label: "All Systems Operational", icon: CheckCircle2 },
     degraded: { color: "text-warning", bg: "bg-warning/10 border-warning/20", label: "Degraded Performance", icon: AlertTriangle },
     outage: { color: "text-destructive", bg: "bg-destructive/10 border-destructive/20", label: "System Issues Detected", icon: XCircle },
@@ -119,10 +169,10 @@ const SystemStatus = () => {
     ok: { color: "text-success", bg: "bg-success/10", icon: CheckCircle2, label: "Healthy" },
     failed: { color: "text-destructive", bg: "bg-destructive/10", icon: XCircle, label: "Failed" },
     stale: { color: "text-warning", bg: "bg-warning/10", icon: Clock, label: "Stale" },
-    never: { color: "text-muted-foreground", bg: "bg-muted/30", icon: Clock, label: "No Runs" },
+    never: { color: "text-muted-foreground", bg: "bg-muted/30", icon: Clock, label: "Scheduled" },
   };
 
-  const overall = metrics ? statusConfig[metrics.overallStatus] : statusConfig.operational;
+  const overall = metrics ? statusConfig[metrics.overallStatus] : statusConfig.unknown;
   const OverallIcon = overall.icon;
 
   const closedLoopRate = metrics && metrics.totalDecisions > 0
@@ -130,7 +180,7 @@ const SystemStatus = () => {
     : 0;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background flex flex-col">
       {/* Header */}
       <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -147,16 +197,21 @@ const SystemStatus = () => {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+      <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
         {/* Overall Status Banner */}
         <Card className={`border-2 ${overall.bg}`}>
           <CardContent className="py-6 flex items-center gap-4">
             <OverallIcon className={`w-8 h-8 ${overall.color}`} />
             <div>
-              <h1 className={`text-xl font-bold ${overall.color}`}>{overall.label}</h1>
+              <h1 className={`text-[16px] font-semibold tracking-tight ${overall.color}`}>{overall.label}</h1>
               <p className="text-sm text-muted-foreground">
                 Last checked {formatDistanceToNow(lastRefresh, { addSuffix: true })} · Auto-refreshes every 60s
               </p>
+              {metrics?.overallStatus === "unknown" && (
+                <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
+                  Health is not marked operational until all required public checks and scheduled-job evidence are available.
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -230,16 +285,27 @@ const SystemStatus = () => {
                           {job.critical && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Critical</Badge>}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {last ? (
+                          {last?.last_run_at || last?.started_at ? (
                             <>
-                              Last run {formatDistanceToNow(new Date(last.started_at), { addSuffix: true })}
+                              Last run {formatDistanceToNow(new Date(last.last_run_at ?? last.started_at!), { addSuffix: true })}
                               {last.duration_ms != null && <> · {last.duration_ms}ms</>}
                               {last.records_processed != null && <> · {last.records_processed} processed</>}
                             </>
+                          ) : !telemetryAvailable ? (
+                            "Telemetry unavailable. No scheduler evidence was returned."
                           ) : (
-                            "No runs recorded"
+                            "Awaiting first recorded run"
                           )}
                         </div>
+                        {last && (
+                          <div className="text-[11px] text-muted-foreground mt-0.5">
+                            Next expected: {last.next_expected_run_at
+                              ? new Date(last.next_expected_run_at).toLocaleString()
+                              : "not available"}
+                            {" · "}Severity: {last.severity}
+                            {" · "}Evidence: {last.evidence_source}
+                          </div>
+                        )}
                         {status === "failed" && last?.error_message && (
                           <p className="text-[11px] text-destructive mt-0.5 truncate max-w-[400px]">
                             {last.error_message}
@@ -276,7 +342,7 @@ const SystemStatus = () => {
                   </thead>
                   <tbody>
                     {metrics.lastCronJobs.slice(0, 15).map((job, i) => (
-                      <tr key={job.started_at + i} className="border-b border-border/10 last:border-0">
+                      <tr key={(job.last_run_at ?? job.started_at ?? job.job_name) + i} className="border-b border-border/10 last:border-0">
                         <td className="py-2 px-3 font-medium">{job.job_name}</td>
                         <td className="py-2 px-3">
                           <Badge
@@ -287,7 +353,9 @@ const SystemStatus = () => {
                           </Badge>
                         </td>
                         <td className="py-2 px-3 text-muted-foreground text-xs">
-                          {formatDistanceToNow(new Date(job.started_at), { addSuffix: true })}
+                          {job.last_run_at || job.started_at
+                            ? formatDistanceToNow(new Date(job.last_run_at ?? job.started_at!), { addSuffix: true })
+                            : "No recorded run"}
                         </td>
                         <td className="py-2 px-3 text-right text-muted-foreground">
                           {job.duration_ms != null ? `${job.duration_ms}ms` : "—"}

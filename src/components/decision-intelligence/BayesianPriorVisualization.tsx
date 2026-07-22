@@ -106,7 +106,7 @@ const BayesianPriorVisualization = ({ decisions }: { decisions: Decision[] }) =>
         <div className="text-center bg-muted/20 rounded-lg p-2">
           <p className="text-[10px] text-muted-foreground">Rolling Accuracy</p>
           <p className={`text-sm font-bold font-mono ${(latestAccuracy ?? 0) >= 70 ? "text-success" : "text-warning"}`}>
-            {latestAccuracy != null ? `${latestAccuracy}%` : "—"}
+            {latestAccuracy != null ? `${Math.round(latestAccuracy)}%` : "—"}
           </p>
         </div>
         <div className="text-center bg-muted/20 rounded-lg p-2">

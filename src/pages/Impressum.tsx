@@ -1,20 +1,27 @@
 import { Link } from "react-router-dom";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
+import { useSeoHead } from "@/lib/useSeoHead";
 
 /**
  * Impressum — legally required under German TMG §5 / DDG §5
  * Must be accessible within 2 clicks from any page.
  */
-const Impressum = () => (
-  <div className="min-h-screen bg-background">
+const Impressum = () => {
+  useSeoHead({
+    title: "Impressum — Quantivis Global",
+    description: "Angaben gemäß § 5 DDG (ehemals TMG). Anbieter, Kontakt und vertretungsberechtigte Person der Quantivis Global.",
+    canonicalPath: "/impressum",
+  });
+  return (
+  <div className="min-h-dvh bg-background flex flex-col">
     <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
       <div className="container mx-auto px-6 h-14 flex items-center">
         <Link to="/"><img src={logo} alt={CONTACT.company} className="h-8" /></Link>
       </div>
     </header>
-    <main className="container mx-auto px-6 py-16 max-w-3xl">
-      <h1 className="text-3xl font-bold font-display mb-2">Impressum</h1>
+    <main className="flex-1 container mx-auto px-6 py-16 max-w-3xl">
+      <h1 className="text-3xl font-bold tracking-tight mb-2">Impressum</h1>
       <p className="text-muted-foreground text-sm mb-10">Angaben gemäß § 5 DDG (ehemals TMG)</p>
 
       <div className="prose prose-sm prose-invert max-w-none space-y-6 text-foreground/90 text-sm leading-relaxed">
@@ -29,8 +36,7 @@ const Impressum = () => (
         <section>
           <h2 className="text-lg font-semibold mb-2">Kontakt</h2>
           <p>
-            E-Mail: <a href={`mailto:${CONTACT.email.general}`} className="text-primary hover:underline">{CONTACT.email.general}</a><br />
-            Telefon: <a href={CONTACT.phone.href} className="text-primary hover:underline">{CONTACT.phone.display}</a>
+            E-Mail: <a href={`mailto:${CONTACT.email.general}`} className="text-primary hover:underline">{CONTACT.email.general}</a>
           </p>
         </section>
 
@@ -42,14 +48,14 @@ const Impressum = () => (
         <section>
           <h2 className="text-lg font-semibold mb-2">Registereintrag</h2>
           <p>
-            Registergericht: [Amtsgericht — wird bei Eintragung ergänzt]<br />
-            Registernummer: [HRB — wird bei Eintragung ergänzt]
+            Registergericht: Eintragung beantragt<br />
+            Registernummer: Eintragung beantragt
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold mb-2">Umsatzsteuer-Identifikationsnummer</h2>
-          <p>USt-IdNr. gemäß § 27a UStG: [wird bei Erteilung ergänzt]</p>
+          <p>USt-IdNr. gemäß § 27a UStG: Erteilung beantragt</p>
         </section>
 
         <section>
@@ -117,6 +123,7 @@ const Impressum = () => (
       </div>
     </main>
   </div>
-);
+  );
+};
 
 export default Impressum;

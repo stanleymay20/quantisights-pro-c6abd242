@@ -4,7 +4,7 @@ import { TrendingUp } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
 interface Props {
-  decisions: any[];
+  decisions: Array<{ id: string; title?: string; impact_score?: number | null; confidence?: number; category?: string; [key: string]: any }>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 const DecisionImpactAttribution = ({ decisions }: Props) => {
@@ -70,20 +70,20 @@ const DecisionImpactAttribution = ({ decisions }: Props) => {
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
           <p className="text-[10px] text-muted-foreground uppercase">Cumulative Impact</p>
-          <p className={`text-lg font-bold font-display ${data.totalImpact >= 0 ? "text-emerald-400" : "text-destructive"}`}>
+          <p className={`text-lg font-bold tracking-tight ${data.totalImpact >= 0 ? "text-emerald-400" : "text-destructive"}`}>
             {data.totalImpact >= 0 ? "+" : ""}{data.totalImpact.toFixed(1)}%
           </p>
         </div>
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
           <p className="text-[10px] text-muted-foreground uppercase">Hit Rate</p>
-          <p className={`text-lg font-bold font-display ${data.hitRate >= 60 ? "text-emerald-400" : "text-warning"}`}>
+          <p className={`text-lg font-bold tracking-tight ${data.hitRate >= 60 ? "text-emerald-400" : "text-warning"}`}>
             {data.hitRate}%
           </p>
         </div>
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
           <p className="text-[10px] text-muted-foreground uppercase">Model Accuracy</p>
-          <p className={`text-lg font-bold font-display ${data.avgAccuracy >= 70 ? "text-emerald-400" : "text-warning"}`}>
-            {data.avgAccuracy}%
+          <p className={`text-lg font-bold tracking-tight ${data.avgAccuracy >= 70 ? "text-emerald-400" : "text-warning"}`}>
+            {Math.round(data.avgAccuracy)}%
           </p>
         </div>
       </div>

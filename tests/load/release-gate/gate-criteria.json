@@ -1,0 +1,15 @@
+{
+  "criteria": [
+    "authentication",
+    "authorization_tenant_isolation",
+    "decision_workflow",
+    "audit_trail",
+    "evidence_chain",
+    "ai_orchestration",
+    "report_generation",
+    "no_critical_issues",
+    "no_data_corruption",
+    "load_thresholds_met"
+  ],
+  "policy": "All criteria must pass. Any FAIL → NO GO."
+}

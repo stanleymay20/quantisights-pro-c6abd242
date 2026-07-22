@@ -1,0 +1,58 @@
+[
+  {
+    "date": "2026-07-01T06:45:02.210Z",
+    "commit": "ec1-smoke",
+    "environment": "preview",
+    "overall_status": "BLOCKED",
+    "score": 0,
+    "blocked_gates": [
+      "authentication",
+      "authorization",
+      "tenant_isolation",
+      "decision_pipeline",
+      "evidence_pipeline",
+      "governance",
+      "ai",
+      "audit",
+      "reports",
+      "notifications",
+      "billing",
+      "scalability",
+      "recovery",
+      "system_health"
+    ],
+    "warnings": 1,
+    "duration_ms": 1
+  },
+  {
+    "run_id": "2026-07-01T07-02-56-080Z-0dbc65e4",
+    "date": "2026-07-01T07:02:56.080Z",
+    "release": "v0.ec2",
+    "commit": "ec2-smoke",
+    "branch": null,
+    "repository": null,
+    "environment": "preview",
+    "generated_by": "root",
+    "certification_engine_version": "1.0.0",
+    "overall_status": "BLOCKED",
+    "score": 0,
+    "blocked_gates": [
+      "authentication",
+      "authorization",
+      "tenant_isolation",
+      "decision_pipeline",
+      "evidence_pipeline",
+      "governance",
+      "ai",
+      "audit",
+      "reports",
+      "notifications",
+      "billing",
+      "scalability",
+      "recovery",
+      "system_health"
+    ],
+    "warnings": 1,
+    "duration_ms": 2
+  }
+]

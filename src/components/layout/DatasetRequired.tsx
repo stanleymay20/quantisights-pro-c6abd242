@@ -2,60 +2,65 @@ import { ReactNode } from "react";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Database, Upload, FolderOpen } from "lucide-react";
+import { Database, Upload, Sparkles, Loader2 } from "lucide-react";
 
 interface DatasetRequiredProps {
   children: ReactNode;
-  /** Module name shown in the empty state (e.g. "Intelligence", "Forecasting") */
+  /** Feature name shown in the empty state headline (e.g. "Forecasting", "Reports") */
   moduleName?: string;
+  /** Short sentence describing the value this module delivers once data is present */
+  moduleDescription?: string;
 }
 
 /**
- * Wrapper that gates module rendering on active dataset availability.
- * Shows a clear empty state with navigation to Data Upload when no dataset is active.
- * Use this around any module that requires dataset-scoped data to function.
+ * Gates a module on active dataset availability.
+ * Shows a clear, value-oriented empty state with Upload + demo CTAs when no dataset is active.
  */
-const DatasetRequired = ({ children, moduleName = "This module" }: DatasetRequiredProps) => {
-  const { hasOrg, hasProject, hasDataset, projectName, datasetName } = useActiveDataContext();
+const DatasetRequired = ({
+  children,
+  moduleName = "This feature",
+  moduleDescription,
+}: DatasetRequiredProps) => {
+  const { hasOrg, hasProject, hasDataset, contextLoading } = useActiveDataContext();
   const navigate = useNavigate();
 
-  if (!hasOrg) {
+  // The org/workspace/project/dataset context resolves asynchronously after
+  // this component mounts. Without this guard, a user who genuinely has an
+  // active dataset would still see a false "needs data to work" empty state
+  // on every cold navigation, for as long as those queries are in flight —
+  // hasOrg/hasProject/hasDataset all default to false until they resolve.
+  if (contextLoading) {
     return (
-      <EmptyState
-        icon={<FolderOpen className="w-8 h-8 text-muted-foreground" />}
-        title="No organization selected"
-        description="Select an organization to access your data and intelligence."
-      />
+      <div className="flex-1 flex items-center justify-center p-8">
+        <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+      </div>
     );
   }
 
-  if (!hasProject) {
-    return (
-      <EmptyState
-        icon={<FolderOpen className="w-8 h-8 text-muted-foreground" />}
-        title="No project selected"
-        description="Create or select a project to organize your datasets."
-        action={
-          <Button variant="outline" size="sm" onClick={() => navigate("/data-upload")}>
-            <Upload className="w-4 h-4 mr-2" />
-            Upload Data
-          </Button>
-        }
-      />
-    );
-  }
+  if (!hasOrg || !hasProject || !hasDataset) {
+    const headline = !hasDataset
+      ? `${moduleName} needs data to work`
+      : "Connect your data to get started";
 
-  if (!hasDataset) {
+    const body = moduleDescription
+      ?? `Upload a CSV or connect a data source — ${moduleName.toLowerCase()} activates instantly once Quantivis has something to analyse.`;
+
     return (
       <EmptyState
-        icon={<Database className="w-8 h-8 text-muted-foreground" />}
-        title="No dataset active"
-        description={`${moduleName} requires an active dataset. Upload data to your project "${projectName ?? "current project"}" to enable analytics across all modules.`}
+        icon={<Database className="w-8 h-8 text-primary" />}
+        title={headline}
+        description={body}
         action={
-          <Button variant="outline" size="sm" onClick={() => navigate("/data-upload")}>
-            <Upload className="w-4 h-4 mr-2" />
-            Upload Dataset
-          </Button>
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <Button size="sm" onClick={() => navigate("/data-upload")}>
+              <Upload className="w-4 h-4 mr-2" />
+              Upload a Dataset
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => navigate("/demo")}>
+              <Sparkles className="w-4 h-4 mr-2" />
+              Try with Sample Data
+            </Button>
+          </div>
         }
       />
     );
@@ -77,13 +82,13 @@ function EmptyState({
 }) {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
-      <div className="text-center max-w-md space-y-4">
-        <div className="mx-auto w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center">
+      <div className="text-center max-w-md space-y-5">
+        <div className="mx-auto w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
           {icon}
         </div>
         <div>
           <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground mt-1">{description}</p>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{description}</p>
         </div>
         {action}
       </div>

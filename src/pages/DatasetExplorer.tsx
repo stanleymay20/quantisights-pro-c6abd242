@@ -1,14 +1,20 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import {
   Database, Table2, Columns3, BarChart3, RefreshCw, ChevronRight,
-  Hash, Calendar, Type, ArrowUpDown, Layers, Eye
+  Hash, Calendar, Type, ArrowUpDown, Layers, Eye, Upload,
 } from "lucide-react";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { IQScoreBadge } from "@/components/quality/IQScoreBadge";
+import { Button } from "@/components/ui/button";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
+import { toast } from "@/hooks/use-toast";
 
 interface DatasetRecord {
   id: string;
@@ -17,7 +23,7 @@ interface DatasetRecord {
   row_count: number | null;
   created_at: string;
   file_path: string | null;
-  column_mapping: any;
+  column_mapping: any | null;
   is_stale: boolean | null;
   organization_id: string;
   data_source_id: string | null;
@@ -36,6 +42,7 @@ interface ColumnStat {
 
 const DatasetExplorer = () => {
   const { currentOrgId } = useOrganization();
+  const navigate = useNavigate();
   const { activeDatasetId } = useProject();
   const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -45,7 +52,7 @@ const DatasetExplorer = () => {
   const [view, setView] = useState<"schema" | "sample" | "stats">("schema");
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     const fetch = async () => {
       setLoading(true);
       const { data } = await supabase
@@ -135,12 +142,13 @@ const DatasetExplorer = () => {
   };
 
   return (
+    <SectionErrorBoundary sectionName="Dataset Explorer">
     <>
       <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <SidebarMobileToggle />
           <Database className="w-5 h-5 text-primary" />
-          <h1 className="text-xl font-semibold font-display">Dataset Explorer</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight">Dataset Explorer</h1>
         </div>
         <Badge variant="outline" className="text-xs">
           {datasets.length} dataset{datasets.length !== 1 ? "s" : ""}
@@ -156,9 +164,17 @@ const DatasetExplorer = () => {
           {loading ? (
             <div className="p-6 flex justify-center"><RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" /></div>
           ) : datasets.length === 0 ? (
-            <div className="p-6 text-center">
-              <Database className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">No datasets found. Upload data or connect a source.</p>
+            <div className="p-6 text-center space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mx-auto">
+                <Database className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-foreground">No datasets yet</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Upload a CSV or connect a data source to start exploring.</p>
+              </div>
+              <Button size="sm" variant="outline" className="w-full text-xs h-7" onClick={() => navigate("/data-upload")}>
+                <Upload className="w-3 h-3 mr-1.5" /> Upload Data
+              </Button>
             </div>
           ) : (
             <div className="space-y-0.5 p-1">
@@ -196,18 +212,48 @@ const DatasetExplorer = () => {
         <div className="flex-1 overflow-auto p-6">
           {!selected ? (
             <div className="flex items-center justify-center h-full">
-              <p className="text-muted-foreground text-sm">Select a dataset to explore</p>
+              <div className="text-center space-y-3 max-w-xs">
+                <div className="w-12 h-12 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto">
+                  <Layers className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium">Select a dataset</p>
+                <p className="text-xs text-muted-foreground">
+                  Choose a dataset from the left panel to explore its schema, metrics, and quality score.
+                </p>
+              </div>
             </div>
           ) : (
             <div className="max-w-[1200px] space-y-6">
               {/* Dataset header */}
               <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold font-display">{selected.name}</h2>
-                  <p className="text-xs text-muted-foreground mt-1">
+                <div className="space-y-1.5">
+                  <h2 className="text-[16px] font-semibold tracking-tight tracking-tight">{selected.name}</h2>
+                  <p className="text-xs text-muted-foreground">
                     Created {new Date(selected.created_at).toLocaleDateString()} · {selected.row_count?.toLocaleString() ?? "—"} rows
                     {selected.is_stale && <span className="text-yellow-500 ml-2">⚠ Stale</span>}
                   </p>
+                  <div className="flex items-center gap-2">
+                    <IQScoreBadge organizationId={selected.organization_id} datasetId={selected.id} />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={async () => {
+                        const t = toast({ title: "Computing IQ score…", description: "Scoring 7 dimensions" });
+                        const { data, error } = await invokeWithRetry<any>("compute-iq-score", {
+                          body: { organization_id: selected.organization_id, dataset_id: selected.id },
+                        });
+                        t.dismiss();
+                        if (error || data?.error) {
+                          toast({ title: "IQ score failed", description: error?.message ?? data?.error, variant: "destructive" });
+                        } else {
+                          toast({ title: `IQ composite: ${data?.composite ?? "—"}/100`, description: "Reload to see updated grade" });
+                        }
+                      }}
+                    >
+                      Recompute IQ
+                    </Button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1 bg-secondary/50 rounded-lg p-0.5">
                   {(["schema", "sample", "stats"] as const).map(v => (
@@ -388,6 +434,7 @@ const DatasetExplorer = () => {
         </div>
       </main>
     </>
+    </SectionErrorBoundary>
   );
 };
 

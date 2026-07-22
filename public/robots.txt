@@ -1,16 +1,40 @@
+# Quantivis — robots.txt
+# Allow marketing pages, block authenticated app routes
+
 User-agent: Googlebot
 Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+Allow: /pricing
+Allow: /about
+Allow: /blog
+Disallow: /dashboard
+Disallow: /decisions
+Disallow: /settings
+Disallow: /admin
+Disallow: /data-connectors
+Disallow: /executive-intelligence
+Disallow: /trust-center
+Disallow: /governance
+Disallow: /team
+Disallow: /billing
+Disallow: /board-report
+Disallow: /api/
 
 User-agent: *
 Allow: /
+Allow: /pricing
+Allow: /about
+Allow: /blog
+Disallow: /dashboard
+Disallow: /decisions
+Disallow: /settings
+Disallow: /admin
+Disallow: /data-connectors
+Disallow: /executive-intelligence
+Disallow: /trust-center
+Disallow: /governance
+Disallow: /team
+Disallow: /billing
+Disallow: /board-report
+Disallow: /api/
 
 Sitemap: https://www.quantivis.io/sitemap.xml

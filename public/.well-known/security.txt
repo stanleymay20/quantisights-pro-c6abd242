@@ -2,7 +2,32 @@
 # https://securitytxt.org/
 
 Contact: mailto:security@quantivis.io
-Expires: 2027-02-25T00:00:00.000Z
+Contact: https://www.quantivis.io/security-policy
+Encryption: https://www.quantivis.io/pgp-key.txt
+Acknowledgments: https://www.quantivis.io/security-policy#acknowledgments
+Expires: 2027-05-26T00:00:00.000Z
 Preferred-Languages: en, de
 Canonical: https://www.quantivis.io/.well-known/security.txt
-Policy: https://www.quantivis.io/privacy
+Policy: https://www.quantivis.io/security-policy
+Hiring: https://www.quantivis.io/
+
+# Coordinated Disclosure
+# We follow a 90-day coordinated disclosure process.
+# - Acknowledgement within 24 hours
+# - Initial assessment within 5 business days
+# - Status updates every 7 days during active triage
+# - Severity classification per /incident-response
+# - Public credit on request once a fix is shipped
+#
+# In scope:
+#   *.quantivis.io
+#   Quantivis Cloud edge functions
+#   Authentication, authorization, and tenant isolation
+#
+# Out of scope:
+#   Denial-of-service, social engineering, physical attacks
+#   Third-party subprocessors (see /subprocessors)
+#   Issues requiring man-in-the-middle or already-compromised client
+#
+# Please do not access, modify, or exfiltrate customer data beyond
+# the minimum required to demonstrate the vulnerability.
