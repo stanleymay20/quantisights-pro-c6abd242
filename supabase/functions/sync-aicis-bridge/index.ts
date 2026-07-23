@@ -53,6 +53,12 @@ const DEFAULT_MAX_PAGES = 10;
 const BREAKER_FAILURE_THRESHOLD = 3;
 const BREAKER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour (max)
 
+// Wall-clock budget for a single invocation. The edge platform kills requests
+// around ~60s (504 gateway timeout). We stop starting new surfaces once we're
+// within RUN_BUDGET_MS so partial results always land and remaining surfaces
+// are deferred to the next cron tick instead of taking the whole run down.
+const RUN_BUDGET_MS = 45_000;
+
 const STALE_HOURS = 24;
 const EXPECTED_MIN_COUNTRIES = 211; // AICIS Bridge v2 country universe (UN + sovereign + dependencies)
 
@@ -900,8 +906,36 @@ Deno.serve(async (req: Request) => {
   //    are ALWAYS eligible for retry (never trapped). Cap any breaker open at 1h max so
   //    stale long-expiry rows still self-heal.
   const now = Date.now();
+  const runStartMs = now;
   const results: SurfaceResult[] = [];
   for (const surface of requestedSurfaces) {
+    // Wall-clock budget guard — never exceed edge platform timeout.
+    if (Date.now() - runStartMs > RUN_BUDGET_MS) {
+      log("warn", "surface_deferred_budget", {
+        surface,
+        elapsed_ms: Date.now() - runStartMs,
+        budget_ms: RUN_BUDGET_MS,
+      });
+      const prev = stateMap.get(surface) ?? { metadata: {}, consecutive_failures: 0, circuit_breaker_until: null };
+      results.push({
+        surface,
+        status: "skipped",
+        records_pulled: 0,
+        records_inserted: 0,
+        records_updated: 0,
+        records_unchanged: 0,
+        records_failed: 0,
+        pages_fetched: 0,
+        page_size_used: 0,
+        retries_used: 0,
+        duration_ms: 0,
+        resume_cursor: prev.metadata?.resume_offset ?? 0,
+        consecutive_failures: prev.consecutive_failures,
+        circuit_breaker_open: false,
+        error: "deferred_run_budget_exhausted",
+      });
+      continue;
+    }
     const prevState = stateMap.get(surface) ?? { metadata: {}, consecutive_failures: 0, circuit_breaker_until: null };
     const rawBreakerUntilMs = prevState.circuit_breaker_until ? Date.parse(prevState.circuit_breaker_until) : 0;
     // Cap effective breaker at 1h from now — older rows that somehow got a longer expiry are released.

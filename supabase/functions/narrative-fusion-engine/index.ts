@@ -200,7 +200,7 @@ async function gatherInputs(sb: any, orgId: string, lookbackHours = 60 * 24): Pr
   const [items, intvs, advs, insightsRes, advInstRes] = await Promise.all([
     sb.from("aicis_intelligence_items").select("id,title,summary,domain,geography,entities,severity,global_criticality_score,ingested_at").eq("organization_id", orgId).gte("ingested_at", since).limit(500),
     sb.from("executive_interventions").select("id,title,summary,intervention_type,severity,decision_pressure_score,intervention_priority_score,created_at,status").eq("organization_id", orgId).neq("status", "resolved").gte("created_at", since).limit(300),
-    sb.from("intelligence_advisories").select("id,title,summary,domain,severity,created_at").eq("organization_id", orgId).gte("created_at", since).limit(300),
+    sb.from("intelligence_advisories").select("id,title,body,kind,confidence,created_at").eq("organization_id", orgId).gte("created_at", since).limit(300),
     sb.from("insights").select("id,message,severity,category,confidence_score,created_at").eq("organization_id", orgId).gte("created_at", since).limit(800),
     sb.from("advisory_instances").select("id,title,category,priority,advisory_type,impact_score,confidence,status,created_at").eq("organization_id", orgId).gte("created_at", since).limit(500),
   ]);
@@ -239,11 +239,13 @@ async function gatherInputs(sb: any, orgId: string, lookbackHours = 60 * 24): Pr
     });
   }
   for (const r of (advs.data ?? [])) {
+    const conf = Number(r.confidence ?? 0.6);
+    const derivedSeverity = conf >= 0.8 ? "high" : conf >= 0.5 ? "medium" : "low";
     push({
       source: "advisory", source_table: "intelligence_advisories", id: r.id, title: r.title ?? "Advisory",
-      text: `${r.title ?? ""} ${r.summary ?? ""}`,
-      domain: r.domain, geography: [], entities: [],
-      severity: r.severity, pressure: severityWeight(r.severity),
+      text: `${r.title ?? ""} ${r.body ?? ""}`,
+      domain: r.kind, geography: [], entities: [],
+      severity: derivedSeverity, pressure: severityWeight(derivedSeverity),
       ts: r.created_at,
     });
   }
