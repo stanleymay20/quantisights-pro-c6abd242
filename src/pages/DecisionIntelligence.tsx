@@ -80,7 +80,7 @@ const CounterfactualPanel = ({ decisions }: { decisions: Array<any> }) => {
                 <div>
                   <p className="text-[10px] text-muted-foreground">Prediction Accuracy</p>
                   <p className={`text-sm font-bold font-mono ${accuracyIsGood ? "text-success" : "text-warning"}`}>
-                    {accuracyPct === "—" ? accuracyPct : `${Math.round(accuracyPct)}%`}
+                    {accuracyPct === "—" ? accuracyPct : `${Math.round(Number(accuracyPct))}%`}
                   </p>
                 </div>
               </div>
