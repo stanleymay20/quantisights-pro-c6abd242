@@ -239,11 +239,13 @@ async function gatherInputs(sb: any, orgId: string, lookbackHours = 60 * 24): Pr
     });
   }
   for (const r of (advs.data ?? [])) {
+    const conf = Number(r.confidence ?? 0.6);
+    const derivedSeverity = conf >= 0.8 ? "high" : conf >= 0.5 ? "medium" : "low";
     push({
       source: "advisory", source_table: "intelligence_advisories", id: r.id, title: r.title ?? "Advisory",
-      text: `${r.title ?? ""} ${r.summary ?? ""}`,
-      domain: r.domain, geography: [], entities: [],
-      severity: r.severity, pressure: severityWeight(r.severity),
+      text: `${r.title ?? ""} ${r.body ?? ""}`,
+      domain: r.kind, geography: [], entities: [],
+      severity: derivedSeverity, pressure: severityWeight(derivedSeverity),
       ts: r.created_at,
     });
   }
