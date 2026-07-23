@@ -200,7 +200,7 @@ async function gatherInputs(sb: any, orgId: string, lookbackHours = 60 * 24): Pr
   const [items, intvs, advs, insightsRes, advInstRes] = await Promise.all([
     sb.from("aicis_intelligence_items").select("id,title,summary,domain,geography,entities,severity,global_criticality_score,ingested_at").eq("organization_id", orgId).gte("ingested_at", since).limit(500),
     sb.from("executive_interventions").select("id,title,summary,intervention_type,severity,decision_pressure_score,intervention_priority_score,created_at,status").eq("organization_id", orgId).neq("status", "resolved").gte("created_at", since).limit(300),
-    sb.from("intelligence_advisories").select("id,title,summary,domain,severity,created_at").eq("organization_id", orgId).gte("created_at", since).limit(300),
+    sb.from("intelligence_advisories").select("id,title,body,kind,confidence,created_at").eq("organization_id", orgId).gte("created_at", since).limit(300),
     sb.from("insights").select("id,message,severity,category,confidence_score,created_at").eq("organization_id", orgId).gte("created_at", since).limit(800),
     sb.from("advisory_instances").select("id,title,category,priority,advisory_type,impact_score,confidence,status,created_at").eq("organization_id", orgId).gte("created_at", since).limit(500),
   ]);
