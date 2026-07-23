@@ -23,6 +23,7 @@ export const LOCK_IDS = {
   "convergence-reconcile": 700005,
   "health-check": 700006,
   "pipeline-orchestrator": 700007,
+  "alert-monitor": 700008,
 } as const;
 
 export type CronJobName = keyof typeof LOCK_IDS;

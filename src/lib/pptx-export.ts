@@ -74,7 +74,7 @@ export async function exportToPowerPoint(options: ExportOptions) {
       });
     }
 
-    const yPos = slideData.subtitle ? 2.0 : 1.6;
+    let yPos = slideData.subtitle ? 2.0 : 1.6;
 
     if (slideData.bullets?.length) {
       slide.addText(

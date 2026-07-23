@@ -59,7 +59,8 @@ export function useStepUpAuth() {
         setLastVerifiedAt(Date.now());
         logAuthEvent({ eventType: "step_up_auth", metadata: { action: pendingAction?.action } });
         return true;
-      } catch {
+      } catch (err) {
+        console.error("[StepUpAuth] MFA verification failed:", err);
         return false;
       }
     },

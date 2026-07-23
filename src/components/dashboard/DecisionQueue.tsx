@@ -12,6 +12,7 @@ import DecisionResponsibilityDialog from "@/components/DecisionResponsibilityDia
 import ModifyDecisionDialog from "./ModifyDecisionDialog";
 import OutputClassificationBadge from "./OutputClassificationBadge";
 import TraceabilityPanel from "./TraceabilityPanel";
+import SimilarDecisionsPanel from "./SimilarDecisionsPanel";
 import DismissReasonDialog from "./DismissReasonDialog";
 import { useBuildDecisionQueue, type EnrichedDecision } from "@/hooks/useBuildDecisionQueue";
 import { onDecisionApproved, onDecisionDismissed } from "@/lib/decision-lifecycle";
@@ -99,6 +100,21 @@ interface Confirmation {
   action: "approved" | "dismissed" | "modified";
 }
 
+function approvalBlockedReason(decision: EnrichedDecision): string | null {
+  if (!decision.recommendation.isDecisionGrade) {
+    return decision.recommendation.decisionGateMessage
+      || "Evidence review required: this recommendation is not decision-grade yet.";
+  }
+  if (decision.recommendation.executionReadiness.level === "low") {
+    return "Evidence review required: execution readiness is low.";
+  }
+  return null;
+}
+
+function isEvidenceReadyForApproval(decision: EnrichedDecision): boolean {
+  return approvalBlockedReason(decision) === null;
+}
+
 const DecisionQueue = memo(({
   organizationId,
   insights,
@@ -137,8 +153,9 @@ const DecisionQueue = memo(({
 
   // Stage 1: Open responsibility dialog before approve
   const initiateApprove = useCallback((decision: EnrichedDecision) => {
-    if (!decision.recommendation.isDecisionGrade) {
-      toast({ title: "Cannot approve", description: "This recommendation is not decision-grade. Gather more evidence first.", variant: "destructive" });
+    const blockedReason = approvalBlockedReason(decision);
+    if (blockedReason) {
+      toast({ title: "Cannot approve", description: blockedReason, variant: "destructive" });
       return;
     }
     setApproveTarget(decision);
@@ -188,8 +205,9 @@ const DecisionQueue = memo(({
 
       setDecisions(prev => prev.filter(d => d.id !== decision.id));
       setConfirmation({ decisionTitle: decision.title, action: "approved" });
-    } catch {
-      toast({ title: "Action failed", variant: "destructive" });
+    } catch (err) {
+      console.error("[DecisionQueue] Approve failed:", err);
+      toast({ title: "Action failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setActingOn(null);
     }
@@ -238,8 +256,9 @@ const DecisionQueue = memo(({
       }
       setDecisions(prev => prev.filter(d => d.id !== decision.id));
       setConfirmation({ decisionTitle: decision.title, action: "dismissed" });
-    } catch {
-      toast({ title: "Action failed", variant: "destructive" });
+    } catch (err) {
+      console.error("[DecisionQueue] Dismiss failed:", err);
+      toast({ title: "Action failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setActingOn(null);
     }
@@ -285,7 +304,7 @@ const DecisionQueue = memo(({
         <div className="w-14 h-14 rounded-2xl bg-success/10 flex items-center justify-center mx-auto mb-4">
           <CheckCircle2 className="w-7 h-7 text-success" />
         </div>
-        <h3 className="text-lg font-semibold mb-1">All clear</h3>
+        <h3 className="text-[14px] font-semibold mb-1">All clear</h3>
         <p className="text-sm text-muted-foreground max-w-sm mx-auto">
           No decisions require your attention. The system is monitoring continuously.
         </p>
@@ -329,7 +348,7 @@ const DecisionQueue = memo(({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" />
-              <h2 className="text-sm font-semibold">Decision Queue</h2>
+              <h2 className="text-sm font-semibold">Decision Ledger</h2>
               <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{decisions.length}</span>
             </div>
             <span className="text-[11px] text-muted-foreground hidden sm:inline">
@@ -552,6 +571,12 @@ const DecisionQueue = memo(({
                           confidenceBasis={rec.confidenceBasis}
                           assumptions={rec.assumptions}
                         />
+
+                        {/* Similar Past Decisions (Institutional Memory) */}
+                        <SimilarDecisionsPanel
+                          organizationId={organizationId}
+                          queryText={rec.recommendedAction}
+                        />
                       </div>
                     </div>
 
@@ -559,8 +584,8 @@ const DecisionQueue = memo(({
                     <div className="flex flex-col sm:flex-col gap-1.5 shrink-0 w-full sm:w-auto">
                       <button
                         onClick={() => initiateApprove(decision)}
-                        disabled={isActing || !rec.isDecisionGrade}
-                        title={!rec.isDecisionGrade ? "Cannot approve: not decision-grade" : "Approve"}
+                        disabled={isActing || !isEvidenceReadyForApproval(decision)}
+                        title={approvalBlockedReason(decision) ?? "Approve"}
                         className="flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-target"
                       >
                         {isActing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}

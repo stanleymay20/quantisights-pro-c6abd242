@@ -35,8 +35,8 @@ const ProjectSwitcher = () => {
       toast({ title: "Project created", description: `"${trimmed}" is now active.` });
       setShowCreate(false);
       setNewName("");
-    } catch (e: any) {
-      toast({ title: "Failed to create project", description: e?.message || "Unknown error", variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Failed to create project", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setCreating(false);
     }

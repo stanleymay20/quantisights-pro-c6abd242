@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { getVerifiedAuth, authHeaders } from "@/lib/auth-helpers";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 
 interface MetricBreakdown {
   metric: string;
@@ -32,36 +33,36 @@ export const useDecisionPerformance = (orgId: string | null) => {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      const auth = await getVerifiedAuth();
+      if (!auth) {
         setError("Not authenticated");
         setLoading(false);
         return;
       }
 
-      const { data, error: fnErr } = await supabase.functions.invoke("evaluate-outcomes", {
+      const { data, error: fnErr } = await invokeWithRetry<Record<string, unknown>>("evaluate-outcomes", {
         body: { action: "performance", organization_id: orgId },
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: authHeaders(auth),
       });
 
       if (fnErr) {
         setError(fnErr.message);
       } else if (data) {
         setPerformance({
-          totalDecisions: data.total_decisions ?? 0,
-          evaluableDecisions: data.evaluable_decisions ?? 0,
-          successCount: data.success_count ?? 0,
-          successRate: data.success_rate ?? null,
-          negativeCount: data.negative_count ?? 0,
-          falsePositiveRate: data.false_positive_rate ?? null,
-          avgAccuracy: data.avg_accuracy ?? null,
-          calibrationGap: data.calibration_gap ?? null,
-          metricBreakdown: data.metric_breakdown ?? [],
-          learnings: data.learnings ?? [],
+          totalDecisions: (data.total_decisions as number) ?? 0,
+          evaluableDecisions: (data.evaluable_decisions as number) ?? 0,
+          successCount: (data.success_count as number) ?? 0,
+          successRate: (data.success_rate as number) ?? null,
+          negativeCount: (data.negative_count as number) ?? 0,
+          falsePositiveRate: (data.false_positive_rate as number) ?? null,
+          avgAccuracy: (data.avg_accuracy as number) ?? null,
+          calibrationGap: (data.calibration_gap as number) ?? null,
+          metricBreakdown: (data.metric_breakdown as MetricBreakdown[]) ?? [],
+          learnings: (data.learnings as string[]) ?? [],
         });
       }
-    } catch (e) {
-      setError((e as Error).message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
     }
     setLoading(false);
   }, [orgId]);
@@ -82,10 +83,10 @@ export const scheduleOutcomeEvaluation = async (params: {
   expectedChange?: number;
   evaluationWindowDays?: number;
 }) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error("Not authenticated");
+  const auth = await getVerifiedAuth();
+  if (!auth) throw new Error("Not authenticated");
 
-  const { data, error } = await supabase.functions.invoke("evaluate-outcomes", {
+  const { data, error } = await invokeWithRetry("evaluate-outcomes", {
     body: {
       action: "schedule",
       organization_id: params.organizationId,
@@ -96,7 +97,7 @@ export const scheduleOutcomeEvaluation = async (params: {
       expected_change: params.expectedChange,
       evaluation_window_days: params.evaluationWindowDays || 30,
     },
-    headers: { Authorization: `Bearer ${session.access_token}` },
+    headers: authHeaders(auth),
   });
 
   if (error) throw error;
@@ -104,14 +105,17 @@ export const scheduleOutcomeEvaluation = async (params: {
 };
 
 export const getReliabilityIndex = async (orgId: string, metricType: string) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error("Not authenticated");
+  const auth = await getVerifiedAuth();
+  if (!auth) throw new Error("Not authenticated");
 
-  const { data, error } = await supabase.functions.invoke("evaluate-outcomes", {
-    body: { action: "reliability", organization_id: orgId, metric_type: metricType },
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
+  const { data, error } = await invokeWithRetry<{ metric_type: string; similar_decisions: number; reliability_index: number | null; note: string }>(
+    "evaluate-outcomes",
+    {
+      body: { action: "reliability", organization_id: orgId, metric_type: metricType },
+      headers: authHeaders(auth),
+    },
+  );
 
   if (error) throw error;
-  return data as { metric_type: string; similar_decisions: number; reliability_index: number | null; note: string };
+  return data;
 };

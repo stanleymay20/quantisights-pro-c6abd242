@@ -58,9 +58,11 @@ async function stripeFetchAll(
 async function pullStripe(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const STRIPE_KEY = Deno.env.get("STRIPE_SECRET_KEY");
-  if (!STRIPE_KEY) return { records: 0, errors: ["STRIPE_SECRET_KEY not configured. Add it in Settings → Secrets."] };
+  // Vault credential first (per-org), fall back to global env var (dev/legacy)
+  const STRIPE_KEY = creds.stripeApiKey ?? creds.apiKey ?? creds.api_key ?? Deno.env.get("STRIPE_SECRET_KEY");
+  if (!STRIPE_KEY) return { records: 0, errors: ["Stripe API key not found. Enter your restricted API key in the Data Connectors page."] };
 
   const errors: string[] = [];
   const metrics: any[] = [];
@@ -233,12 +235,13 @@ async function getGoogleAccessToken(serviceAccountJson: string): Promise<string>
 async function pullGA4(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const saJson = Deno.env.get("GA4_SERVICE_ACCOUNT_JSON");
-  const propertyId = Deno.env.get("GA4_PROPERTY_ID");
+  const saJson = creds.serviceAccountJson ?? creds.service_account_json ?? Deno.env.get("GA4_SERVICE_ACCOUNT_JSON");
+  const propertyId = creds.propertyId ?? creds.property_id ?? Deno.env.get("GA4_PROPERTY_ID");
 
-  if (!saJson) return { records: 0, errors: ["GA4_SERVICE_ACCOUNT_JSON not configured."] };
-  if (!propertyId) return { records: 0, errors: ["GA4_PROPERTY_ID not configured."] };
+  if (!saJson) return { records: 0, errors: ["GA4 Service Account JSON not found. Upload your service account JSON in the Data Connectors page."] };
+  if (!propertyId) return { records: 0, errors: ["GA4 Property ID not configured."] };
 
   const errors: string[] = [];
   const metrics: any[] = [];
@@ -368,9 +371,10 @@ async function pullGA4(
 async function pullHubSpot(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const HUBSPOT_KEY = Deno.env.get("HUBSPOT_API_KEY");
-  if (!HUBSPOT_KEY) return { records: 0, errors: ["HUBSPOT_API_KEY not configured."] };
+  const HUBSPOT_KEY = creds.privateAppToken ?? creds.apiKey ?? creds.api_key ?? Deno.env.get("HUBSPOT_API_KEY");
+  if (!HUBSPOT_KEY) return { records: 0, errors: ["HubSpot Private App Token not found. Enter it in the Data Connectors page."] };
 
   const errors: string[] = [];
   const metrics: any[] = [];
@@ -487,11 +491,12 @@ async function pullHubSpot(
 async function pullXero(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const XERO_TOKEN = Deno.env.get("XERO_ACCESS_TOKEN");
-  const XERO_TENANT = Deno.env.get("XERO_TENANT_ID");
-  if (!XERO_TOKEN) return { records: 0, errors: ["XERO_ACCESS_TOKEN not configured."] };
-  if (!XERO_TENANT) return { records: 0, errors: ["XERO_TENANT_ID not configured."] };
+  const XERO_TOKEN = creds.accessToken ?? creds.clientSecret ?? creds.access_token ?? Deno.env.get("XERO_ACCESS_TOKEN");
+  const XERO_TENANT = creds.tenantId ?? creds.tenant_id ?? Deno.env.get("XERO_TENANT_ID");
+  if (!XERO_TOKEN) return { records: 0, errors: ["Xero access token not found. Enter your credentials in the Data Connectors page."] };
+  if (!XERO_TENANT) return { records: 0, errors: ["Xero Tenant ID not configured."] };
 
   const errors: string[] = [];
   const metrics: any[] = [];
@@ -588,12 +593,13 @@ async function pullXero(
 async function pullQuickBooks(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const QB_TOKEN = Deno.env.get("QUICKBOOKS_ACCESS_TOKEN");
-  const QB_REALM = Deno.env.get("QUICKBOOKS_REALM_ID");
-  const QB_ENV = Deno.env.get("QUICKBOOKS_ENVIRONMENT") || "production";
-  if (!QB_TOKEN) return { records: 0, errors: ["QUICKBOOKS_ACCESS_TOKEN not configured."] };
-  if (!QB_REALM) return { records: 0, errors: ["QUICKBOOKS_REALM_ID not configured."] };
+  const QB_TOKEN = creds.accessToken ?? creds.access_token ?? Deno.env.get("QUICKBOOKS_ACCESS_TOKEN");
+  const QB_REALM = creds.realmId ?? creds.realm_id ?? Deno.env.get("QUICKBOOKS_REALM_ID");
+  const QB_ENV = creds.environment ?? Deno.env.get("QUICKBOOKS_ENVIRONMENT") ?? "production";
+  if (!QB_TOKEN) return { records: 0, errors: ["QuickBooks access token not found. Enter your credentials in the Data Connectors page."] };
+  if (!QB_REALM) return { records: 0, errors: ["QuickBooks Realm ID not configured."] };
 
   const baseUrl = QB_ENV === "sandbox"
     ? "https://sandbox-quickbooks.api.intuit.com"
@@ -693,11 +699,12 @@ async function pullQuickBooks(
 async function pullSalesforce(
   config: ConnectorConfig,
   serviceClient: any,
+  creds: Record<string, string | undefined> = {},
 ): Promise<{ records: number; errors: string[] }> {
-  const SF_TOKEN = Deno.env.get("SALESFORCE_ACCESS_TOKEN");
-  const SF_INSTANCE = Deno.env.get("SALESFORCE_INSTANCE_URL");
-  if (!SF_TOKEN) return { records: 0, errors: ["SALESFORCE_ACCESS_TOKEN not configured."] };
-  if (!SF_INSTANCE) return { records: 0, errors: ["SALESFORCE_INSTANCE_URL not configured."] };
+  const SF_TOKEN = creds.accessToken ?? creds.access_token ?? creds.clientSecret ?? Deno.env.get("SALESFORCE_ACCESS_TOKEN");
+  const SF_INSTANCE = creds.instanceUrl ?? creds.instance_url ?? Deno.env.get("SALESFORCE_INSTANCE_URL");
+  if (!SF_TOKEN) return { records: 0, errors: ["Salesforce access token not found. Enter your Connected App credentials in the Data Connectors page."] };
+  if (!SF_INSTANCE) return { records: 0, errors: ["Salesforce instance URL not configured."] };
 
   const errors: string[] = [];
   const metrics: any[] = [];
@@ -850,27 +857,55 @@ serve(async (req) => {
 
     let result: { records: number; errors: string[] };
 
-    switch (connector_type) {
-      case "stripe":
-        result = await pullStripe(config, serviceClient);
-        break;
-      case "ga4":
-        result = await pullGA4(config, serviceClient);
-        break;
-      case "hubspot":
-        result = await pullHubSpot(config, serviceClient);
-        break;
-      case "xero":
-        result = await pullXero(config, serviceClient);
-        break;
-      case "quickbooks":
-        result = await pullQuickBooks(config, serviceClient);
-        break;
-      case "salesforce":
-        result = await pullSalesforce(config, serviceClient);
-        break;
-      default:
-        result = { records: 0, errors: [`Unknown connector: ${connector_type}`] };
+    // Resolve per-connector credentials if connector_id is in the config
+    // This enables multi-tenant credential isolation
+    let perConnectorCreds: Record<string, string | undefined> = {};
+    const connectorId = config.connector_id ?? data_source_id;
+    if (connectorId) {
+      try {
+        const credModule = await import("../_shared/connector-credentials.ts");
+        perConnectorCreds = await credModule.resolveConnectorCredentials(serviceClient, connectorId);
+      } catch { /* fall through to env vars */ }
+    }
+
+    // Warehouse / lake connectors delegate to dedicated functions (canonical-mapper + circuit breaker)
+    const delegated: Record<string, string> = {
+      snowflake: "connector-snowflake-pull",
+      bigquery: "connector-bigquery-pull",
+      s3: "connector-s3-pull",
+      hubspot: "connector-hubspot-pull",
+      salesforce: "connector-salesforce-pull",
+      sap_odata: "connector-sap-pull",
+      sap: "connector-sap-pull",
+      netsuite: "connector-netsuite-pull",
+      dynamics: "connector-dynamics-pull",
+      googlesheets: "connector-sheets-pull",
+      google_sheets: "connector-sheets-pull",
+    };
+
+    if (delegated[connector_type]) {
+      const dRes = await fetch(`${supabaseUrl}/functions/v1/${delegated[connector_type]}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({ connector_id: data_source_id }),
+      });
+      const dBody = await dRes.json();
+      result = {
+        records: dBody.rows_inserted ?? 0,
+        errors: dBody.error ? [dBody.error] : (dBody.sample_errors ?? []).map((e: any) => e.reason ?? JSON.stringify(e)),
+      };
+    } else {
+      switch (connector_type) {
+        case "stripe":     result = await pullStripe(config, serviceClient, perConnectorCreds); break;
+        case "ga4":
+        case "google_analytics": result = await pullGA4(config, serviceClient, perConnectorCreds); break;
+        case "hubspot":    result = await pullHubSpot(config, serviceClient, perConnectorCreds); break;
+        case "xero":       result = await pullXero(config, serviceClient, perConnectorCreds); break;
+        case "quickbooks": result = await pullQuickBooks(config, serviceClient, perConnectorCreds); break;
+        case "salesforce": result = await pullSalesforce(config, serviceClient, perConnectorCreds); break;
+        default:
+          result = { records: 0, errors: [`Unknown connector type: ${connector_type}`] };
+      }
     }
 
     // Update sync job

@@ -7,6 +7,7 @@ import {
   Users, TrendingUp,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 
 interface Conflict {
@@ -108,7 +109,7 @@ const ExecutiveConvergence = ({ organizationId, tier }: Props) => {
   const runConvergence = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("executive-convergence", {
+      const { data, error } = await invokeWithRetry<ConvergenceResult & { error?: string; message?: string }>("executive-convergence", {
         body: { organization_id: organizationId, trigger: "manual" },
       });
       if (error) throw error;
@@ -119,8 +120,9 @@ const ExecutiveConvergence = ({ organizationId, tier }: Props) => {
       if (data?.error) throw new Error(data.error);
       setResult(data);
       toast({ title: "Convergence computed", description: `ECI: ${data.convergence_score}/100 — ${data.alignment_status}` });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -131,7 +133,7 @@ const ExecutiveConvergence = ({ organizationId, tier }: Props) => {
       <Card className="border-dashed border-2 border-muted-foreground/20">
         <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
           <Users className="w-12 h-12 text-muted-foreground" />
-          <h2 className="text-xl font-semibold">Growth or Enterprise Plan Required</h2>
+          <h2 className="text-[16px] font-semibold">Growth or Enterprise Plan Required</h2>
           <p className="text-muted-foreground text-center max-w-md">
             Multi-Role Convergence Analysis detects structural alignment gaps across your C-suite.
           </p>
@@ -150,7 +152,7 @@ const ExecutiveConvergence = ({ organizationId, tier }: Props) => {
         <Card className="border-dashed border-2 border-muted-foreground/20">
           <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
             <Users className="w-12 h-12 text-muted-foreground/50" />
-            <h3 className="text-lg font-semibold">Executive Convergence Engine</h3>
+            <h3 className="text-[14px] font-semibold">Executive Convergence Engine</h3>
             <p className="text-sm text-muted-foreground text-center max-w-md">
               Analyze structural alignment across CEO, CFO, CMO, and COO risk signals. Detects conflicts, measures dispersion, and generates governance intelligence.
             </p>

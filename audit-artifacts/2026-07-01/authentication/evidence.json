@@ -1,0 +1,20 @@
+{
+  "pipeline": "authentication",
+  "status": "FRAMEWORK_INVALID",
+  "positive_controls": [],
+  "negative_controls": [],
+  "warnings": [
+    {
+      "code": "STUB",
+      "message": "Pipeline \"authentication\" verification is stubbed (awaiting_implementation). Framework only — no live execution performed."
+    }
+  ],
+  "failures": [],
+  "evidence_files": [],
+  "start_time": "2026-07-01T06:40:24.545Z",
+  "end_time": "2026-07-01T06:40:24.545Z",
+  "commit_sha": "ee1-scaffold",
+  "environment": "preview",
+  "actor": "local",
+  "organization": "org_evidence_test"
+}

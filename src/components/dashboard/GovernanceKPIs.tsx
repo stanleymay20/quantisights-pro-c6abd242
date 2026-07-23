@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +32,11 @@ const GovernanceKPIs = () => {
       if (!currentOrgId) return null;
 
       const [datasets, quality, decisions, members, policies, retentionPolicies] = await Promise.all([
-        supabase.from("datasets").select("id, uploaded_by, steward_user_id").eq("organization_id", currentOrgId).eq("status", "active"),
+        // "completed" is what the standard CSV upload flow (DataUpload.tsx)
+        // writes on success; "active" is only written by the demo seed and
+        // API-ingest paths. Filtering on "active" alone made every
+        // CSV-uploaded org's dataset count come back 0 here.
+        supabase.from("datasets").select("id, uploaded_by, steward_user_id, workspace_id").eq("organization_id", currentOrgId).in("status", ["active", "completed"]),
         supabase.from("data_quality_checks").select("score, dataset_id").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(10),
         supabase.from("decision_ledger").select("id, outcome_measured_at", { count: "exact" }).eq("organization_id", currentOrgId),
         supabase.from("organization_members").select("role, user_id").eq("organization_id", currentOrgId),
@@ -43,23 +49,24 @@ const GovernanceKPIs = () => {
         : 0;
 
       const stewardUserIds = new Set(
-        (members.data ?? []).filter((m: any) => m.role === "steward").map((m: any) => m.user_id)
+        (members.data ?? []).filter((m: { role: string; user_id: string }) => m.role === "steward").map((m: { role: string; user_id: string }) => m.user_id)
       );
       const stewardCount = stewardUserIds.size;
       const totalMembers = members.data?.length ?? 1;
-      const outcomeTracked = decisions.data?.filter((d: any) => d.outcome_measured_at).length ?? 0;
+      const outcomeTracked = decisions.data?.filter((d: { outcome_measured_at?: string | null }) => d.outcome_measured_at).length ?? 0;
       const totalDecisions = decisions.count ?? 0;
       const outcomeRate = totalDecisions > 0 ? Math.round((outcomeTracked / totalDecisions) * 100) : 0;
 
       // Governed dataset = has quality check + has assigned steward + has retention policy for 'datasets'
-      const qualityDatasetIds = new Set((quality.data ?? []).map((q: any) => q.dataset_id).filter(Boolean));
-      const hasDatasetRetention = (retentionPolicies.data ?? []).some((p: any) => p.data_category === "datasets");
+      const qualityDatasetIds = new Set((quality.data ?? []).map((q: { dataset_id?: string | null }) => q.dataset_id).filter(Boolean));
+      const hasDatasetRetention = (retentionPolicies.data ?? []).some((p: { data_category: string }) => p.data_category === "datasets");
       const allDatasets = datasets.data ?? [];
-      const governedCount = allDatasets.filter((d: any) =>
-        qualityDatasetIds.has(d.id) &&
-        (d.steward_user_id != null || stewardUserIds.has(d.uploaded_by)) &&
-        hasDatasetRetention
-      ).length;
+      const governedCount = allDatasets.filter((d) => {
+        const ds = d as { id: string; uploaded_by?: string; steward_user_id?: string | null; workspace_id?: string };
+        return qualityDatasetIds.has(ds.id) &&
+        (ds.steward_user_id != null || stewardUserIds.has(ds.uploaded_by ?? "")) &&
+        hasDatasetRetention;
+      }).length;
 
       return {
         datasetCount: allDatasets.length,
@@ -158,44 +165,64 @@ const GovernanceKPIs = () => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-3">
-          {kpis.map((kpi, i) => {
-            const StatusIcon = statusColors[kpi.status].icon;
-            return (
-              <motion.div
-                key={kpi.label}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="flex items-center gap-3 p-3 rounded-xl border border-border/40 bg-muted/20"
-              >
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                  <kpi.icon className="w-4 h-4 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-semibold text-foreground">{kpi.label}</p>
-                      <HelpTooltip
-                        content={`${kpi.help.what}\n\nCalculation: ${kpi.help.how}\n\nWhy it matters: ${kpi.help.why}`}
-                        side="top"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold">{kpi.value}</span>
-                      <Badge className={`${statusColors[kpi.status].badge} text-[9px] border`}>
-                        <StatusIcon className="w-2.5 h-2.5 mr-0.5" />
-                        {kpi.status}
-                      </Badge>
-                    </div>
+        {!(stats && (
+          (stats.avgQuality > 0) ||
+          (stats.outcomeRate > 0) ||
+          (stats.stewardCount > 0) ||
+          (stats.datasetCount > 0) ||
+          (stats.policyCount > 0)
+        )) ? (
+          <div className="flex flex-col items-center text-center py-8 gap-3">
+            <div>
+              <p className="text-sm font-semibold">Governance setup not started</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xs">
+                Complete your first governance assessment to populate these KPIs.
+              </p>
+            </div>
+            <Button asChild size="sm">
+              <Link to="/governance-maturity">Start assessment</Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {kpis.map((kpi, i) => {
+              const StatusIcon = statusColors[kpi.status].icon;
+              return (
+                <motion.div
+                  key={kpi.label}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-border/40 bg-muted/20"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <kpi.icon className="w-4 h-4 text-primary" />
                   </div>
-                  <Progress value={kpi.progress} className="h-1.5" />
-                  <p className="text-[10px] text-muted-foreground/60 mt-1">Target: {kpi.target}</p>
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-semibold text-foreground">{kpi.label}</p>
+                        <HelpTooltip
+                          content={`${kpi.help.what}\n\nCalculation: ${kpi.help.how}\n\nWhy it matters: ${kpi.help.why}`}
+                          side="top"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold">{kpi.value}</span>
+                        <Badge className={`${statusColors[kpi.status].badge} text-[9px] border`}>
+                          <StatusIcon className="w-2.5 h-2.5 mr-0.5" />
+                          {kpi.status}
+                        </Badge>
+                      </div>
+                    </div>
+                    <Progress value={kpi.progress} className="h-1.5" />
+                    <p className="text-[10px] text-muted-foreground/60 mt-1">Target: {kpi.target}</p>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

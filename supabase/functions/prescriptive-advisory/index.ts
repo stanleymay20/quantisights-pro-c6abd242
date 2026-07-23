@@ -2,6 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { capConfidence, dataSufficiencyRating, fetchCalibrationModel } from "../_shared/confidence-cap.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { enrichWithContext, getOrgContext } from "../_shared/enrichment.ts";
+import { requireFeatureAccess } from "../_shared/feature-access.ts";
+import { getGovernanceProfile } from "../_shared/governance-profile.ts";
+import { recordGovernanceUse } from "../_shared/governance-audit.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);const auth = await authenticateRequest(req);
@@ -17,6 +21,20 @@ serve(async (req) => {
     if (!isMember) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ── Tier gating ──
+    const access = await requireFeatureAccess(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      req.headers.get("Authorization"),
+      "advisory",
+    );
+    if (access.ok === false) {
+      return new Response(JSON.stringify(access.body), {
+        status: access.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -137,6 +155,57 @@ serve(async (req) => {
       category: i.category,
     }));
 
+    // ── RAG: Retrieve similar past decisions and outcomes ──
+    let ragContextBlock = "";
+    let ragMetadata: { similar_count: number; avg_similarity: number; historical_success_rate: number | null; confidence_adjustment: number } = {
+      similar_count: 0, avg_similarity: 0, historical_success_rate: null, confidence_adjustment: 0,
+    };
+    try {
+      const { generateEmbedding, searchSimilar, buildRAGContext } = await import("../_shared/embeddings.ts");
+      
+      // Build a query from the top metric summaries
+      const queryText = metricSummaries.slice(0, 5).map(m => 
+        `${m.metric_type} ${m.total_change_pct > 0 ? 'increasing' : 'declining'} ${Math.abs(m.total_change_pct).toFixed(0)}% volatility ${m.volatility_pct.toFixed(0)}%`
+      ).join(". ");
+      
+      const queryEmbedding = await generateEmbedding(queryText);
+      const similar = await searchSimilar(supabaseUrl, serviceKey, organization_id, queryEmbedding, {
+        entityTypes: ["decision", "outcome"],
+        limit: 8,
+        minSimilarity: 0.25,
+      });
+      
+      if (similar.length > 0) {
+        ragContextBlock = "\n" + buildRAGContext(similar) + "\n";
+        ragMetadata.similar_count = similar.length;
+        ragMetadata.avg_similarity = similar.reduce((s, r) => s + r.similarity, 0) / similar.length;
+        
+        // Compute historical success rate from retrieved outcomes
+        const outcomes = similar.filter(r => r.entity_type === "outcome");
+        if (outcomes.length >= 2) {
+          const successCount = outcomes.filter(r => {
+            const delta = (r.metadata as any)?.outcome_delta;
+            return delta != null && delta > 0;
+          }).length;
+          ragMetadata.historical_success_rate = (successCount / outcomes.length) * 100;
+          
+          // Adjust confidence based on historical accuracy
+          const avgAccuracy = outcomes
+            .map(r => (r.metadata as any)?.accuracy_score)
+            .filter((a): a is number => a != null);
+          if (avgAccuracy.length > 0) {
+            const meanAccuracy = avgAccuracy.reduce((s, v) => s + v, 0) / avgAccuracy.length;
+            // If past similar decisions had low accuracy, reduce confidence
+            if (meanAccuracy < 50) ragMetadata.confidence_adjustment = -10;
+            else if (meanAccuracy < 70) ragMetadata.confidence_adjustment = -5;
+            else if (meanAccuracy > 85) ragMetadata.confidence_adjustment = 5;
+          }
+        }
+      }
+    } catch (ragErr) {
+      console.warn("RAG retrieval skipped:", ragErr instanceof Error ? ragErr.message : "unknown");
+    }
+
     // Fetch decision context if provided
     let contextBlock = "";
     if (decision_context_id) {
@@ -175,6 +244,7 @@ IMPORTANT: Generate advisories specifically relevant to this "${ctx.decision_typ
           role: "user",
           content: `You are an enterprise decision intelligence advisor for a $1B+ company.
 ${contextBlock}
+${ragContextBlock}
 Analyze the following dataset metrics and generate strategic advisories.
 
 METRIC SUMMARIES:
@@ -246,20 +316,29 @@ Rules:
       }
     }
 
-    // Apply confidence capping to each advisory
-    const advisories = aiAdvisories.map((a: any, i: number) => ({
-      id: `adv-${i + 1}`,
-      title: a.title || "Strategic Advisory",
-      category: a.category || "strategic",
-      priority: a.priority || "medium",
-      action: a.action || "",
-      expected_impact: a.expected_impact || "",
-      timeframe: a.timeframe || "30-90 days",
-      confidence: capConfidence(a.raw_confidence || 70, totalSampleSize, undefined, calibrationModel),
-      rationale: a.rationale || "",
-      kpi_affected: a.kpi_affected || [],
-      playbook_steps: a.playbook_steps || [],
-    }));
+    // Apply confidence capping to each advisory (with historical RAG adjustment)
+    const advisories = aiAdvisories.map((a: any, i: number) => {
+      const baseConfidence = (a.raw_confidence || 70) + ragMetadata.confidence_adjustment;
+      const clampedConfidence = Math.max(30, Math.min(95, baseConfidence));
+      return {
+        id: `adv-${i + 1}`,
+        title: a.title || "Strategic Advisory",
+        category: a.category || "strategic",
+        priority: a.priority || "medium",
+        action: a.action || "",
+        expected_impact: a.expected_impact || "",
+        timeframe: a.timeframe || "30-90 days",
+        confidence: capConfidence(clampedConfidence, totalSampleSize, undefined, calibrationModel),
+        rationale: a.rationale || "",
+        kpi_affected: a.kpi_affected || [],
+        playbook_steps: a.playbook_steps || [],
+        rag_adjustment: ragMetadata.confidence_adjustment !== 0 ? {
+          adjustment_pp: ragMetadata.confidence_adjustment,
+          similar_outcomes: ragMetadata.similar_count,
+          historical_success_rate: ragMetadata.historical_success_rate,
+        } : undefined,
+      };
+    });
 
     // Add risk-based advisories from risk index (these are always relevant)
     for (const risk of (riskIndices || [])) {
@@ -283,6 +362,7 @@ Rules:
             "Establish weekly risk monitoring",
             "Report mitigation progress within 14 days",
           ],
+          rag_adjustment: undefined,
         });
       }
     }
@@ -304,10 +384,30 @@ Rules:
     );
 
     if (advisories.length > 0) {
-      const rows = advisories.map((a: any) => {
-        // Extract numeric values from ConfidenceResult objects
+      // ── Layer C synthesis: enrich each advisory with internal context ──
+      // Doctrine: client values stay; only confidence + interpretation are augmented.
+      const orgCtx = await getOrgContext(organization_id);
+
+      const enrichedRows = await Promise.all(advisories.map(async (a: any) => {
         const rawConf = typeof a.confidence === "object" ? a.confidence?.raw_confidence : a.confidence;
         const cappedConf = typeof a.confidence === "object" ? a.confidence?.capped_confidence : a.confidence;
+
+        const focusMetric = Array.isArray(a.kpi_affected) && a.kpi_affected.length > 0
+          ? String(a.kpi_affected[0]).toLowerCase().replace(/\s+/g, "_")
+          : a.category;
+
+        const enrichment = await enrichWithContext({
+          organization_id,
+          region: orgCtx.region,
+          industry: orgCtx.industry,
+          metric_focus: focusMetric,
+          client_confidence: Number(cappedConf ?? 50),
+        });
+
+        // Safety: never overwrite client-anchored core values; only adjust confidence within ±10pp
+        const safeEnrichedConfidence = enrichment.ok
+          ? Math.max(0, Math.min(100, enrichment.enriched_confidence))
+          : (cappedConf ?? null);
 
         return {
           organization_id,
@@ -317,7 +417,7 @@ Rules:
           advisory_type: "prescriptive",
           category: a.category,
           priority: a.priority,
-          confidence: cappedConf ?? null,
+          confidence: safeEnrichedConfidence,
           capped_confidence: cappedConf ?? null,
           raw_confidence: rawConf ?? null,
           confidence_cap_reason: typeof a.confidence === "object" ? a.confidence?.confidence_cap_reason : null,
@@ -327,17 +427,68 @@ Rules:
           kpi_affected: a.kpi_affected,
           playbook_steps: a.playbook_steps,
           status: "open",
+          // Enrichment fields (Layer C)
+          decision_enrichment_id: enrichment.enrichment_id,
+          client_evidence_summary: enrichment.client_evidence_summary || null,
+          internal_context_summary: enrichment.internal_context_summary || null,
+          combined_interpretation: enrichment.combined_interpretation || null,
+          client_confidence: enrichment.ok ? enrichment.client_confidence : null,
+          enriched_confidence: enrichment.ok ? safeEnrichedConfidence : null,
+          confidence_delta: enrichment.ok ? enrichment.confidence_delta : null,
+          blending_rule: enrichment.ok ? enrichment.blending_rule : "no_context",
+          evidence_sources: enrichment.ok && enrichment.internal_context_count > 0
+            ? [
+                { source_type: "client", source_name: "client_upload", metric_type: focusMetric, dataset_id, contribution_weight: 0.7 },
+                { source_type: "internal", source_name: "internal_reference", metric_type: focusMetric, dataset_id: null, contribution_weight: 0.3 },
+              ]
+            : [
+                { source_type: "client", source_name: "client_upload", metric_type: focusMetric, dataset_id, contribution_weight: 1.0 },
+              ],
+          advisory_lane: "primary",
         };
-      });
+      }));
 
       const insertResp = await fetch(`${supabaseUrl}/rest/v1/advisory_instances`, {
         method: "POST",
-        headers: serviceHeaders,
-        body: JSON.stringify(rows),
+        headers: { ...serviceHeaders, Prefer: "return=representation" },
+        body: JSON.stringify(enrichedRows),
       });
       if (!insertResp.ok) {
         const errBody = await insertResp.text();
         console.error("advisory_instances INSERT failed:", insertResp.status, errBody);
+      } else {
+        // Phase 9: record governance audit trail per advisory
+        try {
+          const inserted = await insertResp.json();
+          const profile = await getGovernanceProfile(supabaseUrl, serviceKey, organization_id);
+          const thresholds = {
+            advisory_threshold: profile.advisory_threshold,
+            escalation_threshold: profile.escalation_threshold,
+            intervention_threshold: profile.intervention_threshold,
+          };
+          const approvalRules = { governance_model: profile.governance_model };
+          await Promise.all((inserted ?? []).map((row: any) =>
+            recordGovernanceUse(supabaseUrl, serviceKey, {
+              organization_id,
+              subject_type: "advisory",
+              subject_id: row.id,
+              profile,
+              thresholds_applied: thresholds,
+              approval_rules_applied: approvalRules,
+              decision_path: {
+                dataset_id,
+                priority: row.priority,
+                category: row.category,
+                capped_confidence: row.capped_confidence,
+                blending_rule: row.blending_rule,
+                engine: "prescriptive-advisory",
+              },
+              engine_version: "prescriptive-advisory-v1",
+            })
+          ));
+        } catch (auditErr) {
+          console.warn("governance audit (advisory) write failed:", (auditErr as Error).message);
+        }
       }
     }
 
@@ -350,6 +501,12 @@ Rules:
       confidence_ceiling: totalSampleSize < 12 ? 60 : totalSampleSize < 30 ? 75 : 90,
       adaptive_calibration_applied: !!calibrationModel,
       calibration_model_version: calibrationModel?.model_version ?? null,
+      rag_context: {
+        similar_decisions_retrieved: ragMetadata.similar_count,
+        avg_similarity: ragMetadata.avg_similarity,
+        historical_success_rate: ragMetadata.historical_success_rate,
+        confidence_adjustment_pp: ragMetadata.confidence_adjustment,
+      },
       generated_at: new Date().toISOString(),
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

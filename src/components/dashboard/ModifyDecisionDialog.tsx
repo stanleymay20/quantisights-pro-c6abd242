@@ -121,8 +121,8 @@ const ModifyDecisionDialog = ({ decision, organizationId, datasetId, open, onOpe
 
       toast({ title: "Decision modified & logged", description: "Changes persisted with full audit trail." });
       onOpenChange(false);
-    } catch (e: any) {
-      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Save failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setSaving(false);
     }

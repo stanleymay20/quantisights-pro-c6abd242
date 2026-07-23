@@ -195,15 +195,15 @@ const KPICards = memo(forwardRef<HTMLDivElement, KPICardsProps>(({
       {cards.map((card, i) => {
         const trendGradient = card.inverse
           ? (card.trend === "up"
-            ? "bg-gradient-to-r from-destructive/60 to-destructive/20"
+            ? "bg-destructive/15"
             : card.trend === "down"
-            ? "bg-gradient-to-r from-emerald-500/60 to-emerald-400/20"
-            : "bg-gradient-to-r from-primary/30 to-primary/5")
+            ? "bg-emerald-500/15"
+            : "bg-primary/10")
           : (card.trend === "up"
-            ? "bg-gradient-to-r from-emerald-500/60 to-emerald-400/20"
+            ? "bg-emerald-500/15"
             : card.trend === "down"
-            ? "bg-gradient-to-r from-destructive/60 to-destructive/20"
-            : "bg-gradient-to-r from-primary/30 to-primary/5");
+            ? "bg-destructive/15"
+            : "bg-primary/10");
 
         return (
           <div

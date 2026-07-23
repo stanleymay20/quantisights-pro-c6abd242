@@ -1,0 +1,756 @@
+{
+  "certification_engine_version": "1.0.0",
+  "run_id": "2026-07-01T07-02-56-080Z-0dbc65e4",
+  "release": "v0.ec2",
+  "commit": "ec2-smoke",
+  "branch": null,
+  "repository": null,
+  "environment": "preview",
+  "generated_by": "root",
+  "timestamp": "2026-07-01T07:02:56.080Z",
+  "duration_ms": 2,
+  "overall_status": "BLOCKED",
+  "recommendation": "BLOCKED",
+  "score": 0,
+  "score_breakdown": [
+    {
+      "gate": "authentication",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "authorization",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "tenant_isolation",
+      "weight": 15,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "decision_pipeline",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "evidence_pipeline",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "governance",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "ai",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "audit",
+      "weight": 0,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "reports",
+      "weight": 5,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "notifications",
+      "weight": 0,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "billing",
+      "weight": 0,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "scalability",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "recovery",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    },
+    {
+      "gate": "system_health",
+      "weight": 10,
+      "factor": 0,
+      "contribution": 0,
+      "status": "BLOCKED"
+    }
+  ],
+  "pipelines_passed": 0,
+  "pipelines_failed": 14,
+  "warnings_total": 1,
+  "critical_issues": 0,
+  "pipeline_results": [
+    {
+      "gate": "authentication",
+      "label": "Authentication",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "authentication:FRAMEWORK_INVALID, mfa:FRAMEWORK_INVALID, oauth:FRAMEWORK_INVALID, session-recovery:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "authentication",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "FRAMEWORK_INVALID",
+          "evidence": {
+            "evidence_files": [],
+            "positive_controls": 0,
+            "negative_controls": 0,
+            "warnings": 1
+          }
+        },
+        {
+          "pipeline": "mfa",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "oauth",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "session-recovery",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "authorization",
+      "label": "Authorization",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "protected-routes:FRAMEWORK_INVALID, user-management:FRAMEWORK_INVALID, organization-management:FRAMEWORK_INVALID, settings:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "protected-routes",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "user-management",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "organization-management",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "settings",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "tenant_isolation",
+      "label": "Tenant Isolation",
+      "weight": 15,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "tenant-isolation:FRAMEWORK_INVALID, edge-functions:FRAMEWORK_INVALID, realtime:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "tenant-isolation",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "edge-functions",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "realtime",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "decision_pipeline",
+      "label": "Decision Pipeline",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "decision-creation:FRAMEWORK_INVALID, decision-editing:FRAMEWORK_INVALID, decision-approval:FRAMEWORK_INVALID, decision-rejection:FRAMEWORK_INVALID, decision-ledger:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "decision-creation",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "decision-editing",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "decision-approval",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "decision-rejection",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "decision-ledger",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "evidence_pipeline",
+      "label": "Evidence Pipeline",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "evidence-attachment:FRAMEWORK_INVALID, evidence-retrieval:FRAMEWORK_INVALID, evidence-export:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "evidence-attachment",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "evidence-retrieval",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "evidence-export",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "governance",
+      "label": "Governance",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "governance-workflow:FRAMEWORK_INVALID, confidence-scoring:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "governance-workflow",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "confidence-scoring",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "ai",
+      "label": "AI Pipeline",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "ai-recommendation:FRAMEWORK_INVALID, ai-explanation:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "ai-recommendation",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "ai-explanation",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "audit",
+      "label": "Audit",
+      "weight": 0,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "audit-trail:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "audit-trail",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "reports",
+      "label": "Reports",
+      "weight": 5,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "reports:FRAMEWORK_INVALID, executive-exports:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "reports",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "executive-exports",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "notifications",
+      "label": "Notifications",
+      "weight": 0,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "notifications:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "notifications",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "billing",
+      "label": "Billing",
+      "weight": 0,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "billing:FRAMEWORK_INVALID, credits:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "billing",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "credits",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "scalability",
+      "label": "Scalability",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "dashboard-loading:FRAMEWORK_INVALID, background-jobs:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "dashboard-loading",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "background-jobs",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "recovery",
+      "label": "Recovery",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "recovery:FRAMEWORK_INVALID, rollback:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "recovery",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "rollback",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "gate": "system_health",
+      "label": "System Health",
+      "weight": 10,
+      "status": "BLOCKED",
+      "blocking": true,
+      "reason": "system-health:FRAMEWORK_INVALID, search:FRAMEWORK_INVALID, data-import:FRAMEWORK_INVALID, dataset-versioning:FRAMEWORK_INVALID",
+      "evidence": [
+        {
+          "pipeline": "system-health",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "search",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "data-import",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        },
+        {
+          "pipeline": "dataset-versioning",
+          "status": "FRAMEWORK_INVALID",
+          "blocking": true,
+          "reason": "evidence artifact missing",
+          "evidence": null
+        }
+      ]
+    }
+  ],
+  "blocking_items": [
+    {
+      "gate": "authentication",
+      "pipeline": "authentication",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "FRAMEWORK_INVALID"
+    },
+    {
+      "gate": "authentication",
+      "pipeline": "mfa",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authentication",
+      "pipeline": "oauth",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authentication",
+      "pipeline": "session-recovery",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authorization",
+      "pipeline": "protected-routes",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authorization",
+      "pipeline": "user-management",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authorization",
+      "pipeline": "organization-management",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "authorization",
+      "pipeline": "settings",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "tenant_isolation",
+      "pipeline": "tenant-isolation",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "tenant_isolation",
+      "pipeline": "edge-functions",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "tenant_isolation",
+      "pipeline": "realtime",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "decision_pipeline",
+      "pipeline": "decision-creation",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "decision_pipeline",
+      "pipeline": "decision-editing",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "decision_pipeline",
+      "pipeline": "decision-approval",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "decision_pipeline",
+      "pipeline": "decision-rejection",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "decision_pipeline",
+      "pipeline": "decision-ledger",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "evidence_pipeline",
+      "pipeline": "evidence-attachment",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "evidence_pipeline",
+      "pipeline": "evidence-retrieval",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "evidence_pipeline",
+      "pipeline": "evidence-export",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "governance",
+      "pipeline": "governance-workflow",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "governance",
+      "pipeline": "confidence-scoring",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "ai",
+      "pipeline": "ai-recommendation",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "ai",
+      "pipeline": "ai-explanation",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "audit",
+      "pipeline": "audit-trail",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "reports",
+      "pipeline": "reports",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "reports",
+      "pipeline": "executive-exports",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "notifications",
+      "pipeline": "notifications",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "billing",
+      "pipeline": "billing",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "billing",
+      "pipeline": "credits",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "scalability",
+      "pipeline": "dashboard-loading",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "scalability",
+      "pipeline": "background-jobs",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "recovery",
+      "pipeline": "recovery",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "recovery",
+      "pipeline": "rollback",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "system_health",
+      "pipeline": "system-health",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "system_health",
+      "pipeline": "search",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "system_health",
+      "pipeline": "data-import",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    },
+    {
+      "gate": "system_health",
+      "pipeline": "dataset-versioning",
+      "status": "FRAMEWORK_INVALID",
+      "reason": "evidence artifact missing"
+    }
+  ],
+  "warnings": [
+    {
+      "gate": "authentication",
+      "pipeline": "authentication",
+      "warnings": 1
+    }
+  ]
+}

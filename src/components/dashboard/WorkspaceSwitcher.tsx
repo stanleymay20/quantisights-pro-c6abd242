@@ -47,8 +47,8 @@ const WorkspaceSwitcher = () => {
       toast({ title: "Workspace created", description: `"${trimmed}" is now active with a default project.` });
       setShowCreate(false);
       setNewName("");
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setCreating(false);
     }

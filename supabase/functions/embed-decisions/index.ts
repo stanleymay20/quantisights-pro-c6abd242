@@ -1,13 +1,14 @@
 /**
- * embed-decisions — Batch embed decisions, outcomes, and insights into vector store.
+ * embed-decisions — Batch embed decisions, outcomes, insights, and advisories
+ * into vector store for institutional memory / RAG.
  * 
  * Triggered after:
  * - Decision approval (via decision lifecycle)
  * - Outcome evaluation completion
  * - Insight generation
+ * - Advisory creation
  * 
- * This function populates the decision_embeddings table that powers
- * the RAG pipeline for all AI surfaces.
+ * Modes: "decisions" | "outcomes" | "insights" | "advisories" | "all" | "specific"
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -21,13 +22,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-
-    if (!lovableApiKey) {
-      return new Response(JSON.stringify({ error: "AI not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Accept service-role calls (from cron/other functions) or authenticated users
     const authHeader = req.headers.get("authorization");
@@ -57,11 +51,9 @@ serve(async (req) => {
 
     let embedded = 0;
     const errors: string[] = [];
-
-    // Mode: "decisions" | "outcomes" | "insights" | "all" | "specific"
     const embedMode = mode || "all";
 
-    // Embed decisions
+    // ── Embed decisions ──
     if (embedMode === "all" || embedMode === "decisions" || embedMode === "specific") {
       let query = svc
         .from("decision_ledger")
@@ -77,7 +69,7 @@ serve(async (req) => {
       for (const d of (decisions || [])) {
         try {
           const text = decisionToText(d);
-          const embedding = await generateEmbedding(text, lovableApiKey);
+          const embedding = await generateEmbedding(text);
           await storeEmbedding(supabaseUrl, serviceKey, organization_id, "decision", d.id, text, embedding, {
             decision_type: d.decision_type,
             confidence: d.capped_confidence,
@@ -87,12 +79,10 @@ serve(async (req) => {
         } catch (e) {
           errors.push(`decision:${d.id}: ${e instanceof Error ? e.message : "unknown"}`);
         }
-        // Rate limit: small delay between embeddings
-        await new Promise(r => setTimeout(r, 200));
       }
     }
 
-    // Embed outcomes (decisions with measured results)
+    // ── Embed outcomes ──
     if (embedMode === "all" || embedMode === "outcomes") {
       const { data: outcomes } = await svc
         .from("decision_ledger")
@@ -105,7 +95,7 @@ serve(async (req) => {
       for (const d of (outcomes || [])) {
         try {
           const text = outcomeToText(d);
-          const embedding = await generateEmbedding(text, lovableApiKey);
+          const embedding = await generateEmbedding(text);
           await storeEmbedding(supabaseUrl, serviceKey, organization_id, "outcome", d.id, text, embedding, {
             outcome_delta: d.outcome_delta,
             accuracy_score: d.prediction_accuracy_score,
@@ -115,33 +105,57 @@ serve(async (req) => {
         } catch (e) {
           errors.push(`outcome:${d.id}: ${e instanceof Error ? e.message : "unknown"}`);
         }
-        await new Promise(r => setTimeout(r, 200));
       }
     }
 
-    // Embed insights
+    // ── Embed insights ──
     if (embedMode === "all" || embedMode === "insights") {
       const { data: insights } = await svc
         .from("insights")
-        .select("id, message, category, severity, confidence")
+        .select("id, message, category, severity, confidence_score")
         .eq("organization_id", organization_id)
         .order("created_at", { ascending: false })
-        .limit(100);
+        .limit(500);
 
       for (const i of (insights || [])) {
         try {
           const text = `[${i.severity}] ${i.category}: ${i.message}`;
-          const embedding = await generateEmbedding(text, lovableApiKey);
+          const embedding = await generateEmbedding(text);
           await storeEmbedding(supabaseUrl, serviceKey, organization_id, "insight", i.id, text, embedding, {
             category: i.category,
             severity: i.severity,
-            confidence: i.confidence,
+            confidence: i.confidence_score,
           });
           embedded++;
         } catch (e) {
           errors.push(`insight:${i.id}: ${e instanceof Error ? e.message : "unknown"}`);
         }
-        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    // ── Embed advisories ──
+    if (embedMode === "all" || embedMode === "advisories") {
+      const { data: advisories } = await svc
+        .from("advisory_instances")
+        .select("id, title, action, category, advisory_type, priority, rationale, confidence, expected_impact")
+        .eq("organization_id", organization_id)
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      for (const a of (advisories || [])) {
+        try {
+          const text = `[${a.priority}] ${a.category} ${a.advisory_type}: ${a.title}. Action: ${a.action}${a.rationale ? `. Rationale: ${a.rationale}` : ""}${a.expected_impact ? `. Impact: ${a.expected_impact}` : ""}`;
+          const embedding = await generateEmbedding(text);
+          await storeEmbedding(supabaseUrl, serviceKey, organization_id, "advisory", a.id, text, embedding, {
+            category: a.category,
+            advisory_type: a.advisory_type,
+            priority: a.priority,
+            confidence: a.confidence,
+          });
+          embedded++;
+        } catch (e) {
+          errors.push(`advisory:${a.id}: ${e instanceof Error ? e.message : "unknown"}`);
+        }
       }
     }
 

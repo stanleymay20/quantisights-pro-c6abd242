@@ -1,0 +1,467 @@
+[
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_erp_a823a87a",
+    "raw_event_id": "evt-clean-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 750000,
+      "currency": "EUR",
+      "description": "Supplier delivery risk detected."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-clean-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-x",
+      "delivery_delay_hours": 36,
+      "impact_amount": 750000,
+      "description": "Supplier delivery risk detected.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-clean-001:rts-1g-normalization:916e8c9d"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_erp_e1a2862e",
+    "raw_event_id": "evt-expired-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-04-06T12:00:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 500000,
+      "currency": "EUR",
+      "description": "Expired supplier risk signal."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 0,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 84
+    },
+    "evidence_references": [
+      "evidence:evt-expired-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-old",
+      "delivery_delay_hours": 72,
+      "impact_amount": 500000,
+      "description": "Expired supplier risk signal.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-expired-001:rts-1g-normalization:56e83c29"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_sap_6581c30f",
+    "raw_event_id": "evt-inv-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "sap",
+    "signal_type": "inventory_position",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 600000,
+      "currency": "EUR",
+      "description": "SAP inventory position."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-inv-001"
+    ],
+    "payload": {
+      "sku": "SKU-42",
+      "inventory_count": 250,
+      "impact_amount": 600000,
+      "description": "SAP inventory position.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-inv-001:rts-1g-normalization:4f951767"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_warehouse_7537135c",
+    "raw_event_id": "evt-inv-002",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "warehouse",
+    "signal_type": "inventory_position",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 600000,
+      "currency": "EUR",
+      "description": "Warehouse scanner inventory position."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-inv-002"
+    ],
+    "payload": {
+      "sku": "SKU-42",
+      "inventory_count": 143,
+      "impact_amount": 600000,
+      "description": "Warehouse scanner inventory position.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-inv-002:rts-1g-normalization:1b69cb0c"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_ops-system-a_fe8037e3",
+    "raw_event_id": "evt-ops-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "ops-system-a",
+    "signal_type": "operational_status",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "medium",
+      "amount": 250000,
+      "currency": "EUR",
+      "description": "Operational process state from system A."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-ops-001"
+    ],
+    "payload": {
+      "process_state": "delayed",
+      "impact_amount": 250000,
+      "description": "Operational process state from system A.",
+      "materiality_level": "medium"
+    },
+    "idempotency_key": "tenant-a:evt-ops-001:rts-1g-normalization:91560a16"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_ops-system-b_5f5aa22c",
+    "raw_event_id": "evt-ops-002",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "ops-system-b",
+    "signal_type": "operational_status",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "medium",
+      "amount": 250000,
+      "currency": "EUR",
+      "description": "Operational process state from system B."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-ops-002"
+    ],
+    "payload": {
+      "process_state": "blocked",
+      "impact_amount": 250000,
+      "description": "Operational process state from system B.",
+      "materiality_level": "medium"
+    },
+    "idempotency_key": "tenant-a:evt-ops-002:rts-1g-normalization:97554e1d"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_erp_1c3b9eb7",
+    "raw_event_id": "evt-boundary-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 800000,
+      "currency": "EUR",
+      "description": "Tenant A supplier signal."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-boundary-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-x",
+      "delivery_delay_hours": 24,
+      "impact_amount": 800000,
+      "description": "Tenant A supplier signal.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-boundary-001:rts-1g-normalization:ac79274a"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-b_erp_b67cb3dc",
+    "raw_event_id": "evt-boundary-002",
+    "tenant_id": "tenant-b",
+    "organization_id": "org-b",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 800000,
+      "currency": "EUR",
+      "description": "Tenant B supplier signal."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-boundary-002"
+    ],
+    "payload": {
+      "supplier_id": "supplier-y",
+      "delivery_delay_hours": 24,
+      "impact_amount": 800000,
+      "description": "Tenant B supplier signal.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-b:evt-boundary-002:rts-1g-normalization:b6256ff4"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_supplier-portal_3078bd89",
+    "raw_event_id": "evt-supplier-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "supplier-portal",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:59:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "critical",
+      "amount": 2500000,
+      "currency": "EUR",
+      "description": "High-impact supplier risk."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-supplier-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-critical",
+      "delivery_delay_hours": 72,
+      "impact_amount": 2500000,
+      "description": "High-impact supplier risk.",
+      "materiality_level": "critical"
+    },
+    "idempotency_key": "tenant-a:evt-supplier-001:rts-1g-normalization:716968f4"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_policy-register_603e7480",
+    "raw_event_id": "evt-compliance-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "policy-register",
+    "signal_type": "regulatory_evidence_gap",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 500000,
+      "currency": "EUR",
+      "description": "Regulatory evidence gap detected."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-compliance-001"
+    ],
+    "payload": {
+      "policy_id": "EU-AI-ACT-ART-14",
+      "evidence_gap_count": 3,
+      "impact_amount": 500000,
+      "description": "Regulatory evidence gap detected.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-compliance-001:rts-1g-normalization:17e54fc9"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_ops-system_bc83f699",
+    "raw_event_id": "evt-low-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "ops-system",
+    "signal_type": "operational_observation",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "low",
+      "amount": 100,
+      "currency": "EUR",
+      "description": "Low materiality operational observation."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 25,
+      "overall": 90
+    },
+    "evidence_references": [
+      "evidence:evt-low-001"
+    ],
+    "payload": {
+      "observation_id": "obs-1",
+      "impact_amount": 100,
+      "description": "Low materiality operational observation.",
+      "materiality_level": "low"
+    },
+    "idempotency_key": "tenant-a:evt-low-001:rts-1g-normalization:37138d14"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_erp_1917fda6",
+    "raw_event_id": "evt-candidate-expired-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 750000,
+      "currency": "EUR",
+      "description": "Candidate expiration test."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-candidate-expired-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-z",
+      "delivery_delay_hours": 24,
+      "impact_amount": 750000,
+      "description": "Candidate expiration test.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-candidate-expired-001:rts-1g-normalization:1595c8a9"
+  },
+  {
+    "schema_version": "quantivis.real-time-signal.v1",
+    "signal_id": "signal_tenant-a_erp_2328bdc8",
+    "raw_event_id": "evt-replay-001",
+    "tenant_id": "tenant-a",
+    "organization_id": "org-a",
+    "source_system": "erp",
+    "signal_type": "supplier_delivery_risk",
+    "observed_at": "2026-07-05T11:58:00.000Z",
+    "normalized_at": "2026-07-05T12:00:00.000Z",
+    "materiality": {
+      "level": "high",
+      "amount": 900000,
+      "currency": "EUR",
+      "description": "Replay determinism signal."
+    },
+    "quality": {
+      "completeness": 100,
+      "consistency": 100,
+      "freshness": 100,
+      "provenance": 100,
+      "materiality": 100,
+      "overall": 100
+    },
+    "evidence_references": [
+      "evidence:evt-replay-001"
+    ],
+    "payload": {
+      "supplier_id": "supplier-replay",
+      "delivery_delay_hours": 48,
+      "impact_amount": 900000,
+      "description": "Replay determinism signal.",
+      "materiality_level": "high"
+    },
+    "idempotency_key": "tenant-a:evt-replay-001:rts-1g-normalization:5559a139"
+  }
+]

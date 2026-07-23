@@ -133,10 +133,24 @@ serve(async (req) => {
 
     const aiData = await aiResp.json();
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-    let result = { signals: [], market_sentiment: "neutral", key_risks: [], opportunities: [] };
+    interface MarketSignal {
+      category: string;
+      title: string;
+      summary: string;
+      impact_level?: string;
+      direction?: string;
+      relevance_score?: number;
+    }
+    interface MarketResult {
+      signals: MarketSignal[];
+      market_sentiment: string;
+      key_risks: unknown[];
+      opportunities: unknown[];
+    }
+    let result: MarketResult = { signals: [], market_sentiment: "neutral", key_risks: [], opportunities: [] };
 
     if (toolCall?.function?.arguments) {
-      result = JSON.parse(toolCall.function.arguments);
+      result = JSON.parse(toolCall.function.arguments) as MarketResult;
     }
 
     // Store signals

@@ -34,7 +34,6 @@ const CRITICAL_JOBS = [
   "morning-brief",
   "convergence-reconcile",
   "health-check",
-  "pipeline-orchestrator",
 ];
 
 export const useSystemHealth = (orgId: string | null) => {
@@ -84,18 +83,22 @@ export const useSystemHealth = (orgId: string | null) => {
           .select("id")
           .eq("organization_id", orgId)
           .gte("created_at", twentyFourHoursAgo),
-        supabase
-          .from("cron_run_log")
-          .select("job_name, status, completed_at, duration_ms, error_message, started_at")
-          .gte("started_at", twentyFourHoursAgo)
-          .order("started_at", { ascending: false })
-          .limit(500),
+        supabase.rpc("get_cron_health", { _job_names: CRITICAL_JOBS }),
       ]);
 
       const decisions = decisionsRes.data || [];
       const outcomes = outcomesRes.data || [];
       const calModel = calibrationRes.data?.[0];
-      const cronLogs = cronLogsRes.data || [];
+      const cronHealthRows = (cronLogsRes.data || []) as Array<{
+        job_name: string;
+        last_status: string | null;
+        last_completed_at: string | null;
+        last_started_at: string | null;
+        last_duration_ms: number | null;
+        last_error: string | null;
+        runs_last_24h: number | string;
+        failures_last_24h: number | string;
+      }>;
 
       const totalDecisions = decisions.length;
       const completedDecisions = decisions.filter(d => d.execution_status === "completed").length;
@@ -113,20 +116,17 @@ export const useSystemHealth = (orgId: string | null) => {
         ? confidenceValues.reduce((s, v) => s + v, 0) / confidenceValues.length
         : null;
 
-      // Build cron job health from logs
+      // Build cron job health from RPC output (RPC already returns per-job aggregates)
       const cronJobs: CronJobHealth[] = CRITICAL_JOBS.map(jobName => {
-        const jobLogs = cronLogs.filter(l => l.job_name === jobName);
-        const latest = jobLogs[0];
-        const failures = jobLogs.filter(l => l.status === "failed").length;
-
+        const row = cronHealthRows.find(r => r.job_name === jobName);
         return {
           job_name: jobName,
-          last_status: latest?.status || "no_data",
-          last_completed_at: latest?.completed_at || null,
-          last_duration_ms: latest?.duration_ms || null,
-          last_error: latest?.status === "failed" ? latest?.error_message || null : null,
-          runs_last_24h: jobLogs.filter(l => l.status !== "skipped_overlap").length,
-          failures_last_24h: failures,
+          last_status: row?.last_status || "no_data",
+          last_completed_at: row?.last_completed_at || null,
+          last_duration_ms: row?.last_duration_ms ?? null,
+          last_error: row?.last_error || null,
+          runs_last_24h: Number(row?.runs_last_24h ?? 0),
+          failures_last_24h: Number(row?.failures_last_24h ?? 0),
         };
       });
 

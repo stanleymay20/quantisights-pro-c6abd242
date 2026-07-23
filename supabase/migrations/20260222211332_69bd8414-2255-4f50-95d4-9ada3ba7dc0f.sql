@@ -20,12 +20,7 @@ CREATE POLICY "Org members can create reports"
   WITH CHECK (is_org_member(auth.uid(), organization_id) AND generated_by = auth.uid());
 
 -- Reports storage bucket
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('reports', 'reports', false)
-ON CONFLICT (id) DO UPDATE
-SET
-  name = EXCLUDED.name,
-  public = EXCLUDED.public;
+INSERT INTO storage.buckets (id, name, public) VALUES ('reports', 'reports', false);
 
 CREATE POLICY "Authenticated users can upload reports"
   ON storage.objects FOR INSERT TO authenticated

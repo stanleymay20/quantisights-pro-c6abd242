@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
+import { useSeoHead } from "@/lib/useSeoHead";
+import SecurityHeaderStatus from "@/components/security/SecurityHeaderStatus";
 
 const generateWhitepaperContent = (): string => {
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -52,7 +54,7 @@ Secret Management:
 3. AUTHENTICATION & ACCESS CONTROL
 ───────────────────────────────────
 Authentication:
-  • Multi-factor authentication (MFA) enforced at route level (AAL2)
+  • Multi-factor authentication (MFA) available with route-level AAL2 enforcement when configured
   • TOTP-based authenticator apps supported (Google Authenticator, Authy)
   • JWT-based session management with automatic token refresh
   • Secure password reset flow with expiring, single-use tokens
@@ -198,7 +200,7 @@ const HERO_STATS = [
   { value: "AES-256", label: "Encryption at Rest" },
   { value: "TLS 1.3", label: "Encryption in Transit" },
   { value: "100%", label: "Tables with RLS" },
-  { value: "MFA", label: "Enforced Authentication" },
+  { value: "MFA", label: "Configurable AAL2 Authentication" },
 ];
 
 const PILLARS = [
@@ -218,9 +220,9 @@ const PILLARS = [
   {
     icon: KeyRound,
     title: "Authentication & Access Control",
-    description: "Multi-layered authentication with mandatory MFA and strict role-based access control.",
+    description: "Multi-layered authentication with configurable MFA enforcement and strict role-based access control.",
     items: [
-      "Multi-factor authentication (MFA) enforced at route level (AAL2)",
+      "Multi-factor authentication (MFA) supports route-level AAL2 enforcement",
       "Password strength validation with breach database checking (HaveIBeenPwned)",
       "JWT-based session management with automatic token refresh",
       "Role-based access: Owner, Admin, Executive, Analyst, Viewer",
@@ -293,7 +295,7 @@ const ROLE_MATRIX = [
 const CERTIFICATIONS = [
   { icon: ShieldCheck, title: "SOC 2 Type II", subtitle: "Infrastructure Provider", status: "Audit Planned" },
   { icon: Globe, title: "GDPR", subtitle: "Data Protection", status: "Compliant" },
-  { icon: Fingerprint, title: "MFA (AAL2)", subtitle: "Authentication", status: "Enforced" },
+  { icon: Fingerprint, title: "MFA (AAL2)", subtitle: "Authentication", status: "Available" },
   { icon: Network, title: "RLS", subtitle: "Data Isolation", status: "100% Coverage" },
 ];
 
@@ -313,14 +315,19 @@ const SECURITY_FAQ = [
   { q: "How do you handle a security breach?", a: "We follow GDPR Article 33 requirements: affected customers are notified within 72 hours where required by applicable law. Our incident response process includes containment, forensic investigation, customer communication, and post-incident review." },
   { q: "What happens when I delete my account?", a: "A secure Edge Function performs atomic deletion or anonymization across 25+ tables (metrics, advisories, audit logs, decisions, copilot sessions, etc.) and purges your record from the authentication system." },
   { q: "Do you train AI models on my data?", a: "No. Client data is not used to train, fine-tune, or improve Quantivis models. AI features use third-party inference APIs (e.g. Google Gemini) in stateless, per-request mode — no data is retained by the provider after processing." },
-  { q: "How is MFA enforced?", a: "MFA is enforced at the route level using AAL2 (Authenticator Assurance Level 2). Users must complete a second-factor challenge to access protected pages. TOTP-based authenticator apps are supported." },
+  { q: "How is MFA enforced?", a: "Organizations can require AAL2 (Authenticator Assurance Level 2) for protected routes. When enabled, users complete a second-factor challenge before access. TOTP-based authenticator apps are supported." },
   { q: "Can I get a DPA or subprocessor list?", a: "Yes. Our Data Processing Agreement (DPA), subprocessor list, data retention policy, and privacy policy are all publicly available and linked from this page." },
 ];
 
 const Security = () => {
+  useSeoHead({
+    title: "Security & Compliance — SOC 2, ISO 27001, GDPR | Quantivis",
+    description: "Quantivis security architecture: AES-256 at rest, TLS 1.3 in transit, EU data residency, SOC 2 Type II controls, ISO 27001 hosting, GDPR-compliant DPA. Download the security whitepaper.",
+    canonicalPath: "/security",
+  });
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   return (
-  <div className="min-h-screen bg-background">
+  <div className="min-h-dvh bg-background flex flex-col">
     {/* Header */}
     <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
       <div className="container mx-auto px-6 h-14 flex items-center justify-between">
@@ -335,7 +342,10 @@ const Security = () => {
       </div>
     </header>
 
-    <main>
+    <main className="flex-1">
+      <div className="container mx-auto px-6 pt-6">
+        <SecurityHeaderStatus />
+      </div>
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
@@ -345,7 +355,7 @@ const Security = () => {
               <Shield className="w-3.5 h-3.5" />
               Trust Center
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold font-display mb-4 tracking-tight">
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4 tracking-tight">
               Security Built for<br />
               <span className="text-primary">Decision Governance</span>
             </h1>
@@ -380,7 +390,7 @@ const Security = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl mx-auto">
             {HERO_STATS.map((stat) => (
               <div key={stat.label} className="rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm p-4 text-center">
-                <div className="text-xl font-bold font-display text-primary mb-1">{stat.value}</div>
+                <div className="text-xl font-bold tracking-tight text-primary mb-1">{stat.value}</div>
                 <div className="text-xs text-muted-foreground">{stat.label}</div>
               </div>
             ))}
@@ -410,7 +420,7 @@ const Security = () => {
       {/* Security Pillars */}
       <section className="container mx-auto px-6 py-20">
         <div className="text-center mb-16">
-          <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">Six Pillars of Enterprise Security</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">Six Pillars of Enterprise Security</h2>
           <p className="text-muted-foreground max-w-xl mx-auto">
             Security is not a feature — it's the architecture. Every layer is designed to protect
             strategic intelligence from unauthorized access.
@@ -423,7 +433,7 @@ const Security = () => {
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
                 <pillar.icon className="w-5 h-5 text-primary" />
               </div>
-              <h3 className="text-lg font-semibold mb-2">{pillar.title}</h3>
+              <h3 className="text-[14px] font-semibold mb-2">{pillar.title}</h3>
               <p className="text-sm text-muted-foreground mb-4">{pillar.description}</p>
               <ul className="space-y-2">
                 {pillar.items.map((item) => (
@@ -442,7 +452,7 @@ const Security = () => {
       <section className="border-y border-border/30 bg-card/20">
         <div className="container mx-auto px-6 py-20">
           <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">Role-Based Access Matrix</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">Role-Based Access Matrix</h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
               Least-privilege enforcement ensures each role only accesses what's necessary.
               Strategic intelligence is restricted to leadership by default.
@@ -486,7 +496,7 @@ const Security = () => {
       <section className="container mx-auto px-6 py-20">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">Our Data Commitment</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">Our Data Commitment</h2>
             <p className="text-muted-foreground">
               Clear, unambiguous commitments to how we handle your data.
             </p>
@@ -519,7 +529,7 @@ const Security = () => {
       <section className="border-t border-border/30 bg-card/20">
         <div className="container mx-auto px-6 py-16">
           <div className="max-w-2xl mx-auto text-center">
-            <h2 className="text-xl font-bold font-display mb-3">Responsible Disclosure</h2>
+            <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-3">Responsible Disclosure</h2>
             <p className="text-sm text-muted-foreground mb-6">
               We maintain a public <code className="bg-muted px-1.5 py-0.5 rounded text-xs">security.txt</code> policy
               for responsible vulnerability reporting. If you discover a security issue, please report it to{" "}
@@ -552,7 +562,7 @@ const Security = () => {
       {/* Architecture Proof */}
       <section className="container mx-auto px-6 py-20">
         <div className="text-center mb-12">
-          <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">Verifiable Security Controls</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">Verifiable Security Controls</h2>
           <p className="text-muted-foreground max-w-xl mx-auto">
             Not marketing claims — architecture facts. Every statement below is enforced
             by database policies, not application code.
@@ -579,7 +589,7 @@ const Security = () => {
       <section className="border-y border-border/30 bg-card/20">
         <div className="container mx-auto px-6 py-20">
           <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">Security FAQ</h2>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">Security FAQ</h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
               Common questions from security reviewers and procurement teams.
             </p>
@@ -609,7 +619,7 @@ const Security = () => {
       <section className="container mx-auto px-6 py-16">
         <div className="max-w-2xl mx-auto">
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-8">
-            <h2 className="text-xl font-bold font-display mb-2">Enterprise Security Pack</h2>
+            <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">Enterprise Security Pack</h2>
             <p className="text-sm text-muted-foreground mb-6">Available on request for procurement and security review teams.</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {[
@@ -656,7 +666,7 @@ const Security = () => {
       {/* CTA */}
       <section className="container mx-auto px-6 py-16">
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-2xl font-bold font-display mb-3">Ready to see enterprise-grade security in action?</h2>
+          <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to see enterprise-grade security in action?</h2>
           <p className="text-muted-foreground mb-6">
             Start your 14-day free trial. No credit card required. Full security from day one.
           </p>

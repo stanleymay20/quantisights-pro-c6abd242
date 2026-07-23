@@ -2,7 +2,7 @@ import { ArrowRight, Zap, TrendingDown, Eye, AlertTriangle, BookOpen, Brain } fr
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import type { Insight } from "@/hooks/useInsights";
-
+import { filterCriticalInsights } from "@/lib/insight-filters";
 interface DailyActionsProps {
   insights: Insight[];
   hasData: boolean;
@@ -32,7 +32,7 @@ const PRIORITY_STYLES = {
 const DailyActions = ({ insights, hasData, churnRate, revenue, pendingDecisions = 0, calibrationScore }: DailyActionsProps) => {
   if (!hasData) return null;
 
-  const criticalInsights = insights.filter(i => i.severity === "high");
+  const criticalInsights = filterCriticalInsights(insights);
   const warningInsights = insights.filter(i => i.severity === "medium");
 
   const actions: Action[] = [];

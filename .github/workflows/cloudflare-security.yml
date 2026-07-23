@@ -1,0 +1,61 @@
+name: Apply Cloudflare Enterprise Security
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: cloudflare-enterprise-security
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      LOVABLE_PROXY_ORIGIN: ${{ secrets.LOVABLE_PROXY_ORIGIN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Report checked out commit
+        run: git rev-parse HEAD
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ZONE_ID" ]; then
+            echo "::error::CLOUDFLARE_ZONE_ID is not set"
+            exit 1
+          fi
+
+      - name: Apply or verify Cloudflare DNS proxy path
+        run: npm run cloudflare:dns
+
+      - name: Apply Cloudflare enterprise security headers
+        run: npm run cloudflare:apply
+
+      - name: Diagnose Cloudflare security routing
+        run: npm run cloudflare:diagnose
+
+      - name: Apply Cloudflare Worker security header fallback
+        run: npm run cloudflare:apply-worker
+
+      - name: Wait for edge propagation
+        run: sleep 30
+
+      - name: Verify live Cloudflare security headers
+        run: npm run cloudflare:verify

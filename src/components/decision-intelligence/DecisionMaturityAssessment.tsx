@@ -98,7 +98,7 @@ const DecisionMaturityAssessment = () => {
         <CardContent className="space-y-5">
           {/* Overall score */}
           <div className="text-center py-4">
-            <div className={`text-5xl font-bold font-display ${maturityLevel.color}`}>
+            <div className={`text-5xl font-bold tracking-tight ${maturityLevel.color}`}>
               {Math.round(score)}
             </div>
             <Badge className="mt-2" variant="outline">{maturityLevel.label}</Badge>

@@ -33,17 +33,17 @@ const AcceptInvite = () => {
         const { data, error } = await supabase.rpc("accept_invitation", { _token: token });
         if (error) throw error;
 
-        const result = data as any;
+        const result = data as Record<string, unknown> | null;
         if (result?.error) {
           setStatus("error");
-          setMessage(result.error);
+          setMessage(result.error as string);
         } else {
           setStatus("success");
-          setMessage(result.message || "You have joined the organization!");
+          setMessage((result?.message as string) || "You have joined the organization!");
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         setStatus("error");
-        setMessage(err.message);
+        setMessage(err instanceof Error ? err.message : "Unknown error");
       }
     };
 
@@ -51,7 +51,7 @@ const AcceptInvite = () => {
   }, [user, authLoading, token]);
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardContent className="flex flex-col items-center py-12 gap-4">
           {status === "loading" && (
@@ -64,7 +64,7 @@ const AcceptInvite = () => {
           {status === "login_required" && (
             <>
               <XCircle className="w-12 h-12 text-warning" />
-              <h2 className="text-xl font-semibold">Login Required</h2>
+              <h2 className="text-[16px] font-semibold">Login Required</h2>
               <p className="text-muted-foreground text-center">
                 Please log in or create an account to accept this invitation.
               </p>
@@ -77,7 +77,7 @@ const AcceptInvite = () => {
           {status === "success" && (
             <>
               <CheckCircle2 className="w-12 h-12 text-success" />
-              <h2 className="text-xl font-semibold">Welcome!</h2>
+              <h2 className="text-[16px] font-semibold">Welcome!</h2>
               <p className="text-muted-foreground text-center">{message}</p>
               <Button onClick={() => navigate("/dashboard")}>Go to Dashboard</Button>
             </>
@@ -86,7 +86,7 @@ const AcceptInvite = () => {
           {status === "error" && (
             <>
               <XCircle className="w-12 h-12 text-destructive" />
-              <h2 className="text-xl font-semibold">Error</h2>
+              <h2 className="text-[16px] font-semibold">Error</h2>
               <p className="text-muted-foreground text-center">{message}</p>
               <Button variant="outline" onClick={() => navigate("/")}>
                 Go Home

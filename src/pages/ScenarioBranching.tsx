@@ -10,19 +10,31 @@ import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database, Json } from "@/integrations/supabase/types";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import {
   GitBranch, Plus, Loader2, Play, Trash2, BarChart3,
   TrendingUp, TrendingDown, ArrowRight, AlertTriangle,
 } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+
+interface BranchResults {
+  projected_risk: number;
+  risk_delta: number;
+  baseline_risk: number;
+  escalation_triggered: boolean;
+  ai_board_summary?: string;
+  [key: string]: unknown;
+}
 
 interface Branch {
   id: string;
   name: string;
   description: string | null;
-  parameters: Record<string, any>;
-  results: Record<string, any> | null;
+  parameters: Record<string, number>;
+  results: BranchResults | null;
   status: string;
   comparison_group_id: string | null;
   created_at: string;
@@ -86,14 +98,14 @@ const ScenarioBranching = () => {
   const createBranch = async () => {
     if (!currentOrgId || !user || !newName.trim()) return;
     setCreating(true);
-    const { error } = await supabase.from("scenario_branches").insert({
+    const { error } = await supabase.from("scenario_branches").insert([{
       organization_id: currentOrgId,
       name: newName,
       description: newDesc || null,
       parameters: newParams,
       created_by: user.id,
       comparison_group_id: comparisonGroupId,
-    } as any);
+    }]);
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
@@ -112,7 +124,7 @@ const ScenarioBranching = () => {
     if (!currentOrgId || !activeDatasetId) return;
     setSimulating(branch.id);
     try {
-      const { data, error } = await supabase.functions.invoke("strategic-simulation", {
+      const { data, error } = await invokeWithRetry<Record<string, unknown>>("strategic-simulation", {
         body: {
           organization_id: currentOrgId,
           dataset_id: activeDatasetId,
@@ -121,16 +133,21 @@ const ScenarioBranching = () => {
         },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const rawData = data as unknown as Record<string, unknown> | null;
+      if (rawData?.error) throw new Error(String(rawData.error));
 
+      const branchUpdate: Database["public"]["Tables"]["scenario_branches"]["Update"] = {
+        results: data as unknown as Json,
+        status: "simulated",
+      };
       await supabase.from("scenario_branches")
-        .update({ results: data, status: "simulated" } as any)
+        .update(branchUpdate)
         .eq("id", branch.id);
 
       toast({ title: "Simulation complete" });
       fetchBranches();
-    } catch (e: any) {
-      toast({ title: "Simulation failed", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Simulation failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setSimulating(null);
     }
@@ -151,7 +168,7 @@ const ScenarioBranching = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <GitBranch className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">What-If Branching</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">What-If Branching</h1>
             <Badge variant="outline" className="text-xs">Compare scenarios side-by-side</Badge>
           </div>
         </header>
@@ -241,22 +258,22 @@ const ScenarioBranching = () => {
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground">Projected Risk</span>
                           <span className={`text-sm font-bold ${
-                            (branch.results as any).projected_risk >= 70 ? "text-destructive" :
-                            (branch.results as any).projected_risk >= 40 ? "text-warning" : "text-success"
+                            branch.results.projected_risk >= 70 ? "text-destructive" :
+                            branch.results.projected_risk >= 40 ? "text-warning" : "text-success"
                           }`}>
-                            {(branch.results as any).projected_risk}/100
+                            {branch.results.projected_risk}/100
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground">Risk Delta</span>
                           <span className={`text-sm font-bold flex items-center gap-1 ${
-                            (branch.results as any).risk_delta > 0 ? "text-destructive" : "text-emerald-500"
+                            branch.results.risk_delta > 0 ? "text-destructive" : "text-emerald-500"
                           }`}>
-                            {(branch.results as any).risk_delta > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                            {(branch.results as any).risk_delta > 0 ? "+" : ""}{(branch.results as any).risk_delta}
+                            {branch.results.risk_delta > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            {branch.results.risk_delta > 0 ? "+" : ""}{branch.results.risk_delta}
                           </span>
                         </div>
-                        {(branch.results as any).escalation_triggered && (
+                        {branch.results.escalation_triggered && (
                           <div className="flex items-center gap-1 text-xs text-destructive">
                             <AlertTriangle className="w-3 h-3" /> Escalation triggered
                           </div>
@@ -306,16 +323,18 @@ const ScenarioBranching = () => {
                         <tr key={metric} className="border-b border-border/10">
                           <td className="py-2 px-3 text-xs text-muted-foreground capitalize">{metric.replace(/_/g, " ")}</td>
                           {simulatedBranches.map(b => {
-                            const val = (b.results as any)?.[metric];
+                            const val = b.results?.[metric] as number | undefined;
                             const isBest = metric === "projected_risk"
-                              ? val === Math.min(...simulatedBranches.map(sb => (sb.results as any)?.[metric] ?? 999))
+                              ? val === Math.min(...simulatedBranches.map(sb => (sb.results?.[metric] as number) ?? 999))
                               : metric === "risk_delta"
-                              ? val === Math.min(...simulatedBranches.map(sb => (sb.results as any)?.[metric] ?? 999))
+                              ? val === Math.min(...simulatedBranches.map(sb => (sb.results?.[metric] as number) ?? 999))
                               : false;
                             return (
+    <SectionErrorBoundary sectionName="Scenario Branching">
                               <td key={b.id} className={`text-center py-2 px-3 font-medium ${isBest ? "text-primary font-bold" : ""}`}>
                                 {val ?? "—"}
                               </td>
+    </SectionErrorBoundary>
                             );
                           })}
                         </tr>
@@ -324,7 +343,7 @@ const ScenarioBranching = () => {
                         <td className="py-2 px-3 text-xs text-muted-foreground">Escalation</td>
                         {simulatedBranches.map(b => (
                           <td key={b.id} className="text-center py-2 px-3">
-                            {(b.results as any)?.escalation_triggered ? (
+                            {b.results?.escalation_triggered ? (
                               <Badge variant="destructive" className="text-[10px]">Yes</Badge>
                             ) : (
                               <Badge variant="outline" className="text-[10px] text-success">No</Badge>
@@ -337,13 +356,13 @@ const ScenarioBranching = () => {
                 </div>
 
                 {/* AI Summaries */}
-                {simulatedBranches.some(b => (b.results as any)?.ai_board_summary) && (
+                {simulatedBranches.some(b => b.results?.ai_board_summary) && (
                   <div className="mt-4 space-y-3">
                     <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">AI Analysis per Branch</h4>
-                    {simulatedBranches.filter(b => (b.results as any)?.ai_board_summary).map(b => (
+                    {simulatedBranches.filter(b => b.results?.ai_board_summary).map(b => (
                       <div key={b.id} className="p-3 rounded-lg bg-muted/30 border border-border/20">
                         <p className="text-xs font-semibold text-primary mb-1">{b.name}</p>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{(b.results as any).ai_board_summary}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{b.results?.ai_board_summary}</p>
                       </div>
                     ))}
                   </div>

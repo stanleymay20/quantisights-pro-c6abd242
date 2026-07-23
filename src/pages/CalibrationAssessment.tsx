@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Brain, ArrowRight, ArrowLeft, Target, TrendingDown, TrendingUp, AlertTriangle, Zap, Share2, BookOpen, LogIn } from "lucide-react";
@@ -228,8 +229,9 @@ const CalibrationAssessment = () => {
           responses: [],
         });
         setStep("results");
-      } catch {
-        // Invalid encoded data — ignore
+      } catch (e: unknown) {
+        // Invalid encoded data from shared URL — non-critical, log and ignore
+        console.error("[CalibrationAssessment] Failed to decode shared results:", e instanceof Error ? e.message : e);
       }
     }
   }, [searchParams]);
@@ -282,15 +284,19 @@ const CalibrationAssessment = () => {
       await supabase.from("calibration_assessments").insert({
         user_id: user.id,
         organization_id: organizationId,
-        responses: resp as any,
+        // Schema-gap cast: responses is Json type, TS generated type doesn't accept Response[] directly
+        responses: resp as unknown as import("@/integrations/supabase/types").Json,
         overconfidence_score: computed.overconfidenceScore,
         underconfidence_score: computed.underconfidenceScore,
         brier_score: computed.brierScore,
         calibration_profile: computed.tier.label,
-        bias_markers: computed.biasMarkers as any,
+        // Schema-gap cast: bias_markers is Json type, TS generated type doesn't accept string[] directly
+        bias_markers: computed.biasMarkers as unknown as import("@/integrations/supabase/types").Json,
         completed_at: new Date().toISOString(),
+
       });
-    } catch {
+    } catch (e: unknown) {
+      console.error("[CalibrationAssessment] Failed to save assessment:", e instanceof Error ? e.message : e);
       toast.error("Failed to save assessment");
     } finally {
       setSaving(false);
@@ -313,8 +319,9 @@ const CalibrationAssessment = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <main className="flex-1 overflow-y-auto">
+    <div className="min-h-dvh bg-background flex flex-col">
+      <SectionErrorBoundary sectionName="Calibration Assessment">
+        <main className="flex-1 overflow-y-auto">
         <div className="p-4 lg:p-8 max-w-4xl mx-auto">
           <div className="flex items-center justify-between mb-6 lg:mb-8">
             <div className="flex items-center gap-3">
@@ -409,7 +416,7 @@ const CalibrationAssessment = () => {
                 <Card>
                   <CardContent className="p-6 lg:p-8 space-y-8">
                     <div className="space-y-4">
-                      <h2 className="text-lg lg:text-xl font-bold text-foreground leading-snug">
+                      <h2 className="text-lg lg:text-[16px] font-semibold tracking-tight text-foreground leading-snug">
                         {scenario.question}
                       </h2>
                       <p className="text-sm text-muted-foreground leading-relaxed bg-muted/50 p-4 rounded-lg border">
@@ -420,7 +427,7 @@ const CalibrationAssessment = () => {
                     <div className="space-y-6">
                       <div className="text-center">
                         <span className={`text-5xl font-bold tabular-nums ${getProbabilityColor(userProbability)}`}>
-                          {userProbability}%
+                          {Math.round(userProbability)}%
                         </span>
                         <p className="text-sm text-muted-foreground mt-2">Your probability estimate</p>
                       </div>
@@ -473,13 +480,13 @@ const CalibrationAssessment = () => {
                       <div className="p-5 rounded-xl bg-muted/50 border text-center">
                         <p className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">Your Estimate</p>
                         <p className={`text-4xl font-bold tabular-nums ${getProbabilityColor(userProbability)}`}>
-                          {userProbability}%
+                          {Math.round(userProbability)}%
                         </p>
                       </div>
                       <div className="p-5 rounded-xl bg-primary/5 border border-primary/20 text-center">
                         <p className="text-xs text-muted-foreground mb-1 font-medium uppercase tracking-wider">Actual</p>
                         <p className="text-4xl font-bold tabular-nums text-primary">
-                          {scenario.actualProbability}%
+                          {Math.round(scenario.actualProbability)}%
                         </p>
                       </div>
                     </div>
@@ -631,9 +638,9 @@ const CalibrationAssessment = () => {
                           <div key={r.scenarioId} className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/30 border text-sm">
                             <span className="text-muted-foreground truncate flex-1 mr-3">{sc.category}</span>
                             <div className="flex items-center gap-4 shrink-0">
-                              <span className="tabular-nums text-foreground">{r.userProbability}%</span>
+                              <span className="tabular-nums text-foreground">{Math.round(r.userProbability)}%</span>
                               <span className="text-muted-foreground">→</span>
-                              <span className="tabular-nums text-primary">{r.actualProbability}%</span>
+                              <span className="tabular-nums text-primary">{Math.round(r.actualProbability)}%</span>
                               <span className={`text-xs font-medium w-20 text-right ${info.color}`}>{r.delta > 0 ? "+" : ""}{r.delta}pp</span>
                             </div>
                           </div>
@@ -694,6 +701,7 @@ const CalibrationAssessment = () => {
           </AnimatePresence>
         </div>
       </main>
+        </SectionErrorBoundary>
     </div>
   );
 };

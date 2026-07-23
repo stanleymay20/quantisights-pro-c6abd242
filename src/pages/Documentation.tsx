@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { BookOpen, Download, ChevronRight } from "lucide-react";
 import { DOC_SECTIONS, type DocSection } from "@/data/documentation-sections";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 /* ─── Downloadable section component ─── */
 const DocSectionCard = ({
@@ -31,7 +32,7 @@ const DocSectionCard = ({
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <section.icon className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-bold font-display">{section.title}</h2>
+          <h2 className="text-lg font-bold tracking-tight">{section.title}</h2>
         </div>
         <button
           onClick={handleDownload}
@@ -42,7 +43,7 @@ const DocSectionCard = ({
         </button>
       </div>
       <div className="prose prose-sm prose-invert max-w-none
-        prose-headings:font-display prose-headings:text-foreground
+        prose-headings:tracking-tight prose-headings:text-foreground
         prose-h2:text-base prose-h2:mt-0 prose-h2:mb-3
         prose-h3:text-sm prose-h3:mt-6 prose-h3:mb-2
         prose-p:text-muted-foreground prose-p:text-[13px] prose-p:leading-relaxed
@@ -84,12 +85,13 @@ const Documentation = () => {
   };
 
   return (
+    <SectionErrorBoundary sectionName="Documentation">
     <>
       <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <SidebarMobileToggle />
           <BookOpen className="w-5 h-5 text-primary" />
-          <h1 className="text-xl font-semibold font-display">Documentation</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight">Documentation</h1>
         </div>
         <button
           onClick={handleDownloadAll}
@@ -141,6 +143,7 @@ const Documentation = () => {
         </main>
       </div>
     </>
+    </SectionErrorBoundary>
   );
 };
 

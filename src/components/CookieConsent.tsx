@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Cookie, X, Shield } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -8,24 +9,43 @@ const CONSENT_KEY = "quantivis_cookie_consent";
 
 type ConsentChoice = "accepted" | "essential_only";
 
-const CookieConsent = () => {
+const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const isGerman = i18n.language?.startsWith("de");
 
   useEffect(() => {
+    // Never show cookie consent on the demo provisioning page
+    if (location.pathname === "/demo") return;
+    // E2E test bypass: Playwright/automation sets navigator.webdriver or test flag.
+    // Avoid showing the banner so it cannot intercept sign-out / interactive clicks.
+    const isAutomated =
+      (typeof navigator !== "undefined" && (navigator as Navigator & { webdriver?: boolean }).webdriver) ||
+      localStorage.getItem("quantivis_e2e_test") === "1";
+    if (isAutomated) {
+      if (!localStorage.getItem(CONSENT_KEY)) {
+        localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice: "essential_only", timestamp: new Date().toISOString(), automated: true }));
+      }
+      setVisible(false);
+      return;
+    }
     const stored = localStorage.getItem(CONSENT_KEY);
     const isDemo = sessionStorage.getItem("quantivis_demo_mode") === "true";
-    if (isDemo && !stored) {
-      localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice: "accepted", timestamp: new Date().toISOString() }));
+    if (isDemo) {
+      // Always auto-accept in demo mode — never show the dialog
+      if (!stored) {
+        localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice: "accepted", timestamp: new Date().toISOString() }));
+      }
+      setVisible(false);
       return;
     }
     if (!stored) {
       const timer = setTimeout(() => setVisible(true), 1500);
       return () => clearTimeout(timer);
     }
-  }, []);
+  }, [location.pathname]);
 
   const handleChoice = (choice: ConsentChoice) => {
     localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice, timestamp: new Date().toISOString() }));
@@ -37,7 +57,7 @@ const CookieConsent = () => {
 
   return (
     <div
-      className={`fixed bottom-0 left-0 right-0 z-[100] p-2 sm:p-4 md:p-6 pb-[env(safe-area-inset-bottom,8px)] transition-all duration-300 ease-out ${
+      className={`fixed bottom-4 left-4 right-4 z-[90] transition-all duration-300 ease-out ${
         exiting ? "translate-y-full opacity-0" : "translate-y-0 opacity-100 animate-[slide-up_0.4s_ease-out]"
       }`}
       style={{ "--slide-up-from": "100px" } as React.CSSProperties}
@@ -85,6 +105,8 @@ const CookieConsent = () => {
       </div>
     </div>
   );
-};
+});
+
+CookieConsent.displayName = "CookieConsent";
 
 export default CookieConsent;

@@ -77,7 +77,8 @@ const ShareModal = ({ open, onOpenChange, results }: ShareModalProps) => {
       link.href = canvas.toDataURL("image/png");
       link.click();
       toast.success("Scorecard downloaded");
-    } catch {
+    } catch (e: unknown) {
+      console.error("[ShareModal] Scorecard download failed:", e instanceof Error ? e.message : e);
       toast.error("Download failed — try a screenshot instead");
     }
   };

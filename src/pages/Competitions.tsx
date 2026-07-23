@@ -114,7 +114,7 @@ const Competitions = () => {
   const otherComps = COMPETITIONS.filter((c) => c.status !== "open");
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       {/* Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-2xl">
         <div className="container mx-auto flex items-center justify-between py-4 px-6">
@@ -141,7 +141,7 @@ const Competitions = () => {
                 <Trophy className="w-3.5 h-3.5" />
                 Competition Tracker
               </div>
-              <h1 className="text-3xl sm:text-5xl font-bold font-display leading-tight mb-4">
+              <h1 className="text-3xl sm:text-5xl font-bold tracking-tight leading-tight mb-4">
                 Startup Competitions &{" "}
                 <span className="gradient-text">Grants</span>
               </h1>
@@ -155,7 +155,7 @@ const Competitions = () => {
         {/* Open Competitions */}
         <section className="py-8 sm:py-12">
           <div className="container mx-auto px-6 max-w-4xl">
-            <h2 className="text-xl sm:text-2xl font-bold font-display mb-6 flex items-center gap-2">
+            <h2 className="text-xl sm:text-[18px] font-semibold tracking-tight tracking-tight mb-6 flex items-center gap-2">
               <Rocket className="w-5 h-5 text-primary" />
               Open Applications ({openComps.length})
             </h2>
@@ -170,7 +170,7 @@ const Competitions = () => {
         {/* Other Competitions */}
         <section className="py-8 sm:py-12 bg-muted/10">
           <div className="container mx-auto px-6 max-w-4xl">
-            <h2 className="text-xl sm:text-2xl font-bold font-display mb-6 flex items-center gap-2">
+            <h2 className="text-xl sm:text-[18px] font-semibold tracking-tight tracking-tight mb-6 flex items-center gap-2">
               <Calendar className="w-5 h-5 text-muted-foreground" />
               Closed / Upcoming ({otherComps.length})
             </h2>
@@ -186,7 +186,7 @@ const Competitions = () => {
         <section className="py-16 sm:py-20">
           <div className="container mx-auto px-6 max-w-2xl text-center">
             <Award className="w-10 h-10 text-primary mx-auto mb-4" />
-            <h2 className="text-2xl font-bold font-display mb-4">Competition-Ready Assets</h2>
+            <h2 className="text-[18px] font-semibold tracking-tight tracking-tight mb-4">Competition-Ready Assets</h2>
             <p className="text-muted-foreground mb-8">
               Everything you need to submit a winning application.
             </p>

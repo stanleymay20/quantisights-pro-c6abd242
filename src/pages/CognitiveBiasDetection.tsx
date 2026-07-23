@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { BrainCircuit, Loader2, AlertTriangle, Shield, Eye, EyeOff, Anchor, TrendingDown, CheckCircle2, Search } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface BiasDetection {
   bias_type: string;
@@ -52,14 +54,15 @@ const CognitiveBiasDetection = () => {
     if (!currentOrgId || !activeDatasetId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("cognitive-bias-detect", {
+      const { data, error } = await invokeWithRetry<BiasResult & { error?: string }>("cognitive-bias-detect", {
         body: { organization_id: currentOrgId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      setResult(data);
-    } catch (e: any) {
-      toast({ title: "Scan failed", description: e.message, variant: "destructive" });
+      if (data) setResult(data);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Scan failed";
+      toast({ title: "Scan failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -72,7 +75,7 @@ const CognitiveBiasDetection = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <BrainCircuit className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Cognitive Bias Detection</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Cognitive Bias Detection</h1>
             <Badge variant="outline" className="text-xs">Behavioral Analysis</Badge>
           </div>
           <Button onClick={runScan} disabled={loading} className="gap-2">
@@ -81,6 +84,7 @@ const CognitiveBiasDetection = () => {
           </Button>
         </header>
 
+        <SectionErrorBoundary sectionName="Cognitive Bias Detection">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {!result && !loading && (
             <Card className="border-dashed border-border/50">
@@ -90,11 +94,22 @@ const CognitiveBiasDetection = () => {
                 <p className="text-sm text-muted-foreground max-w-lg mx-auto">
                   Automatically detect <strong>anchoring</strong>, <strong>sunk cost fallacy</strong>, <strong>confirmation bias</strong>,
                   <strong> recency bias</strong>, and <strong>overconfidence</strong> in your organization's decision history.
-                  No competitor offers this level of behavioral analysis.
                 </p>
                 <Button onClick={runScan} disabled={loading} size="lg" className="gap-2">
                   <Search className="w-4 h-4" /> Analyze Decision Patterns
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {loading && (
+            <Card className="border-dashed border-border/50">
+              <CardContent className="p-12 text-center space-y-4">
+                <Loader2 className="w-10 h-10 text-primary mx-auto animate-spin" />
+                <h2 className="text-lg font-semibold">Scanning decision history…</h2>
+                <p className="text-sm text-muted-foreground max-w-lg mx-auto">
+                  Analyzing approval rates, confidence drift, and timing patterns across your decision ledger. This runs a full AI behavioral analysis and can take up to 30 seconds on larger histories.
+                </p>
               </CardContent>
             </Card>
           )}
@@ -159,7 +174,7 @@ const CognitiveBiasDetection = () => {
                               <div>
                                 <p className="font-semibold text-sm">{bias.bias_name}</p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                  Detection confidence: {bias.confidence}%
+                                  Detection confidence: {Math.round(bias.confidence)}%
                                 </p>
                               </div>
                             </div>
@@ -223,6 +238,7 @@ const CognitiveBiasDetection = () => {
             </>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

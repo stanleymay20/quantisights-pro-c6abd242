@@ -14,6 +14,25 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Shield, Key, FileText, Lock, Info, Copy, CheckCircle2, AlertTriangle,
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+
+// Schema-gap: sso_configs table exists in DB but is not in the auto-generated types.
+// Define a local interface until schema generation catches up.
+interface SSOConfigRow {
+  id: string;
+  organization_id: string;
+  provider_type: string;
+  idp_entity_id: string | null;
+  idp_sso_url: string | null;
+  idp_certificate: string | null;
+  idp_metadata_url: string | null;
+  attribute_mapping: Record<string, string> | null;
+  enforce_sso: boolean;
+  allowed_domains: string[] | null;
+  auto_provision: boolean;
+  deactivate_on_removal: boolean;
+  is_active: boolean;
+}
 
 const SSOConfig = () => {
   const { currentOrgId } = useOrganization();
@@ -36,7 +55,7 @@ const SSOConfig = () => {
   const [deactivateOnRemoval, setDeactivateOnRemoval] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [existingConfig, setExistingConfig] = useState<any>(null);
+  const [existingConfig, setExistingConfig] = useState<SSOConfigRow | null>(null);
 
   const spEntityId = `${window.location.origin}/auth/saml/${currentOrgId}`;
   const spAcsUrl = `${window.location.origin}/auth/saml/callback`;
@@ -48,14 +67,14 @@ const SSOConfig = () => {
     const load = async () => {
       setLoading(true);
       const { data } = await supabase
-        .from("sso_configs" as any)
+        .from("sso_configs")
         .select("*")
         .eq("organization_id", currentOrgId)
         .eq("provider_type", "saml")
         .maybeSingle();
       
       if (data) {
-        const d = data as any;
+        const d = data as unknown as SSOConfigRow;
         setExistingConfig(d);
         setSamlEnabled(d.is_active);
         setIdpEntityId(d.idp_entity_id || "");
@@ -66,7 +85,7 @@ const SSOConfig = () => {
         setAutoProvision(d.auto_provision);
         setDeactivateOnRemoval(d.deactivate_on_removal);
         setAllowedDomains((d.allowed_domains || []).join(", "));
-        if (d.attribute_mapping) setAttributeMapping(d.attribute_mapping);
+        if (d.attribute_mapping) setAttributeMapping(d.attribute_mapping as typeof attributeMapping);
       }
       setLoading(false);
     };
@@ -94,13 +113,13 @@ const SSOConfig = () => {
 
       if (existingConfig) {
         const { error } = await supabase
-          .from("sso_configs" as any)
+          .from("sso_configs")
           .update(payload)
           .eq("id", existingConfig.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
-          .from("sso_configs" as any)
+          .from("sso_configs")
           .insert(payload);
         if (error) throw error;
       }
@@ -116,8 +135,8 @@ const SSOConfig = () => {
       });
 
       toast({ title: "SSO Configuration Saved", description: samlEnabled ? "SAML SSO is now active." : "Configuration saved (SSO inactive)." });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -137,11 +156,12 @@ const SSOConfig = () => {
   }
 
   return (
+    <SectionErrorBoundary sectionName="SSO Config">
     <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center gap-3">
         <SidebarMobileToggle />
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-[18px] font-semibold tracking-tight flex items-center gap-2">
             <Shield className="w-6 h-6 text-primary" />
             SSO / SAML Configuration
           </h1>
@@ -368,6 +388,7 @@ const SSOConfig = () => {
         </TabsContent>
       </Tabs>
     </div>
+    </SectionErrorBoundary>
   );
 };
 

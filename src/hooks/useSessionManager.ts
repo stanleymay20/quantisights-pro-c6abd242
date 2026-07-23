@@ -4,6 +4,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useAuthEvents } from "@/hooks/useAuthEvents";
 import { useCallback, useEffect } from "react";
+import type { Database } from "@/integrations/supabase/types";
+
+type UserSessionRow = Database["public"]["Tables"]["user_sessions"]["Row"];
 
 export interface UserSession {
   id: string;
@@ -11,7 +14,7 @@ export interface UserSession {
   device_name: string | null;
   ip_address: string | null;
   user_agent: string | null;
-  last_active_at: string;
+  last_active_at: string | null;
   created_at: string;
   revoked_at: string | null;
   revoked_by: string | null;
@@ -37,6 +40,20 @@ function parseBrowser(ua: string | null): string {
   return "Other";
 }
 
+function toUserSession(row: UserSessionRow): UserSession {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    device_name: row.device_name,
+    ip_address: row.ip_address,
+    user_agent: row.user_agent,
+    last_active_at: row.last_active_at,
+    created_at: row.created_at,
+    revoked_at: row.revoked_at,
+    revoked_by: row.revoked_by,
+  };
+}
+
 export function useSessionManager() {
   const { user } = useAuth();
   const { currentOrgId } = useOrganization();
@@ -47,9 +64,8 @@ export function useSessionManager() {
   useEffect(() => {
     if (!user?.id || !currentOrgId) return;
     const upsertSession = async () => {
-      // Check for existing active session
       const { data: existing } = await supabase
-        .from("user_sessions" as any)
+        .from("user_sessions")
         .select("id")
         .eq("user_id", user.id)
         .eq("user_agent", navigator.userAgent)
@@ -57,13 +73,13 @@ export function useSessionManager() {
         .order("created_at", { ascending: false })
         .limit(1);
 
-      if (existing && (existing as any[]).length > 0) {
+      if (existing && existing.length > 0) {
         await supabase
-          .from("user_sessions" as any)
+          .from("user_sessions")
           .update({ last_active_at: new Date().toISOString() })
-          .eq("id", (existing as any[])[0].id);
+          .eq("id", existing[0].id);
       } else {
-        await supabase.from("user_sessions" as any).insert({
+        await supabase.from("user_sessions").insert({
           user_id: user.id,
           organization_id: currentOrgId,
           user_agent: navigator.userAgent,
@@ -79,26 +95,26 @@ export function useSessionManager() {
     if (!user?.id) return;
     const interval = setInterval(async () => {
       await supabase
-        .from("user_sessions" as any)
+        .from("user_sessions")
         .update({ last_active_at: new Date().toISOString() })
         .eq("user_id", user.id)
         .eq("user_agent", navigator.userAgent)
         .is("revoked_at", null);
-    }, 5 * 60 * 1000); // every 5 minutes
+    }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [user?.id]);
 
-  // Fetch all sessions (for admin view or user's own)
+  // Fetch all sessions
   const { data: sessions = [], isLoading } = useQuery({
     queryKey: ["user-sessions", currentOrgId],
     queryFn: async () => {
       if (!currentOrgId) return [];
       const { data } = await supabase
-        .from("user_sessions" as any)
+        .from("user_sessions")
         .select("*")
         .eq("organization_id", currentOrgId)
         .order("last_active_at", { ascending: false });
-      return (data as unknown as UserSession[]) ?? [];
+      return (data ?? []).map(toUserSession);
     },
     enabled: !!user?.id && !!currentOrgId,
     refetchInterval: 30000,
@@ -107,7 +123,7 @@ export function useSessionManager() {
   const revokeSession = useMutation({
     mutationFn: async (sessionId: string) => {
       await supabase
-        .from("user_sessions" as any)
+        .from("user_sessions")
         .update({ revoked_at: new Date().toISOString(), revoked_by: user?.id })
         .eq("id", sessionId);
       logAuthEvent({
@@ -121,18 +137,17 @@ export function useSessionManager() {
   const revokeAllOtherSessions = useMutation({
     mutationFn: async () => {
       if (!user?.id) return;
-      // Revoke all sessions except current user agent
       const { data: otherSessions } = await supabase
-        .from("user_sessions" as any)
+        .from("user_sessions")
         .select("id")
         .eq("user_id", user.id)
         .is("revoked_at", null)
         .neq("user_agent", navigator.userAgent);
 
       if (otherSessions) {
-        for (const s of otherSessions as any[]) {
+        for (const s of otherSessions) {
           await supabase
-            .from("user_sessions" as any)
+            .from("user_sessions")
             .update({ revoked_at: new Date().toISOString(), revoked_by: user.id })
             .eq("id", s.id);
         }

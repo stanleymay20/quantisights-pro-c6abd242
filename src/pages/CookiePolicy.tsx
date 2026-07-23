@@ -3,14 +3,14 @@ import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
 
 const CookiePolicy = () => (
-  <div className="min-h-screen bg-background">
+  <div className="min-h-dvh bg-background flex flex-col">
     <header className="border-b border-border/30 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
       <div className="container mx-auto px-6 h-14 flex items-center">
         <Link to="/"><img src={logo} alt="Quantivis Global" className="h-8" /></Link>
       </div>
     </header>
-    <main className="container mx-auto px-6 py-16 max-w-3xl">
-      <h1 className="text-3xl font-bold font-display mb-2">Cookie Policy</h1>
+    <main className="flex-1 container mx-auto px-6 py-16 max-w-3xl">
+      <h1 className="text-3xl font-bold tracking-tight mb-2">Cookie Policy</h1>
       <p className="text-muted-foreground text-sm mb-10">Last updated: February 25, 2026</p>
 
       <div className="prose prose-sm prose-invert max-w-none space-y-6 text-foreground/90 text-sm leading-relaxed">

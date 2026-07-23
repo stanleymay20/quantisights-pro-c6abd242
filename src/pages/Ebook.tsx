@@ -393,7 +393,7 @@ const Ebook = () => {
   const progress = Math.round((activeChapter / chapters.length) * 100);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-dvh bg-background flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-border/60 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="flex items-center justify-between px-4 py-3 max-w-7xl mx-auto">
@@ -517,7 +517,7 @@ const Ebook = () => {
             <div className="space-y-10">
               {currentChapter.sections.map((section, idx) => (
                 <section key={idx}>
-                  <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+                  <h3 className="text-[14px] font-semibold text-foreground mb-4 flex items-center gap-2">
                     <span className="w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold flex items-center justify-center shrink-0">
                       {idx + 1}
                     </span>

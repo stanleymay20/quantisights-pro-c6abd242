@@ -1,0 +1,114 @@
+# Quantivis Enterprise Release Certification
+
+Audience: CTO / CISO / Compliance / Enterprise Procurement
+
+## 1. Release decision
+
+- **Decision**: BLOCKED
+- **Recommendation**: Hold — blocked (hold)
+- **Readiness score**: 0 / 100
+- **Commit**: ec1-smoke
+- **Environment**: preview
+- **Evaluated at**: 2026-07-01T06:45:02.210Z
+
+## 2. Risk summary
+
+- Critical issues: 0
+- Total blocking items: 37
+- Warnings: 1
+
+## 3. Outstanding blockers
+
+| Gate | Pipeline | Status | Reason |
+|---|---|---|---|
+| authentication | authentication | FRAMEWORK_INVALID | FRAMEWORK_INVALID |
+| authentication | mfa | FRAMEWORK_INVALID | evidence artifact missing |
+| authentication | oauth | FRAMEWORK_INVALID | evidence artifact missing |
+| authentication | session-recovery | FRAMEWORK_INVALID | evidence artifact missing |
+| authorization | protected-routes | FRAMEWORK_INVALID | evidence artifact missing |
+| authorization | user-management | FRAMEWORK_INVALID | evidence artifact missing |
+| authorization | organization-management | FRAMEWORK_INVALID | evidence artifact missing |
+| authorization | settings | FRAMEWORK_INVALID | evidence artifact missing |
+| tenant_isolation | tenant-isolation | FRAMEWORK_INVALID | evidence artifact missing |
+| tenant_isolation | edge-functions | FRAMEWORK_INVALID | evidence artifact missing |
+| tenant_isolation | realtime | FRAMEWORK_INVALID | evidence artifact missing |
+| decision_pipeline | decision-creation | FRAMEWORK_INVALID | evidence artifact missing |
+| decision_pipeline | decision-editing | FRAMEWORK_INVALID | evidence artifact missing |
+| decision_pipeline | decision-approval | FRAMEWORK_INVALID | evidence artifact missing |
+| decision_pipeline | decision-rejection | FRAMEWORK_INVALID | evidence artifact missing |
+| decision_pipeline | decision-ledger | FRAMEWORK_INVALID | evidence artifact missing |
+| evidence_pipeline | evidence-attachment | FRAMEWORK_INVALID | evidence artifact missing |
+| evidence_pipeline | evidence-retrieval | FRAMEWORK_INVALID | evidence artifact missing |
+| evidence_pipeline | evidence-export | FRAMEWORK_INVALID | evidence artifact missing |
+| governance | governance-workflow | FRAMEWORK_INVALID | evidence artifact missing |
+| governance | confidence-scoring | FRAMEWORK_INVALID | evidence artifact missing |
+| ai | ai-recommendation | FRAMEWORK_INVALID | evidence artifact missing |
+| ai | ai-explanation | FRAMEWORK_INVALID | evidence artifact missing |
+| audit | audit-trail | FRAMEWORK_INVALID | evidence artifact missing |
+| reports | reports | FRAMEWORK_INVALID | evidence artifact missing |
+| reports | executive-exports | FRAMEWORK_INVALID | evidence artifact missing |
+| notifications | notifications | FRAMEWORK_INVALID | evidence artifact missing |
+| billing | billing | FRAMEWORK_INVALID | evidence artifact missing |
+| billing | credits | FRAMEWORK_INVALID | evidence artifact missing |
+| scalability | dashboard-loading | FRAMEWORK_INVALID | evidence artifact missing |
+| scalability | background-jobs | FRAMEWORK_INVALID | evidence artifact missing |
+| recovery | recovery | FRAMEWORK_INVALID | evidence artifact missing |
+| recovery | rollback | FRAMEWORK_INVALID | evidence artifact missing |
+| system_health | system-health | FRAMEWORK_INVALID | evidence artifact missing |
+| system_health | search | FRAMEWORK_INVALID | evidence artifact missing |
+| system_health | data-import | FRAMEWORK_INVALID | evidence artifact missing |
+| system_health | dataset-versioning | FRAMEWORK_INVALID | evidence artifact missing |
+
+## 4. Gate results
+
+| Gate | Weight | Status | Pipelines | Blocking |
+|---|---:|---|---|---:|
+| Authentication | 10 | BLOCKED ✗ | authentication:FRAMEWORK_INVALID<br/>mfa:FRAMEWORK_INVALID<br/>oauth:FRAMEWORK_INVALID<br/>session-recovery:FRAMEWORK_INVALID | yes |
+| Authorization | 10 | BLOCKED ✗ | protected-routes:FRAMEWORK_INVALID<br/>user-management:FRAMEWORK_INVALID<br/>organization-management:FRAMEWORK_INVALID<br/>settings:FRAMEWORK_INVALID | yes |
+| Tenant Isolation | 15 | BLOCKED ✗ | tenant-isolation:FRAMEWORK_INVALID<br/>edge-functions:FRAMEWORK_INVALID<br/>realtime:FRAMEWORK_INVALID | yes |
+| Decision Pipeline | 10 | BLOCKED ✗ | decision-creation:FRAMEWORK_INVALID<br/>decision-editing:FRAMEWORK_INVALID<br/>decision-approval:FRAMEWORK_INVALID<br/>decision-rejection:FRAMEWORK_INVALID<br/>decision-ledger:FRAMEWORK_INVALID | yes |
+| Evidence Pipeline | 10 | BLOCKED ✗ | evidence-attachment:FRAMEWORK_INVALID<br/>evidence-retrieval:FRAMEWORK_INVALID<br/>evidence-export:FRAMEWORK_INVALID | yes |
+| Governance | 10 | BLOCKED ✗ | governance-workflow:FRAMEWORK_INVALID<br/>confidence-scoring:FRAMEWORK_INVALID | yes |
+| AI Pipeline | 10 | BLOCKED ✗ | ai-recommendation:FRAMEWORK_INVALID<br/>ai-explanation:FRAMEWORK_INVALID | yes |
+| Audit | 0 | BLOCKED ✗ | audit-trail:FRAMEWORK_INVALID | yes |
+| Reports | 5 | BLOCKED ✗ | reports:FRAMEWORK_INVALID<br/>executive-exports:FRAMEWORK_INVALID | yes |
+| Notifications | 0 | BLOCKED ✗ | notifications:FRAMEWORK_INVALID | yes |
+| Billing | 0 | BLOCKED ✗ | billing:FRAMEWORK_INVALID<br/>credits:FRAMEWORK_INVALID | yes |
+| Scalability | 10 | BLOCKED ✗ | dashboard-loading:FRAMEWORK_INVALID<br/>background-jobs:FRAMEWORK_INVALID | yes |
+| Recovery | 10 | BLOCKED ✗ | recovery:FRAMEWORK_INVALID<br/>rollback:FRAMEWORK_INVALID | yes |
+| System Health | 10 | BLOCKED ✗ | system-health:FRAMEWORK_INVALID<br/>search:FRAMEWORK_INVALID<br/>data-import:FRAMEWORK_INVALID<br/>dataset-versioning:FRAMEWORK_INVALID | yes |
+
+## 5. Evidence coverage
+
+- Pipelines evaluated: 37
+- Pipelines with evidence artifact on disk: 1
+- Coverage: 3%
+
+## 6. Readiness score breakdown
+
+| Gate | Weight | Factor | Contribution |
+|---|---:|---:|---:|
+| authentication | 10 | 0.00 | 0.00 |
+| authorization | 10 | 0.00 | 0.00 |
+| tenant_isolation | 15 | 0.00 | 0.00 |
+| decision_pipeline | 10 | 0.00 | 0.00 |
+| evidence_pipeline | 10 | 0.00 | 0.00 |
+| governance | 10 | 0.00 | 0.00 |
+| ai | 10 | 0.00 | 0.00 |
+| audit | 0 | 0.00 | 0.00 |
+| reports | 5 | 0.00 | 0.00 |
+| notifications | 0 | 0.00 | 0.00 |
+| billing | 0 | 0.00 | 0.00 |
+| scalability | 10 | 0.00 | 0.00 |
+| recovery | 10 | 0.00 | 0.00 |
+| system_health | 10 | 0.00 | 0.00 |
+
+**Total**: 0 / 100
+
+## 7. Governance
+
+- Certification produced by `tests/evidence/eval-gate.mjs`.
+- Inputs: `audit-artifacts/<YYYY-MM-DD>/<pipeline>/evidence.json`.
+- Rules: `docs/enterprise/RELEASE_GATE.md` + `tests/evidence/lib/gates.mjs`.
+- Taxonomy: `tests/evidence/lib/taxonomy.mjs`.
+- Historical trend appended to `audit-artifacts/history.json`.

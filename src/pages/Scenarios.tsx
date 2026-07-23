@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
@@ -22,6 +23,7 @@ import {
   ResponsiveContainer, CartesianGrid, Legend, Area
 } from "recharts";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Scenario {
   id: string;
@@ -219,16 +221,17 @@ const Scenarios = () => {
     }
     setSimulating(true);
     try {
-      const { data, error } = await supabase.functions.invoke("simulate-scenario", {
+      const { data, error } = await invokeWithRetry<any>("simulate-scenario", {
         body: { scenario_id: selectedId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      toast({ title: `Simulation complete: ${data.projected_values} projections computed` });
+      if (data?.error) throw new Error(String(data.error));
+      toast({ title: `Simulation complete: ${data?.projected_values} projections computed` });
       fetchDetails(selectedId);
       fetchScenarios();
-    } catch (e: any) {
-      toast({ title: "Simulation failed", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Simulation failed";
+      toast({ title: "Simulation failed", description: msg, variant: "destructive" });
     } finally {
       setSimulating(false);
     }
@@ -238,14 +241,15 @@ const Scenarios = () => {
     if (!selectedId || !canUseAI || !activeDatasetId) return;
     setAnalyzing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-scenario-analysis", {
+      const { data, error } = await invokeWithRetry<any>("ai-scenario-analysis", {
         body: { scenario_id: selectedId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setAnalysis(data.analysis);
-    } catch (e: any) {
-      toast({ title: "AI analysis failed", description: e.message, variant: "destructive" });
+      if (data?.error) throw new Error(String(data.error));
+      setAnalysis(data?.analysis as AIAnalysis);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "AI analysis failed";
+      toast({ title: "AI analysis failed", description: msg, variant: "destructive" });
     } finally {
       setAnalyzing(false);
     }
@@ -324,7 +328,7 @@ const Scenarios = () => {
           <div className="flex items-center gap-4">
             <SidebarMobileToggle />
             <Shuffle className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Scenario Simulation</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Scenario Simulation</h1>
             {!canSimulate && (
               <Badge variant="outline" className="text-xs text-warning border-warning/30">Growth+ Required</Badge>
             )}
@@ -337,7 +341,7 @@ const Scenarios = () => {
             </DialogTrigger>
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
-                <DialogTitle className="font-display">Create Scenario</DialogTitle>
+                <DialogTitle className="tracking-tight">Create Scenario</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2">
                 <div>
@@ -364,11 +368,12 @@ const Scenarios = () => {
           </Dialog>
         </header>
 
+        <SectionErrorBoundary sectionName="Scenario Simulation">
         <main className="flex-1 p-8 overflow-auto">
           {!canSimulate ? (
             <div className="glass-card p-12 rounded-xl flex flex-col items-center justify-center min-h-[400px]">
               <Shuffle className="w-16 h-16 text-muted-foreground mb-4" />
-              <h2 className="text-xl font-semibold font-display mb-2">Strategic Simulation</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight mb-2">Strategic Simulation</h2>
               <p className="text-muted-foreground text-sm text-center max-w-md">
                 Model what-if scenarios and project KPI outcomes. Upgrade to Growth or Enterprise to unlock simulation capabilities.
               </p>
@@ -427,7 +432,7 @@ const Scenarios = () => {
                     <div className="glass-card p-6 rounded-xl">
                       <div className="flex items-center justify-between mb-4">
                         <div>
-                          <h2 className="text-lg font-semibold font-display">{selectedScenario.name}</h2>
+                          <h2 className="text-lg font-semibold tracking-tight">{selectedScenario.name}</h2>
                           {selectedScenario.description && (
                             <p className="text-sm text-muted-foreground mt-1">{selectedScenario.description}</p>
                           )}
@@ -492,19 +497,19 @@ const Scenarios = () => {
                       <div className="grid grid-cols-3 gap-3">
                         <div className="glass-card p-4 rounded-xl text-center">
                           <p className="text-xs text-muted-foreground mb-1">Total Delta</p>
-                          <p className={`text-xl font-bold font-display ${totalDelta >= 0 ? "text-success" : "text-destructive"}`}>
+                          <p className={`text-xl font-bold tracking-tight ${totalDelta >= 0 ? "text-success" : "text-destructive"}`}>
                             {totalDelta >= 0 ? "+" : ""}{totalDelta.toFixed(0)}
                           </p>
                         </div>
                         <div className="glass-card p-4 rounded-xl text-center">
                           <p className="text-xs text-muted-foreground mb-1">Change</p>
-                          <p className={`text-xl font-bold font-display ${pctChange >= 0 ? "text-success" : "text-destructive"}`}>
+                          <p className={`text-xl font-bold tracking-tight ${pctChange >= 0 ? "text-success" : "text-destructive"}`}>
                             {pctChange >= 0 ? "+" : ""}{pctChange.toFixed(1)}%
                           </p>
                         </div>
                         <div className="glass-card p-4 rounded-xl text-center">
                           <p className="text-xs text-muted-foreground mb-1">Data Points</p>
-                          <p className="text-xl font-bold font-display">{results.length}</p>
+                          <p className="text-xl font-bold tracking-tight">{results.length}</p>
                         </div>
                       </div>
                     )}
@@ -630,7 +635,7 @@ const Scenarios = () => {
                 ) : (
                   <div className="glass-card p-12 rounded-xl flex flex-col items-center justify-center min-h-[400px]">
                     <Shuffle className="w-16 h-16 text-muted-foreground mb-4" />
-                    <h2 className="text-xl font-semibold font-display mb-2">Strategic Decision Laboratory</h2>
+                    <h2 className="text-[16px] font-semibold tracking-tight mb-2">Strategic Decision Laboratory</h2>
                     <p className="text-muted-foreground text-sm text-center max-w-md">
                       Model what-if scenarios, adjust metric drivers, and project KPI outcomes to support data-driven strategic decisions.
                     </p>
@@ -640,6 +645,7 @@ const Scenarios = () => {
             </div>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

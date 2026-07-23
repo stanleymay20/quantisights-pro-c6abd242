@@ -81,7 +81,7 @@ serve(async (req) => {
 
           results.push({ org: sub.organization_id, role, status: "ok" });
         } catch (e) {
-          results.push({ org: sub.organization_id, role, status: "error", error: e.message });
+          results.push({ org: sub.organization_id, role, status: "error", error: (e instanceof Error ? e.message : String(e)) });
         }
       }
     }
@@ -93,7 +93,7 @@ serve(async (req) => {
     });
   } catch (err) {
     console.error("weekly-executive-brief error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: (err instanceof Error ? err.message : String(err)) }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

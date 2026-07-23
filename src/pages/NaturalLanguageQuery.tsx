@@ -7,8 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { MessageSquare, Loader2, Sparkles, ArrowRight, Database, HelpCircle } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface QueryResult {
   answer: string;
@@ -44,16 +46,17 @@ const NaturalLanguageQuery = () => {
     if (!currentOrgId || !datasetId || !queryText.trim()) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("nlq-query", {
+      const { data, error } = await invokeWithRetry<QueryResult & { error?: string }>("nlq-query", {
         body: { organization_id: currentOrgId, dataset_id: datasetId, query: queryText },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
-      setHistory(prev => [{ query: queryText, result: data, timestamp: new Date() }, ...prev]);
+      if (data) setHistory(prev => [{ query: queryText, result: data, timestamp: new Date() }, ...prev]);
       setQuery("");
-    } catch (e: any) {
-      toast({ title: "Query failed", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Query failed";
+      toast({ title: "Query failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -69,11 +72,12 @@ const NaturalLanguageQuery = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <MessageSquare className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Ask Quantivis</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Ask Quantivis</h1>
             <Badge variant="outline" className="text-xs">Natural Language Query</Badge>
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="Natural Language Query">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {/* Query Input */}
           <Card className="border-primary/20">
@@ -126,7 +130,7 @@ const NaturalLanguageQuery = () => {
                   </p>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className={`text-xs ${confidenceColor(item.result.confidence)}`}>
-                      {item.result.confidence}% confidence
+                      {Math.round(item.result.confidence)}% confidence
                     </Badge>
                     <span className="text-[10px] text-muted-foreground">
                       {item.timestamp.toLocaleTimeString()}
@@ -181,6 +185,7 @@ const NaturalLanguageQuery = () => {
             </Card>
           ))}
         </main>
+        </SectionErrorBoundary>
       </>
     </DatasetRequired>
   );

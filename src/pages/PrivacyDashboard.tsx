@@ -7,12 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import {
   Shield, Download, MapPin, Database, Eye, Lock, Server,
   FileText, Clock, Loader2, CheckCircle2, AlertTriangle,
 } from "lucide-react";
 import { CONTACT } from "@/lib/contact-config";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface DataSummary {
   datasets: number;
@@ -56,13 +58,15 @@ const PrivacyDashboard = () => {
     if (!currentOrgId) return;
     setExporting(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const res = await supabase.functions.invoke("data-export", {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const { data: res, error: resErr } = await invokeWithRetry<any>("data-export", {
         body: { organization_id: currentOrgId, format: "csv" },
       });
-      if (res.error) throw res.error;
+      if (resErr) throw resErr;
       toast({ title: "Export initiated", description: "Your data export is being prepared. You'll receive it shortly." });
-    } catch {
+    } catch (e: unknown) {
+      console.error("[PrivacyDashboard] Data export failed:", e instanceof Error ? e.message : e);
       toast({ title: "Export failed", description: "Please try again or contact support.", variant: "destructive" });
     } finally {
       setExporting(false);
@@ -99,10 +103,11 @@ const PrivacyDashboard = () => {
 
   return (
     <div className="space-y-8 max-w-5xl pb-12">
+      <SectionErrorBoundary sectionName="Privacy Dashboard">
       <div className="flex items-center gap-3">
         <SidebarMobileToggle />
         <div>
-          <h1 className="text-2xl font-bold font-display">Privacy Dashboard</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight">Privacy Dashboard</h1>
           <p className="text-sm text-muted-foreground">See what data we store, where it lives, and export or delete it.</p>
         </div>
       </div>
@@ -158,7 +163,7 @@ const PrivacyDashboard = () => {
                       <Icon className="w-3.5 h-3.5 text-muted-foreground" />
                       <span className="text-xs font-medium text-foreground">{label}</span>
                     </div>
-                    <p className="text-xl font-bold font-display text-foreground">{count.toLocaleString()}</p>
+                    <p className="text-xl font-bold tracking-tight text-foreground">{count.toLocaleString()}</p>
                     <p className="text-[10px] text-muted-foreground/60 mt-1 flex items-center gap-1">
                       <Clock className="w-2.5 h-2.5" /> {retention}
                     </p>
@@ -219,6 +224,7 @@ const PrivacyDashboard = () => {
           </CardContent>
         </Card>
       </motion.div>
+      </SectionErrorBoundary>
     </div>
   );
 };

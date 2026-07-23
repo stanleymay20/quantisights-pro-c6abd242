@@ -5,6 +5,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { captureError } from "@/lib/sentry";
 
 interface ErrorReport {
   message: string;
@@ -30,6 +31,15 @@ export function reportError(report: ErrorReport): void {
   // Always log structured to console
   console.error(`[ErrorReporter:${report.severity}]`, enriched.message, enriched);
 
+  // Forward to Sentry (no-op if DSN not configured)
+  try {
+    captureError(new Error(report.message), {
+      severity: report.severity,
+      context: report.context,
+      stack: report.stack,
+    });
+  } catch { /* Sentry should never crash the app */ }
+
   // Queue for batch flush
   ERROR_QUEUE.push(report);
 
@@ -47,14 +57,16 @@ async function flushErrors(): Promise<void> {
   const batch = ERROR_QUEUE.splice(0, 10); // Max 10 per flush
 
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return; // Can't log without auth
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return; // Can't log without auth
+    if (!session) return;
 
     // Resolve actual org_id from user profile
     const { data: profile } = await supabase
       .from("profiles")
       .select("organization_id")
-      .eq("user_id", session.user.id)
+      .eq("user_id", user.id)
       .single();
 
     const orgId = profile?.organization_id;
@@ -67,7 +79,7 @@ async function flushErrors(): Promise<void> {
         action_type: "client_error",
         resource_type: "frontend",
         actor_type: "system",
-        actor_id: session.user.id,
+        actor_id: user.id,
         payload: JSON.parse(JSON.stringify({
           message: err.message,
           severity: err.severity,

@@ -3,7 +3,7 @@ import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Responsive
 import { Target } from "lucide-react";
 
 interface Props {
-  decisions: any[];
+  decisions: Array<{ confidence?: number; outcome_success?: boolean | null; [key: string]: unknown }>;
 }
 
 const CalibrationCurve = ({ decisions }: Props) => {

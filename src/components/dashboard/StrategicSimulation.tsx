@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 
 interface SimulationResult {
   baseline_risk: number;
@@ -107,7 +108,7 @@ const StrategicSimulation = ({ organizationId, datasetId, roleType, tier }: Prop
     setLoading(true);
     setResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke("strategic-simulation", {
+      const { data, error } = await invokeWithRetry<SimulationResult>("strategic-simulation", {
         body: {
           organization_id: organizationId,
           dataset_id: datasetId,
@@ -122,10 +123,11 @@ const StrategicSimulation = ({ organizationId, datasetId, roleType, tier }: Prop
         },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setResult(data);
-    } catch (err: any) {
-      toast({ title: "Simulation Error", description: err.message, variant: "destructive" });
+      const rawData = data as unknown as Record<string, unknown> | null;
+      if (rawData?.error) throw new Error(String(rawData.error));
+      if (data) setResult(data);
+    } catch (err: unknown) {
+      toast({ title: "Simulation Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -251,7 +253,7 @@ const StrategicSimulation = ({ organizationId, datasetId, roleType, tier }: Prop
             <Card className="border-dashed border-2 border-muted-foreground/20">
               <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
                 <Activity className="w-12 h-12 text-muted-foreground/50" />
-                <h3 className="text-lg font-semibold">Strategic Simulation Engine</h3>
+                <h3 className="text-[14px] font-semibold">Strategic Simulation Engine</h3>
                 <p className="text-sm text-muted-foreground text-center max-w-md">
                   Adjust scenario parameters and run a simulation to see projected risk shifts, KPI impacts, and board-ready strategic assessments.
                 </p>
@@ -343,7 +345,7 @@ const StrategicSimulation = ({ organizationId, datasetId, roleType, tier }: Prop
                                 : "bg-muted text-muted-foreground border-none"
                             }
                           >
-                            {kpi.delta_percent > 0 ? "+" : ""}{kpi.delta_percent}%
+                            {kpi.delta_percent > 0 ? "+" : ""}{Math.round(kpi.delta_percent)}%
                           </Badge>
                         </div>
                       ))}

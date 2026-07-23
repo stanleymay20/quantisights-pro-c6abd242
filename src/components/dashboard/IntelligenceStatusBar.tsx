@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, Clock, Lightbulb, Shield } from "lucide-react";
 import type { Insight } from "@/hooks/useInsights";
+import { countCriticalSignals } from "@/lib/insight-filters";
 
 interface IntelligenceStatusBarProps {
   hasData: boolean;
@@ -29,7 +30,7 @@ function formatFreshness(iso: string): string {
 const IntelligenceStatusBar = ({ hasData, insights, openAdvisories = 0, riskLevel, lastUpdated }: IntelligenceStatusBarProps) => {
   if (!hasData) return null;
 
-  const signals = insights.filter(i => i.severity === "high" || i.severity === "medium").length;
+  const signals = countCriticalSignals(insights);
   const infoCount = insights.filter(i => i.severity === "info" || i.severity === "low").length;
 
   const computedRisk = riskLevel || (signals >= 3 ? "high" : signals >= 1 ? "elevated" : infoCount > 0 ? "moderate" : "low");

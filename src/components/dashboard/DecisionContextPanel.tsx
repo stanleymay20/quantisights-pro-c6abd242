@@ -69,8 +69,8 @@ const DecisionContextPanel = memo(({
         setForm({ name: "", decision_type: "general", description: "", objective: "", industry: "" });
         toast({ title: "Decision context created" });
       }
-    } catch (err: any) {
-      toast({ title: "Failed to create context", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Failed to create context", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setCreating(false);
     }
@@ -229,8 +229,8 @@ const DecisionContextPanel = memo(({
                       await onArchiveContext(activeContext.id);
                       onContextChange(null);
                       toast({ title: "Context archived" });
-                    } catch (err: any) {
-                      toast({ title: "Archive failed", description: err.message, variant: "destructive" });
+                    } catch (err: unknown) {
+                      toast({ title: "Archive failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
                     }
                   }}
                 >

@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Crosshair, AlertTriangle, TrendingUp, Shield, ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
+import { filterCriticalInsights } from "@/lib/insight-filters";
 import type { Insight } from "@/hooks/useInsights";
 import type { MetricTypeSummary } from "@/hooks/useMetrics";
 
@@ -15,7 +16,7 @@ interface BoardroomBriefProps {
 /** Boardroom Brief — 3-5 line executive summary distilling the entire system state */
 const BoardroomBrief = memo(({ insights, pendingDecisions, calibrationScore, topMetrics }: BoardroomBriefProps) => {
   const brief = useMemo(() => {
-    const critical = insights.filter(i => i.severity === "high");
+    const critical = filterCriticalInsights(insights);
     const medium = insights.filter(i => i.severity === "medium");
     const totalSignals = critical.length + medium.length;
 
@@ -89,7 +90,7 @@ const BoardroomBrief = memo(({ insights, pendingDecisions, calibrationScore, top
             <Crosshair className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold font-display">Boardroom Brief</h2>
+            <h2 className="text-sm font-semibold tracking-tight">Boardroom Brief</h2>
             <p className="text-[10px] text-muted-foreground">Closed-Loop Decision Operating System</p>
           </div>
         </div>

@@ -1,0 +1,225 @@
+[
+  {
+    "contradiction_id": "contradiction-520565aa",
+    "source_a": "sap",
+    "source_b": "warehouse",
+    "field": "inventory_count",
+    "value_a": 250,
+    "value_b": 143,
+    "severity": "high",
+    "detected_at": "2026-07-05T12:00:00.000Z",
+    "evidence_references": [
+      "evidence:evt-inv-001",
+      "evidence:evt-inv-002"
+    ],
+    "confidence": 93,
+    "possible_causes": [
+      "Inventory synchronization lag",
+      "Delayed replication",
+      "Manual adjustment pending"
+    ],
+    "recommended_action": "Do not generate replenishment or production-planning decision until contradiction is resolved.",
+    "explanation": "inventory contradiction detected for inventory_count: sap reported 250 while warehouse reported 143.",
+    "decision_impact": {
+      "blocks_decision": true,
+      "affected_decision_types": [
+        "replenishment",
+        "production_planning"
+      ],
+      "rationale": "Inventory inconsistency exceeds enterprise tolerance for replenishment or production planning."
+    },
+    "resolution": {
+      "status": "open"
+    },
+    "category": "inventory",
+    "lineage": {
+      "raw_events": [
+        "evt-inv-001",
+        "evt-inv-002"
+      ],
+      "signals": [
+        "signal_tenant-a_sap_6581c30f",
+        "signal_tenant-a_warehouse_7537135c"
+      ]
+    }
+  },
+  {
+    "contradiction_id": "contradiction-c37016d4",
+    "source_a": "sap",
+    "source_b": "warehouse",
+    "field": "description",
+    "value_a": "SAP inventory position.",
+    "value_b": "Warehouse scanner inventory position.",
+    "severity": "low",
+    "detected_at": "2026-07-05T12:00:00.000Z",
+    "evidence_references": [
+      "evidence:evt-inv-001",
+      "evidence:evt-inv-002"
+    ],
+    "confidence": 91,
+    "possible_causes": [
+      "Inventory synchronization lag",
+      "Delayed replication",
+      "Manual adjustment pending"
+    ],
+    "recommended_action": "Record contradiction for review before fact promotion.",
+    "explanation": "inventory contradiction detected for description: sap reported SAP inventory position. while warehouse reported Warehouse scanner inventory position..",
+    "decision_impact": {
+      "blocks_decision": false,
+      "affected_decision_types": [
+        "replenishment",
+        "production_planning"
+      ],
+      "rationale": "Inventory inconsistency exceeds enterprise tolerance for replenishment or production planning."
+    },
+    "resolution": {
+      "status": "open"
+    },
+    "category": "inventory",
+    "lineage": {
+      "raw_events": [
+        "evt-inv-001",
+        "evt-inv-002"
+      ],
+      "signals": [
+        "signal_tenant-a_sap_6581c30f",
+        "signal_tenant-a_warehouse_7537135c"
+      ]
+    }
+  },
+  {
+    "contradiction_id": "contradiction-23226d66",
+    "source_a": "ops-system-a",
+    "source_b": "ops-system-b",
+    "field": "description",
+    "value_a": "Operational process state from system A.",
+    "value_b": "Operational process state from system B.",
+    "severity": "medium",
+    "detected_at": "2026-07-05T12:00:00.000Z",
+    "evidence_references": [
+      "evidence:evt-ops-001",
+      "evidence:evt-ops-002"
+    ],
+    "confidence": 86,
+    "possible_causes": [
+      "Source synchronization issue",
+      "Late-arriving event",
+      "Manual update pending"
+    ],
+    "recommended_action": "Record contradiction for review before fact promotion.",
+    "explanation": "operational contradiction detected for description: ops-system-a reported Operational process state from system A. while ops-system-b reported Operational process state from system B..",
+    "decision_impact": {
+      "blocks_decision": false,
+      "affected_decision_types": [
+        "operational_decision"
+      ],
+      "rationale": "Contradiction should be reviewed before verified fact promotion."
+    },
+    "resolution": {
+      "status": "accepted",
+      "resolved_by": "rts-1g-evidence-harness",
+      "resolved_at": "2026-07-05T12:00:00.000Z",
+      "resolution_note": "Accepted for NORMAL policy evidence scenario."
+    },
+    "category": "operational",
+    "lineage": {
+      "raw_events": [
+        "evt-ops-001",
+        "evt-ops-002"
+      ],
+      "signals": [
+        "signal_tenant-a_ops-system-a_fe8037e3",
+        "signal_tenant-a_ops-system-b_5f5aa22c"
+      ]
+    }
+  },
+  {
+    "contradiction_id": "contradiction-70d38381",
+    "source_a": "ops-system-a",
+    "source_b": "ops-system-b",
+    "field": "process_state",
+    "value_a": "delayed",
+    "value_b": "blocked",
+    "severity": "medium",
+    "detected_at": "2026-07-05T12:00:00.000Z",
+    "evidence_references": [
+      "evidence:evt-ops-001",
+      "evidence:evt-ops-002"
+    ],
+    "confidence": 86,
+    "possible_causes": [
+      "Source synchronization issue",
+      "Late-arriving event",
+      "Manual update pending"
+    ],
+    "recommended_action": "Record contradiction for review before fact promotion.",
+    "explanation": "operational contradiction detected for process_state: ops-system-a reported delayed while ops-system-b reported blocked.",
+    "decision_impact": {
+      "blocks_decision": false,
+      "affected_decision_types": [
+        "operational_decision"
+      ],
+      "rationale": "Contradiction should be reviewed before verified fact promotion."
+    },
+    "resolution": {
+      "status": "accepted",
+      "resolved_by": "rts-1g-evidence-harness",
+      "resolved_at": "2026-07-05T12:00:00.000Z",
+      "resolution_note": "Accepted for NORMAL policy evidence scenario."
+    },
+    "category": "operational",
+    "lineage": {
+      "raw_events": [
+        "evt-ops-001",
+        "evt-ops-002"
+      ],
+      "signals": [
+        "signal_tenant-a_ops-system-a_fe8037e3",
+        "signal_tenant-a_ops-system-b_5f5aa22c"
+      ]
+    }
+  },
+  {
+    "contradiction_id": "contradiction-a09026c1",
+    "source_a": "erp",
+    "source_b": "erp",
+    "field": "tenant_organization_boundary",
+    "value_a": "tenant-a/org-a",
+    "value_b": "tenant-b/org-b",
+    "severity": "critical",
+    "detected_at": "2026-07-05T12:00:00.000Z",
+    "evidence_references": [
+      "evidence:evt-boundary-001",
+      "evidence:evt-boundary-002"
+    ],
+    "confidence": 83,
+    "possible_causes": [
+      "Cross-tenant data mix",
+      "Incorrect organization routing",
+      "Connector authorization boundary failure"
+    ],
+    "recommended_action": "Block decision processing and investigate tenant and organization boundary configuration.",
+    "explanation": "Critical identity contradiction detected because the compared signals belong to different tenant or organization boundaries.",
+    "decision_impact": {
+      "blocks_decision": true,
+      "affected_decision_types": [
+        "all"
+      ],
+      "rationale": "Cross-tenant or cross-organization evidence must never influence an enterprise decision."
+    },
+    "resolution": {
+      "status": "open"
+    },
+    "category": "identity",
+    "lineage": {
+      "raw_events": [
+        "evt-boundary-001",
+        "evt-boundary-002"
+      ],
+      "signals": [
+        "signal_tenant-a_erp_1c3b9eb7",
+        "signal_tenant-b_erp_b67cb3dc"
+      ]
+    }
+  }
+]

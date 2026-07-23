@@ -12,6 +12,7 @@ import {
   Building2, Users, AlertTriangle, TrendingUp, TrendingDown,
   ChevronRight, Loader2, Shield, Activity, BarChart3, Minus,
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface OrgSummary {
   id: string;
@@ -120,11 +121,12 @@ const Clients = () => {
   const totalMembers = orgSummaries.reduce((s, o) => s + o.memberCount, 0);
 
   return (
+    <SectionErrorBoundary sectionName="Clients">
     <>
         <header className="h-14 border-b border-border/30 flex items-center px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Client Portfolio</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Client Portfolio</h1>
           </div>
         </header>
 
@@ -266,7 +268,7 @@ const Clients = () => {
                   <Card className="border-dashed border-2">
                     <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
                       <Building2 className="w-12 h-12 text-muted-foreground" />
-                      <h2 className="text-xl font-semibold">No Organizations</h2>
+                      <h2 className="text-[16px] font-semibold">No Organizations</h2>
                       <p className="text-muted-foreground text-center max-w-md">
                         You're not a member of any organizations yet. Create one or accept an invitation to get started.
                       </p>
@@ -278,6 +280,7 @@ const Clients = () => {
           </div>
         </main>
     </>
+    </SectionErrorBoundary>
   );
 };
 

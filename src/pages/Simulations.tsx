@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
@@ -13,6 +14,7 @@ import { toast } from "@/hooks/use-toast";
 import { Activity, TrendingUp, TrendingDown, Shield, Info, Loader2, BarChart3 } from "lucide-react";
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 const Simulations = () => {
   const { currentOrgId: organizationId } = useOrganization();
@@ -64,7 +66,7 @@ const Simulations = () => {
         throw new Error("Select a metric type first.");
       }
 
-      const { data, error } = await supabase.functions.invoke("monte-carlo-sim", {
+      const { data, error } = await invokeWithRetry<any>("monte-carlo-sim", {
         body: {
           organization_id: organizationId,
           dataset_id: activeDatasetId,
@@ -74,7 +76,7 @@ const Simulations = () => {
         },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) throw new Error(String(data.error));
       return data;
     },
     onSuccess: () => {
@@ -89,8 +91,9 @@ const Simulations = () => {
   const latest = simulations?.[0];
 
   return (
-    <DatasetRequired moduleName="Simulations">
-    <main className="flex-1 overflow-y-auto">
+    <DatasetRequired moduleName="Simulations" moduleDescription="Run what-if scenarios on your operational data — model the impact of price changes, headcount shifts, or supply chain disruptions before committing.">
+    <SectionErrorBoundary sectionName="Monte Carlo Simulations">
+        <main className="flex-1 overflow-y-auto">
         <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-lg border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
@@ -148,9 +151,13 @@ const Simulations = () => {
           {/* Latest result summary */}
           {latest && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* median_value, not expected_value (the arithmetic mean): GBM output is
+                  log-normal/right-skewed, so the mean can legitimately fall outside the
+                  P10-P90 band for volatile metrics. The median is the P50 percentile of
+                  the same sorted path array, so it is always bounded by P10 and P90. */}
               <StatCard
                 label="Expected Value"
-                value={fmt(latest.expected_value)}
+                value={fmt(latest.median_value)}
                 icon={<TrendingUp className="w-4 h-4 text-primary" />}
               />
               <StatCard
@@ -165,7 +172,7 @@ const Simulations = () => {
               />
               <StatCard
                 label="Prob. of Decline"
-                value={`${latest.probability_negative}%`}
+                value={`${Math.round(latest.probability_negative)}%`}
                 icon={<Shield className="w-4 h-4 text-muted-foreground" />}
               />
             </div>
@@ -179,13 +186,13 @@ const Simulations = () => {
                 <Tooltip>
                   <TooltipTrigger>
                     <Badge variant={latest.data_sufficiency === "robust" ? "default" : "secondary"} className="text-xs">
-                      Confidence: {latest.capped_confidence}%
+                      Confidence: {Math.round(latest.capped_confidence)}%
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs text-xs">
-                    <p>Raw: {latest.raw_confidence}% → Capped: {latest.capped_confidence}%</p>
+                    <p>Raw: {Math.round(latest.raw_confidence)}% → Capped: {Math.round(latest.capped_confidence)}%</p>
                     <p>{latest.confidence_cap_reason}</p>
-                    <p>Sample size: {latest.sample_size} | Variance: {latest.variance_score}%</p>
+                    <p>Sample size: {latest.sample_size} | Variance: {Math.round(latest.variance_score)}%</p>
                   </TooltipContent>
                 </Tooltip>
               </CardHeader>
@@ -233,12 +240,12 @@ const Simulations = () => {
                         <tr key={s.id} className="border-b border-border/50 hover:bg-muted/30">
                           <td className="py-2.5 pr-4 font-medium">{s.metric_type.replace(/_/g, " ")}</td>
                           <td className="text-right px-2">{s.forecast_horizon}mo</td>
-                          <td className="text-right px-2 font-mono">{fmt(s.expected_value)}</td>
+                          <td className="text-right px-2 font-mono">{fmt(s.median_value)}</td>
                           <td className="text-right px-2 font-mono text-destructive">{fmt(s.p10_value)}</td>
                           <td className="text-right px-2 font-mono text-primary">{fmt(s.p90_value)}</td>
-                          <td className="text-right px-2">{s.probability_negative}%</td>
+                          <td className="text-right px-2">{Math.round(s.probability_negative)}%</td>
                           <td className="text-right px-2">
-                            <Badge variant="outline" className="text-xs">{s.capped_confidence}%</Badge>
+                            <Badge variant="outline" className="text-xs">{Math.round(s.capped_confidence)}%</Badge>
                           </td>
                           <td className="text-right pl-2 text-muted-foreground text-xs">
                             {new Date(s.created_at).toLocaleDateString()}
@@ -253,6 +260,7 @@ const Simulations = () => {
           </Card>
         </div>
     </main>
+        </SectionErrorBoundary>
     </DatasetRequired>
   );
 };
@@ -284,7 +292,6 @@ function DistributionBand({ sim }: { sim: any }) {
   const p25 = Math.max(0, Math.min(100, pos(Number(sim.p25_value))));
   const median = Math.max(0, Math.min(100, pos(Number(sim.median_value))));
   const p75 = Math.max(0, Math.min(100, pos(Number(sim.p75_value))));
-  const expected = Math.max(0, Math.min(100, pos(Number(sim.expected_value))));
 
   return (
     <div className="space-y-2">
@@ -298,8 +305,6 @@ function DistributionBand({ sim }: { sim: any }) {
         />
         {/* Median line */}
         <div className="absolute top-0 bottom-0 w-0.5 bg-foreground/70" style={{ left: `${median}%` }} />
-        {/* Expected marker */}
-        <div className="absolute top-0 bottom-0 w-0.5 bg-primary border-dashed" style={{ left: `${expected}%` }} />
       </div>
       <div className="flex justify-between text-xs text-muted-foreground font-mono">
         <span>P10: {fmt(sim.p10_value)}</span>

@@ -9,7 +9,7 @@ const SLA = () => {
   const lastUpdated = "March 2026";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background flex flex-col">
       {/* Header */}
       <header className="border-b border-border/40 bg-card/50 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -25,7 +25,7 @@ const SLA = () => {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-10">
+      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-10">
         {/* Title */}
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-2">Service Level Agreement</h1>
@@ -38,18 +38,19 @@ const SLA = () => {
 
         {/* Uptime Guarantee */}
         <section className="space-y-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-[16px] font-semibold flex items-center gap-2">
             <Shield className="w-5 h-5 text-primary" /> Uptime Guarantee
           </h2>
           <Card className="border border-border/50">
             <CardContent className="py-5 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Platform Availability Target</span>
-                <Badge className="bg-success/10 text-success border-success/20 text-lg px-3 py-1">99.9%</Badge>
+                <Badge className="bg-success/10 text-success border-success/20 text-lg px-3 py-1">99.9% target</Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Quantivis guarantees 99.9% monthly uptime for all core services, measured as the percentage of
-                minutes during the month that the platform API and dashboard are available and responsive.
+                A 99.9% monthly availability target is contractually committed for eligible enterprise customers
+                only when incorporated into the applicable Order Form. Measurement covers the platform API and
+                dashboard under the terms and exclusions below.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[
@@ -82,7 +83,7 @@ const SLA = () => {
 
         {/* Incident Response */}
         <section className="space-y-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-[16px] font-semibold flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-warning" /> Incident Response Plan
           </h2>
 
@@ -178,7 +179,7 @@ const SLA = () => {
 
         {/* Disaster Recovery */}
         <section className="space-y-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-[16px] font-semibold flex items-center gap-2">
             <Clock className="w-5 h-5 text-primary" /> Disaster Recovery & Rollback
           </h2>
           <Card className="border border-border/50">
@@ -225,7 +226,7 @@ const SLA = () => {
 
         {/* Monitoring */}
         <section className="space-y-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-[16px] font-semibold flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" /> Monitoring & Observability
           </h2>
           <Card className="border border-border/50">
@@ -252,7 +253,7 @@ const SLA = () => {
 
         {/* Contact */}
         <section className="space-y-4">
-          <h2 className="text-xl font-semibold">Incident Reporting</h2>
+          <h2 className="text-[16px] font-semibold">Incident Reporting</h2>
           <Card className="border border-border/50">
             <CardContent className="py-5">
               <p className="text-sm text-muted-foreground mb-4">

@@ -28,7 +28,35 @@ Deno.serve(async (req) => {
     // Admin client for inserting into restricted tables
     const admin = createClient(supabaseUrl, serviceKey);
 
-    // Update org metadata
+    // ─── Guard: demo seeding is only allowed on demo-owned organizations ───
+    // Prevents silent corruption of real customer workspaces (rename, industry,
+    // revenue/size-band overwrite). Real users who want a sandbox should create
+    // a separate demo workspace via the /demo flow.
+    const { data: org, error: orgFetchErr } = await admin
+      .from("organizations")
+      .select("created_by")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (orgFetchErr || !org?.created_by) {
+      return new Response(
+        JSON.stringify({ error: "Organization not found." }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { data: ownerData, error: ownerErr } = await admin.auth.admin.getUserById(org.created_by);
+    const ownerIsDemo = Boolean(ownerData?.user?.user_metadata?.is_demo);
+    if (ownerErr || !ownerIsDemo) {
+      return new Response(
+        JSON.stringify({
+          error: "Demo seeding is only allowed for demo organizations.",
+          hint: "Create a sandbox via the Try Demo flow to explore sample data without altering your real workspace.",
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Demo-only: refresh org metadata (safe — caller is a demo user)
     await admin.from("organizations").update({
       name: "Meridian Analytics Inc.",
       industry: "SaaS / B2B Software",
@@ -349,6 +377,69 @@ Deno.serve(async (req) => {
     ];
     await admin.from("advisory_instances").insert(advisories);
 
+    // ─── 7. AICIS Intelligence Items (demo signals across domains) ───
+    await admin.from("aicis_intelligence_items").delete().eq("organization_id", orgId).eq("source_surface", "demo_seed");
+    const intelDomains = [
+      { domain: "regulatory", severity: "high", urgency: "high", title: "EU AI Act enforcement guidance updated", summary: "Article 6 high-risk classifications now require quarterly bias audits effective Q2.", geography: ["EU", "DE"], crit: 82 },
+      { domain: "market", severity: "high", urgency: "normal", title: "Mid-market SaaS churn rising 14% QoQ", summary: "Benchmark cohort shows accelerated churn in 50-200 employee segment, driven by tooling consolidation.", geography: ["US"], crit: 74 },
+      { domain: "competitive", severity: "critical", urgency: "high", title: "Primary competitor announces governed AI tier", summary: "Direct overlap with our positioning; pricing 22% below current tier.", geography: ["US", "EU"], crit: 88 },
+      { domain: "operational", severity: "high", urgency: "high", title: "Customer success ticket backlog at SLA breach", summary: "P2 backlog grew 38% in 14 days; auto-escalation rules not firing for enterprise accounts.", geography: ["US"], crit: 79 },
+      { domain: "financial", severity: "medium", urgency: "normal", title: "FX exposure on EUR receivables widening", summary: "Hedging coverage at 41%; below 60% policy floor.", geography: ["EU"], crit: 58 },
+      { domain: "regulatory", severity: "medium", urgency: "normal", title: "DSGVO subprocessor disclosure window narrows", summary: "Updated guidance shortens notification window from 30 to 14 days for material subprocessor changes.", geography: ["DE", "EU"], crit: 62 },
+      { domain: "market", severity: "high", urgency: "high", title: "Enterprise procurement freeze signals in Q4 RFPs", summary: "Cycle length extended 23 days median; legal review now blocking 4 of 7 active deals.", geography: ["US"], crit: 76 },
+      { domain: "operational", severity: "critical", urgency: "immediate", title: "Production deployment regression in EU region", summary: "Latency p95 doubled post-deploy; rollback partial; 3 enterprise customers affected.", geography: ["EU"], crit: 91 },
+      { domain: "competitive", severity: "medium", urgency: "normal", title: "Adjacent vendor acquires governance startup", summary: "Likely 6-9 month integration window; opportunity to consolidate evaluations.", geography: ["US"], crit: 55 },
+      { domain: "financial", severity: "high", urgency: "high", title: "CAC payback extending past 16 months", summary: "Mid-market segment CAC payback breached 16-month threshold; LTV/CAC degrading.", geography: ["US"], crit: 77 },
+      { domain: "regulatory", severity: "high", urgency: "high", title: "NIST AI RMF alignment gaps flagged in audit", summary: "GOVERN-1.1 and MAP-2.3 controls require documented evidence linkage.", geography: ["US"], crit: 80 },
+      { domain: "operational", severity: "medium", urgency: "normal", title: "Internal data quality regression on KPI rollups", summary: "Aggregation job missed 2 of last 7 runs; downstream KPI freshness degraded.", geography: ["US", "EU"], crit: 60 },
+    ];
+    const intelRows = intelDomains.map((d, i) => ({
+      organization_id: orgId,
+      source_surface: "demo_seed",
+      source_ref: `demo-${i + 1}`,
+      content_hash: `demo-${orgId.slice(0, 8)}-${i + 1}`,
+      severity: d.severity,
+      urgency: d.urgency,
+      domain: d.domain,
+      geography: d.geography,
+      entities: [],
+      payload: { demo: true },
+      title: d.title,
+      summary: d.summary,
+      global_criticality_score: d.crit,
+      occurred_at: new Date(Date.now() - (i + 1) * 6 * 3600_000).toISOString(),
+      ingested_at: new Date(Date.now() - (i + 1) * 6 * 3600_000).toISOString(),
+    }));
+    await admin.from("aicis_intelligence_items").insert(intelRows);
+
+    // ─── 8. Chain downstream pipeline (best-effort; reports per-step result) ───
+    const pipeline: Array<{ step: string; ok: boolean; status: number; error?: string }> = [];
+    const chain = [
+      "executive-brief-generator",
+      "narrative-fusion-engine",
+      "intervention-priority-engine",
+      "build-operational-graph",
+      "compute-graph-topology",
+      "compress-graph-attention",
+    ];
+    for (const fn of chain) {
+      try {
+        const r = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({ organization_id: orgId }),
+        });
+        const txt = await r.text();
+        pipeline.push({ step: fn, ok: r.ok, status: r.status, error: r.ok ? undefined : txt.slice(0, 200) });
+      } catch (e) {
+        pipeline.push({ step: fn, ok: false, status: 0, error: String(e).slice(0, 200) });
+      }
+    }
+
     return new Response(JSON.stringify({
       success: true,
       summary: {
@@ -359,6 +450,8 @@ Deno.serve(async (req) => {
         decisions: decisions.length,
         simulations: sims.length,
         advisories: advisories.length,
+        intelligence_items: intelRows.length,
+        pipeline,
       },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -370,3 +463,4 @@ Deno.serve(async (req) => {
     });
   }
 });
+

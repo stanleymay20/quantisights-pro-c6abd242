@@ -166,7 +166,7 @@ serve(async (req) => {
     // ══════════════════════════════════════════════════════════════════
     // FETCH ALL CONTEXT IN PARALLEL — including ACTUAL dataset metrics
     // ══════════════════════════════════════════════════════════════════
-    const fetchPromises: Promise<any>[] = [
+    const fetchPromises: Array<PromiseLike<any>> = [
       // 0: Risk index
       serviceClient
         .from("executive_risk_index")
@@ -464,6 +464,7 @@ When stating confidence levels, apply these learned corrections.`);
     const reader = aiResponse.body!.getReader();
     const decoder = new TextDecoder();
     let fullContent = "";
+    let textBuffer = "";
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -472,9 +473,14 @@ When stating confidence levels, apply these learned corrections.`);
             const { done, value } = await reader.read();
             if (done) break;
             controller.enqueue(value);
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
-            for (const line of lines) {
+            textBuffer += decoder.decode(value, { stream: true });
+
+            // Buffer across chunk boundaries — only consume complete lines.
+            let nl: number;
+            while ((nl = textBuffer.indexOf("\n")) !== -1) {
+              let line = textBuffer.slice(0, nl);
+              textBuffer = textBuffer.slice(nl + 1);
+              if (line.endsWith("\r")) line = line.slice(0, -1);
               if (!line.startsWith("data: ")) continue;
               const jsonStr = line.slice(6).trim();
               if (jsonStr === "[DONE]") continue;
@@ -482,7 +488,7 @@ When stating confidence levels, apply these learned corrections.`);
                 const parsed = JSON.parse(jsonStr);
                 const content = parsed.choices?.[0]?.delta?.content;
                 if (content) fullContent += content;
-              } catch { /* partial chunk */ }
+              } catch { /* partial / non-JSON line */ }
             }
           }
           controller.close();

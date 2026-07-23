@@ -25,20 +25,31 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
   const [loading, setLoading] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(true);
+  const [checkError, setCheckError] = useState(false);
 
-  // Check MFA status on mount
+  // Check MFA status — exposed standalone so the error-state Retry button can call it
+  const loadMfaStatus = async () => {
+    setChecking(true);
+    setCheckError(false);
+    try {
+      const { data } = await supabase.auth.mfa.listFactors();
+      const verified = data?.totp?.filter((f) => f.status === "verified") || [];
+      setMfaEnabled(verified.length > 0);
+    } catch (e: unknown) {
+      // On error, leave mfaEnabled as null (unknown) and surface an explicit
+      // retry state — never assume MFA is disabled, which could mask an
+      // active MFA enrollment and prompt the user to "set up" something
+      // that's already protecting their account.
+      console.error("[MFAEnroll] Factor check failed:", e instanceof Error ? e.message : e);
+      setMfaEnabled(null);
+      setCheckError(true);
+    } finally {
+      setChecking(false);
+    }
+  };
+
   useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase.auth.mfa.listFactors();
-        const verified = data?.totp?.filter((f) => f.status === "verified") || [];
-        setMfaEnabled(verified.length > 0);
-      } catch {
-        setMfaEnabled(false);
-      } finally {
-        setChecking(false);
-      }
-    })();
+    loadMfaStatus();
   }, []);
 
   const startEnrollment = async () => {
@@ -55,8 +66,8 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       setSecret(data.totp.secret);
       setFactorId(data.id);
       setStep("enrolling");
-    } catch (err: any) {
-      toast({ title: "Enrollment failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Enrollment failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -81,8 +92,8 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       setMfaEnabled(true);
       onStatusChange?.();
       toast({ title: "2FA Enabled", description: "Two-factor authentication is now active on your account." });
-    } catch (err: any) {
-      toast({ title: "Verification failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Verification failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -100,8 +111,8 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       setStep("idle");
       onStatusChange?.();
       toast({ title: "2FA Disabled", description: "Two-factor authentication has been removed." });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -112,6 +123,27 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       <Card>
         <CardContent className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (checkError) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-muted-foreground" />
+            Two-Factor Authentication (TOTP)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            We couldn't verify your 2FA status right now. If you previously enabled 2FA, it's still active — this is just a connectivity issue with this check.
+          </p>
+          <Button variant="outline" size="sm" onClick={loadMfaStatus} className="gap-2">
+            Retry
+          </Button>
         </CardContent>
       </Card>
     );

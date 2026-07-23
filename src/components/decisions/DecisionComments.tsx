@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { createSafeChannel } from "@/lib/realtime-channel";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { Button } from "@/components/ui/button";
@@ -44,21 +45,19 @@ const DecisionComments = ({ decisionId }: DecisionCommentsProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     fetchComments();
     fetchTeamMembers();
 
-    const channel = supabase
-      .channel(`comments-${decisionId}`)
-      .on("postgres_changes", {
+    return createSafeChannel(`comments-${decisionId}`, (channel) =>
+      channel.on("postgres_changes", {
         event: "*",
         schema: "public",
         table: "decision_comments",
         filter: `decision_id=eq.${decisionId}`,
       }, () => fetchComments())
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+      .subscribe()
+    );
   }, [decisionId, currentOrgId]);
 
   const fetchComments = async () => {
@@ -117,8 +116,8 @@ const DecisionComments = ({ decisionId }: DecisionCommentsProps) => {
           description: "They'll see this in their activity feed.",
         });
       }
-    } catch (err: any) {
-      toast({ title: "Failed to post comment", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Failed to post comment", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }

@@ -7,11 +7,13 @@ import { Progress } from "@/components/ui/progress";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import {
   BarChart3, TrendingUp, TrendingDown, Minus, Loader2, Building2, Target, Award, RefreshCw,
 } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface BenchmarkScore {
   id: string;
@@ -138,7 +140,7 @@ const BenchmarkingPage = () => {
       let successCount = 0;
 
       for (const kpi of compatibleKpis) {
-        const { data: result, error } = await supabase.functions.invoke("compute-kpi", {
+        const { data: result, error } = await invokeWithRetry<Record<string, unknown>>("compute-kpi", {
           body: { kpi_id: kpi.id, dataset_id: activeDatasetId },
         });
 
@@ -173,8 +175,8 @@ const BenchmarkingPage = () => {
         .limit(50);
 
       if (data) setScores(data as unknown as BenchmarkScore[]);
-    } catch (err: any) {
-      toast({ title: "Computation failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Computation failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setComputing(false);
     }
@@ -188,11 +190,12 @@ const BenchmarkingPage = () => {
 
   return (
     <DatasetRequired moduleName="Benchmarking">
+    <SectionErrorBoundary sectionName="Benchmarking">
     <>
         <header className="h-14 border-b border-border/30 flex items-center justify-between px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Industry Benchmarking</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Industry Benchmarking</h1>
             <p className="text-xs text-muted-foreground">
               Peer comparison & percentile ranking
               {orgIndustry && <span> — {orgIndustry}</span>}
@@ -213,12 +216,9 @@ const BenchmarkingPage = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
               <CardContent className="p-4 flex items-center gap-4">
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <BarChart3 className="w-5 h-5 text-primary" />
-                </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Avg Percentile</p>
-                  <p className="text-2xl font-bold">{avgPercentile !== null ? `P${avgPercentile}` : "—"}</p>
+                  <p className="text-[18px] font-semibold tracking-tight">{avgPercentile !== null ? `P${avgPercentile}` : "—"}</p>
                 </div>
               </CardContent>
             </Card>
@@ -229,7 +229,7 @@ const BenchmarkingPage = () => {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Top Quartile KPIs</p>
-                  <p className="text-2xl font-bold">{topQuartileCount} / {scores.length}</p>
+                  <p className="text-[18px] font-semibold tracking-tight">{topQuartileCount} / {scores.length}</p>
                 </div>
               </CardContent>
             </Card>
@@ -255,7 +255,7 @@ const BenchmarkingPage = () => {
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
                   <Target className="w-7 h-7 text-primary" />
                 </div>
-                <h2 className="text-lg font-semibold font-display">No Benchmark Data Yet</h2>
+                <h2 className="text-lg font-semibold tracking-tight">No Benchmark Data Yet</h2>
                 <p className="text-muted-foreground text-sm text-center max-w-md leading-relaxed">
                   Industry benchmarks will be computed as your data volume grows and industry classification is configured. 
                   Ensure your organization's industry is set in Settings.
@@ -282,7 +282,7 @@ const BenchmarkingPage = () => {
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className="text-2xl font-bold">P{Math.round(sc.percentile_rank)}</p>
+                            <p className="text-[18px] font-semibold tracking-tight">P{Math.round(sc.percentile_rank)}</p>
                             <p className="text-xs text-muted-foreground">percentile</p>
                           </div>
                         </div>
@@ -325,6 +325,7 @@ const BenchmarkingPage = () => {
           )}
         </main>
     </>
+    </SectionErrorBoundary>
     </DatasetRequired>
   );
 };

@@ -1,6 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import type { Database } from "@/integrations/supabase/types";
+
+type OrgIdentityRow = Database["public"]["Tables"]["organizational_identity"]["Row"];
+type OrgIdentityInsert = Database["public"]["Tables"]["organizational_identity"]["Insert"];
+type OrgIdentityUpdate = Database["public"]["Tables"]["organizational_identity"]["Update"];
 
 export interface OrganizationalIdentity {
   id: string;
@@ -50,45 +55,27 @@ export interface IdentityUpdateInput {
   key_stakeholders?: StakeholderEntry[];
 }
 
-const DEFAULTS: Omit<OrganizationalIdentity, "id" | "organization_id" | "updated_at"> = {
-  vision_statement: null,
-  mission_statement: null,
-  core_values: [],
-  strategic_priorities: [],
-  risk_appetite: "moderate",
-  innovation_posture: "balanced",
-  decision_speed_preference: "balanced",
-  stakeholder_orientation: "balanced",
-  decision_principles: [],
-  ethical_boundaries: [],
-  governance_model: "collaborative",
-  competitive_position: null,
-  regulatory_environment: null,
-  market_stage: "growth",
-  industry_context: null,
-  key_stakeholders: [],
-};
-
-function parseIdentity(row: any): OrganizationalIdentity {
+function parseIdentity(row: OrgIdentityRow): OrganizationalIdentity {
+  const asArr = (v: unknown): string[] => (Array.isArray(v) ? v : []);
   return {
     id: row.id,
     organization_id: row.organization_id,
     vision_statement: row.vision_statement,
     mission_statement: row.mission_statement,
-    core_values: Array.isArray(row.core_values) ? row.core_values : [],
-    strategic_priorities: Array.isArray(row.strategic_priorities) ? row.strategic_priorities : [],
-    risk_appetite: row.risk_appetite ?? "moderate",
-    innovation_posture: row.innovation_posture ?? "balanced",
-    decision_speed_preference: row.decision_speed_preference ?? "balanced",
-    stakeholder_orientation: row.stakeholder_orientation ?? "balanced",
-    decision_principles: Array.isArray(row.decision_principles) ? row.decision_principles : [],
-    ethical_boundaries: Array.isArray(row.ethical_boundaries) ? row.ethical_boundaries : [],
-    governance_model: row.governance_model ?? "collaborative",
+    core_values: asArr(row.core_values),
+    strategic_priorities: asArr(row.strategic_priorities),
+    risk_appetite: (row.risk_appetite as OrganizationalIdentity["risk_appetite"]) ?? "moderate",
+    innovation_posture: (row.innovation_posture as OrganizationalIdentity["innovation_posture"]) ?? "balanced",
+    decision_speed_preference: (row.decision_speed_preference as OrganizationalIdentity["decision_speed_preference"]) ?? "balanced",
+    stakeholder_orientation: (row.stakeholder_orientation as OrganizationalIdentity["stakeholder_orientation"]) ?? "balanced",
+    decision_principles: asArr(row.decision_principles),
+    ethical_boundaries: asArr(row.ethical_boundaries),
+    governance_model: (row.governance_model as OrganizationalIdentity["governance_model"]) ?? "collaborative",
     competitive_position: row.competitive_position,
     regulatory_environment: row.regulatory_environment,
-    market_stage: row.market_stage ?? "growth",
+    market_stage: (row.market_stage as OrganizationalIdentity["market_stage"]) ?? "growth",
     industry_context: row.industry_context,
-    key_stakeholders: Array.isArray(row.key_stakeholders) ? row.key_stakeholders : [],
+    key_stakeholders: (Array.isArray(row.key_stakeholders) ? row.key_stakeholders : []) as unknown as StakeholderEntry[],
     updated_at: row.updated_at,
   };
 }
@@ -105,7 +92,7 @@ export const useOrganizationalIdentity = (organizationId: string | null) => {
       return;
     }
     setLoading(true);
-    const { data, error } = await (supabase as any)
+    const { data, error } = await supabase
       .from("organizational_identity")
       .select("*")
       .eq("organization_id", organizationId)
@@ -128,22 +115,37 @@ export const useOrganizationalIdentity = (organizationId: string | null) => {
       setSaving(true);
 
       try {
+        // Serialize complex fields to Json-compatible types
+        const dbUpdates: Record<string, unknown> = { ...updates, updated_by: user.id };
+        if (updates.key_stakeholders) {
+          dbUpdates.key_stakeholders = JSON.parse(JSON.stringify(updates.key_stakeholders));
+        }
+        if (updates.core_values) {
+          dbUpdates.core_values = JSON.parse(JSON.stringify(updates.core_values));
+        }
+        if (updates.strategic_priorities) {
+          dbUpdates.strategic_priorities = JSON.parse(JSON.stringify(updates.strategic_priorities));
+        }
+        if (updates.decision_principles) {
+          dbUpdates.decision_principles = JSON.parse(JSON.stringify(updates.decision_principles));
+        }
+        if (updates.ethical_boundaries) {
+          dbUpdates.ethical_boundaries = JSON.parse(JSON.stringify(updates.ethical_boundaries));
+        }
+
         if (identity) {
-          // Update existing
-          const { error } = await (supabase as any)
+          const { error } = await supabase
             .from("organizational_identity")
-            .update({ ...updates, updated_by: user.id })
+            .update(dbUpdates as OrgIdentityUpdate)
             .eq("organization_id", organizationId);
           if (error) throw error;
         } else {
-          // Insert new
-          const { error } = await (supabase as any)
+          const { error } = await supabase
             .from("organizational_identity")
-            .insert({
+            .insert([{
               organization_id: organizationId,
-              ...updates,
-              updated_by: user.id,
-            });
+              ...dbUpdates,
+            } as OrgIdentityInsert]);
           if (error) throw error;
         }
         await fetchIdentity();
@@ -154,7 +156,6 @@ export const useOrganizationalIdentity = (organizationId: string | null) => {
     [organizationId, user, identity, fetchIdentity]
   );
 
-  /** Computed alignment score: how complete is the identity profile? */
   const completenessScore = identity
     ? computeCompleteness(identity)
     : 0;
@@ -178,10 +179,6 @@ function computeCompleteness(id: OrganizationalIdentity): number {
   return Math.round((checks.filter(Boolean).length / checks.length) * 100);
 }
 
-/**
- * Derives a mission-alignment relevance label for a decision.
- * Used by the decision engine to score alignment.
- */
 export function assessMissionAlignment(
   identity: OrganizationalIdentity,
   decisionType: string,

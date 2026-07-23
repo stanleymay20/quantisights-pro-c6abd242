@@ -38,7 +38,10 @@ const StewardDrillDown = () => {
           .from("datasets")
           .select("id, name, uploaded_by, steward_user_id")
           .eq("organization_id", currentOrgId)
-          .eq("status", "active"),
+          // "completed" is what the standard CSV upload flow writes on
+          // success; "active" is only written by the demo seed and
+          // API-ingest paths. Both mean "usable dataset."
+          .in("status", ["active", "completed"]),
         supabase
           .from("data_quality_checks")
           .select("dataset_id")
@@ -52,22 +55,27 @@ const StewardDrillDown = () => {
       const profiles = (profilesRes.data ?? []) as { user_id: string; full_name: string | null }[];
       const profileMap = new Map(profiles.map((p) => [p.user_id, p.full_name]));
 
-      const members: MemberWithProfile[] = (membersRes.data ?? []).map((m: any) => ({
-        user_id: m.user_id,
-        role: m.role,
-        full_name: profileMap.get(m.user_id) ?? "Unknown",
+      const members: MemberWithProfile[] = (membersRes.data ?? []).map((m) => ({
+        user_id: String((m as any).user_id ?? ""),
+        role: String((m as any).role ?? ""),
+        full_name: profileMap.get(String((m as any).user_id ?? "")) ?? "Unknown",
       }));
 
-      const qualityDatasetIds = new Set((qualityRes.data ?? []).map((q: any) => q.dataset_id).filter(Boolean));
+      const qualityDatasetIds = new Set((qualityRes.data ?? []).map((q: { dataset_id?: string | null }) => q.dataset_id).filter(Boolean));
 
-      const datasets: DatasetOwnership[] = (datasetsRes.data ?? []).map((d: any) => ({
-        id: d.id,
-        name: d.name,
-        uploaded_by: d.uploaded_by,
-        steward_user_id: d.steward_user_id,
-        has_quality_check: qualityDatasetIds.has(d.id),
-        steward_name: d.steward_user_id ? (profileMap.get(d.steward_user_id) ?? "Unknown") : null,
-      }));
+      const datasets: DatasetOwnership[] = (datasetsRes.data ?? []).map((d) => {
+        const row = d as any;
+        const id = String(row.id ?? "");
+        const stewardId = row.steward_user_id ? String(row.steward_user_id) : null;
+        return {
+          id,
+          name: String(row.name ?? ""),
+          uploaded_by: String(row.uploaded_by ?? ""),
+          steward_user_id: stewardId,
+          has_quality_check: qualityDatasetIds.has(id),
+          steward_name: stewardId ? (profileMap.get(stewardId) ?? "Unknown") : null,
+        };
+      });
 
       const stewards = members.filter((m) => m.role === "steward");
 
@@ -125,9 +133,7 @@ const StewardDrillDown = () => {
                   transition={{ delay: i * 0.03 }}
                   className="flex items-center gap-3 p-2.5 rounded-lg border border-border/40 bg-muted/20"
                 >
-                  <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Users className="w-3 h-3 text-primary" />
-                  </div>
+                  
                   <span className="text-xs font-medium text-foreground">{s.full_name}</span>
                   <Badge variant="outline" className="text-[9px] ml-auto">steward</Badge>
                 </motion.div>

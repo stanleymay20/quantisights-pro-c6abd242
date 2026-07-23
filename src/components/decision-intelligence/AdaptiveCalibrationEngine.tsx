@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { Brain, Zap, TrendingDown, TrendingUp, Minus, RefreshCw, Sparkles, AlertTriangle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 
 interface Props {
   orgId: string | null;
-  decisions: any[];
+  decisions: Array<{ confidence?: number; outcome_measured_at?: string | null; outcome_success?: boolean | null; created_at: string; [key: string]: unknown }>;
 }
 
 interface CalibrationModel {
@@ -37,14 +38,14 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
     const fetchModel = async () => {
       setLoading(true);
       const { data, error: fetchErr } = await supabase
-        .from("calibration_models" as any)
+        .from("calibration_models")
         .select("*")
         .eq("organization_id", orgId)
         .order("computed_at", { ascending: false })
         .limit(1);
 
-      if (!fetchErr && data && (data as any[]).length > 0) {
-        setModel((data as any[])[0] as CalibrationModel);
+      if (!fetchErr && data && data.length > 0) {
+        setModel(data[0] as unknown as CalibrationModel);
       }
       setLoading(false);
     };
@@ -56,7 +57,7 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
     setComputing(true);
     setError(null);
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke("adaptive-calibration", {
+      const { data, error: fnErr } = await invokeWithRetry<{ model?: CalibrationModel; insufficient_data?: boolean; message?: string }>("adaptive-calibration", {
         body: { organization_id: orgId },
       });
       if (fnErr) throw fnErr;
@@ -65,8 +66,8 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
       } else if (data?.insufficient_data) {
         setError(data.message || "Insufficient data");
       }
-    } catch (e: any) {
-      setError(e.message || "Failed to compute calibration model");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to compute calibration model");
     }
     setComputing(false);
   };
@@ -172,7 +173,7 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
                 Calibration Score
               </p>
               <p
-                className={`text-2xl font-bold font-display ${
+                className={`text-2xl font-bold tracking-tight ${
                   model.overall_calibration_score >= 80
                     ? "text-emerald-400"
                     : model.overall_calibration_score >= 60
@@ -198,7 +199,7 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Mean Abs Error
               </p>
-              <p className="text-2xl font-bold font-display font-mono">
+              <p className="text-2xl font-bold tracking-tight font-mono">
                 {model.mean_absolute_error}%
               </p>
             </div>
@@ -206,7 +207,7 @@ const AdaptiveCalibrationEngine = ({ orgId, decisions }: Props) => {
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Decisions Learned
               </p>
-              <p className="text-2xl font-bold font-display">
+              <p className="text-2xl font-bold tracking-tight">
                 {model.total_decisions_analyzed}
               </p>
             </div>

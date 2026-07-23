@@ -28,11 +28,14 @@ const DataQualityScorecard = () => {
     queryKey: ["dataset-freshness", organizationId],
     queryFn: async () => {
       if (!organizationId) return null;
+      // "completed" is what the standard CSV upload flow writes on
+      // success; "active" is only written by the demo seed and API-ingest
+      // paths. Both mean "usable dataset."
       const { data } = await supabase
         .from("datasets")
         .select("id, name, status, is_stale, row_count, last_refreshed_at, freshness_policy_hours")
         .eq("organization_id", organizationId)
-        .eq("status", "active");
+        .in("status", ["active", "completed"]);
       return data || [];
     },
     enabled: !!organizationId,
@@ -107,7 +110,7 @@ const DataQualityScorecard = () => {
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-6">
-            <div className={`text-4xl font-bold font-display ${getScoreColor(compositeScore)}`}>
+            <div className={`text-4xl font-bold tracking-tight ${getScoreColor(compositeScore)}`}>
               {compositeScore != null ? compositeScore : "—"}
             </div>
             <div className="flex-1 space-y-2">

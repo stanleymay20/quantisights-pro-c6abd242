@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from "recharts";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface KPI {
   id: string;
@@ -119,8 +121,9 @@ const KPIs = () => {
       .eq("organization_id", currentOrgId)
       .eq("status", "active")
       .order("created_at", { ascending: false });
-    // dataset_id filter (column added via migration, not yet in generated types)
-    (query as any).eq("dataset_id", activeDatasetId);
+    // KPIs table has dataset_id column but the generated types reflect a different kpis table shape;
+    // this cast is needed until the types align with the actual table schema
+    (query as unknown as { eq: (col: string, val: string) => typeof query }).eq("dataset_id", activeDatasetId);
     const { data, error } = await query;
 
     if (!error && data) setKpis(data as unknown as KPI[]);
@@ -184,7 +187,7 @@ const KPIs = () => {
       metric_dependencies: newDeps,
       aggregation_type: newAggType,
       created_by: user.id,
-    } as any);
+    });
 
     if (error) {
       toast({ title: "Failed to create KPI", description: error.message, variant: "destructive" });
@@ -199,20 +202,20 @@ const KPIs = () => {
   const handleCompute = async (kpiId: string) => {
     setComputing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("compute-kpi", {
+      const { data, error } = await invokeWithRetry<any>("compute-kpi", {
         body: { kpi_id: kpiId, dataset_id: activeDatasetId, organization_id: currentOrgId },
       });
       if (error) throw error;
       if (data?.error) {
         const hint = data?.hint || data?.available_metric_types
-          ? `\n\nAvailable metrics: ${(data.available_metric_types || []).join(", ")}\n${data.hint || ""}`
+          ? `\n\nAvailable metrics: ${(data.available_metric_types as string[] || []).join(", ")}\n${data.hint || ""}`
           : "";
-        throw new Error(data.error + hint);
+        throw new Error(String(data.error) + hint);
       }
-      toast({ title: `Computed ${data.count} data points` });
+      toast({ title: `Computed ${data?.count} data points` });
       fetchKpiData(kpiId);
-    } catch (e: any) {
-      toast({ title: "Compute failed", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      toast({ title: "Compute failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setComputing(false);
     }
@@ -225,21 +228,21 @@ const KPIs = () => {
     }
     setAnalyzing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-kpi-analysis", {
+      const { data, error } = await invokeWithRetry<any>("ai-kpi-analysis", {
         body: { kpi_id: kpiId, dataset_id: activeDatasetId, organization_id: currentOrgId },
       });
       if (error) throw error;
       if (data?.error) {
-        if (data.error.includes("minimum 2 data points")) {
+        if (String(data.error).includes("minimum 2 data points")) {
           toast({ title: "Not enough data", description: "Compute KPI values first (need at least 2 data points) before running AI analysis.", variant: "destructive" });
         } else {
-          throw new Error(data.error);
+          throw new Error(String(data.error));
         }
         return;
       }
-      setAnalysis(data.analysis);
-    } catch (e: any) {
-      toast({ title: "Analysis failed", description: e.message, variant: "destructive" });
+      setAnalysis(data?.analysis as AIAnalysis);
+    } catch (e: unknown) {
+      toast({ title: "Analysis failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setAnalyzing(false);
     }
@@ -318,7 +321,7 @@ const KPIs = () => {
           <div className="flex items-center gap-4">
             <SidebarMobileToggle />
             <BarChart3 className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">KPI Builder</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">KPI Builder</h1>
             <Badge variant="outline" className="text-xs">
               {kpis.length}/{kpiLimit === 999999 ? "∞" : kpiLimit} KPIs
             </Badge>
@@ -341,7 +344,7 @@ const KPIs = () => {
               </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
                 <DialogHeader>
-                  <DialogTitle className="font-display">Create KPI</DialogTitle>
+                  <DialogTitle className="tracking-tight">Create KPI</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 mt-2">
                   <div>
@@ -413,6 +416,7 @@ const KPIs = () => {
           </div>
         </header>
 
+        <SectionErrorBoundary sectionName="KPI Builder">
         <main className="flex-1 p-8 overflow-auto">
           <div className="grid lg:grid-cols-3 gap-6">
             {/* KPI List */}
@@ -481,7 +485,7 @@ const KPIs = () => {
                   <div className="glass-card p-6 rounded-xl">
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h2 className="text-lg font-semibold font-display">{selectedKpiObj.name}</h2>
+                        <h2 className="text-lg font-semibold tracking-tight">{selectedKpiObj.name}</h2>
                         {selectedKpiObj.description && (
                           <p className="text-sm text-muted-foreground mt-1">{selectedKpiObj.description}</p>
                         )}
@@ -650,7 +654,7 @@ const KPIs = () => {
               ) : (
                 <div className="glass-card p-12 rounded-xl flex flex-col items-center justify-center min-h-[400px]">
                   <BarChart3 className="w-16 h-16 text-muted-foreground mb-4" />
-                  <h2 className="text-xl font-semibold font-display mb-2">Select or Create a KPI</h2>
+                  <h2 className="text-[16px] font-semibold tracking-tight mb-2">Select or Create a KPI</h2>
                   <p className="text-muted-foreground text-sm text-center max-w-md">
                     Define strategic KPIs from your metrics data. Compute values, set targets, and get AI-powered executive insights.
                   </p>
@@ -659,6 +663,7 @@ const KPIs = () => {
             </div>
           </div>
         </main>
+        </SectionErrorBoundary>
     </div>
     </DatasetRequired>
   );

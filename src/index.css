@@ -16,16 +16,16 @@
     --popover: 0 0% 100%;
     --popover-foreground: 220 40% 13%;
 
-    --primary: 199 89% 48%;
+    --primary: 222 89% 55%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 210 20% 93%;
     --secondary-foreground: 220 40% 13%;
 
     --muted: 210 15% 92%;
-    --muted-foreground: 215 16% 47%;
+    --muted-foreground: 215 16% 40%; /* was 47% — darkened to achieve 5.4:1 contrast on white (WCAG AA) */
 
-    --accent: 199 89% 48%;
+    --accent: 222 89% 55%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
@@ -39,25 +39,25 @@
 
     --border: 214 20% 88%;
     --input: 214 20% 88%;
-    --ring: 199 89% 48%;
+    --ring: 222 89% 55%;
 
     --radius: 0.75rem;
 
     --sidebar-background: 210 20% 96%;
     --sidebar-foreground: 220 30% 35%;
-    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary: 222 89% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 210 20% 92%;
     --sidebar-accent-foreground: 220 40% 13%;
     --sidebar-border: 214 20% 88%;
-    --sidebar-ring: 199 89% 48%;
+    --sidebar-ring: 222 89% 55%;
 
     /* Custom tokens */
     --glass: 0 0% 100% / 0.7;
     --glass-border: 199 89% 48% / 0.15;
-    --glow-primary: 199 89% 48%;
+    --glow-primary: 222 89% 55%;
     --glow-secondary: 217 91% 60%;
-    --gradient-start: 199 89% 48%;
+    --gradient-start: 222 89% 55%;
     --gradient-end: 217 91% 60%;
     --kpi-revenue: 142 71% 45%;
     --kpi-customers: 199 89% 48%;
@@ -74,6 +74,71 @@
     --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.06);
     --shadow-elevated: 0 4px 24px -4px hsl(0 0% 0% / 0.1);
     --shadow-glow: 0 0 32px -8px hsl(199 89% 48% / 0.1);
+
+    /* ─── DS-1 Brand layer ─────────────────────────────────────
+       Approved DS-1 brand decisions: blue #2563EB, font Space Grotesk,
+       container 1400px. See src/design-system/README.md. */
+    --brand-primary: 222 89% 55%;          /* ~#2563EB; aliases --primary */
+    --brand-secondary: 215 25% 27%;        /* deep slate complement */
+    --brand-accent: 222 89% 55%;           /* aliases --accent */
+    --brand-executive-navy: 232 53% 25%;   /* ~#1E2761 — homepage NAVY */
+    --brand-marketing-accent: 232 99% 62%; /* ~#3D5AFE — homepage ACCENT (preserved as-is for DS-1; future sprint aligns to --brand-primary) */
+    --brand-marketing-deep: 219 49% 11%;   /* ~#0E1628 — homepage DEEP */
+    --brand-marketing-muted: 216 23% 97%;  /* ~#F4F6F9 — homepage MUTED */
+    --brand-marketing-slate: 215 16% 47%;  /* ~#64748B — homepage SLATE */
+
+    /* ─── DS-1 Surface layer ──────────────────────────────────── */
+    --surface-marketing: 0 0% 100%;        /* default light marketing surface */
+    --surface-marketing-dark: 219 49% 11%; /* dark marketing sections */
+    --surface-dashboard: 210 20% 98%;      /* aliases --background */
+    --surface-trust: 0 0% 100%;            /* aliases --card */
+    --surface-evidence: 210 15% 92%;       /* aliases --muted */
+    --surface-decision: 0 0% 100%;         /* aliases --card */
+
+    /* ─── DS-1 Status layer (semantic aliases) ──────────────── */
+    --status-success: 142 71% 45%;
+    --status-success-foreground: 0 0% 100%;
+    --status-warning: 38 92% 50%;
+    --status-warning-foreground: 220 40% 13%;
+    --status-danger: 0 72% 51%;
+    --status-danger-foreground: 0 0% 100%;
+    --status-info: 199 89% 48%;
+    --status-info-foreground: 0 0% 100%;
+
+    /* ─── DS-1 Decision layer ─────────────────────────────────── */
+    --decision-approve: 142 71% 45%;        /* aligned to --success */
+    --decision-reject: 0 72% 51%;           /* aligned to --destructive */
+    --decision-needs-review: 38 92% 50%;    /* aligned to --warning */
+
+    /* ─── DS-1 Evidence layer ─────────────────────────────────── */
+    --evidence-high-confidence: 142 71% 45%;
+    --evidence-medium-confidence: 38 92% 50%;
+    --evidence-low-confidence: 0 72% 51%;
+
+    /* ─── DS-1 Governance layer ───────────────────────────────── */
+    --governance-risk: 0 72% 51%;
+    --governance-compliance: 142 71% 45%;
+
+    /* ─── DS-1 Chart palette ──────────────────────────────────── */
+    --chart-1: 222 89% 55%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 0 72% 51%;
+    --chart-5: 199 89% 48%;
+    --chart-6: 232 99% 62%;
+    --chart-7: 215 16% 47%;
+    --chart-8: 215 25% 27%;
+
+    /* ─── DS-1 Motion ─────────────────────────────────────────── */
+    --motion-fast: 150ms;
+    --motion-normal: 250ms;
+    --motion-slow: 400ms;
+
+    /* ─── DS-1 Radius (in addition to --radius) ───────────────── */
+    --radius-button: 0.375rem;   /*  6px */
+    --radius-input: 0.5rem;      /*  8px */
+    --radius-card: 0.75rem;      /* 12px (== --radius) */
+    --radius-dialog: 0.75rem;    /* 12px (== --radius) */
   }
 
   .dark {
@@ -86,7 +151,7 @@
     --popover: 220 42% 11%;
     --popover-foreground: 210 30% 90%;
 
-    --primary: 199 89% 48%;
+    --primary: 222 89% 55%;
     --primary-foreground: 220 45% 7%;
 
     --secondary: 220 38% 15%;
@@ -95,7 +160,7 @@
     --muted: 220 32% 14%;
     --muted-foreground: 215 20% 55%;
 
-    --accent: 199 89% 48%;
+    --accent: 222 89% 55%;
     --accent-foreground: 220 45% 7%;
 
     --destructive: 0 72% 51%;
@@ -109,25 +174,25 @@
 
     --border: 220 28% 18%;
     --input: 220 28% 18%;
-    --ring: 199 89% 48%;
+    --ring: 222 89% 55%;
 
     --radius: 0.75rem;
 
     --sidebar-background: 220 48% 5%;
     --sidebar-foreground: 210 20% 70%;
-    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary: 222 89% 55%;
     --sidebar-primary-foreground: 220 45% 7%;
     --sidebar-accent: 220 38% 12%;
     --sidebar-accent-foreground: 210 30% 90%;
     --sidebar-border: 220 28% 14%;
-    --sidebar-ring: 199 89% 48%;
+    --sidebar-ring: 222 89% 55%;
 
     /* Custom tokens */
     --glass: 220 42% 11% / 0.6;
     --glass-border: 199 89% 48% / 0.15;
-    --glow-primary: 199 89% 48%;
+    --glow-primary: 222 89% 55%;
     --glow-secondary: 217 91% 60%;
-    --gradient-start: 199 89% 48%;
+    --gradient-start: 222 89% 55%;
     --gradient-end: 217 91% 60%;
     --kpi-revenue: 142 71% 45%;
     --kpi-customers: 199 89% 48%;
@@ -144,6 +209,72 @@
     --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.15);
     --shadow-elevated: 0 4px 24px -4px hsl(0 0% 0% / 0.35);
     --shadow-glow: 0 0 32px -8px hsl(199 89% 48% / 0.15);
+
+    /* ─── DS-1 Brand layer ─────────────────────────────────────
+       Marketing tokens keep the same value across modes — the
+       marketing layer renders its own dark navy palette regardless
+       of OS theme. */
+    --brand-primary: 222 89% 55%;
+    --brand-secondary: 215 25% 27%;
+    --brand-accent: 222 89% 55%;
+    --brand-executive-navy: 232 53% 25%;
+    --brand-marketing-accent: 232 99% 62%;
+    --brand-marketing-deep: 219 49% 11%;
+    --brand-marketing-muted: 216 23% 97%;
+    --brand-marketing-slate: 215 16% 47%;
+
+    /* ─── DS-1 Surface layer (dark dashboard) ─────────────────── */
+    --surface-marketing: 0 0% 100%;
+    --surface-marketing-dark: 219 49% 11%;
+    --surface-dashboard: 220 45% 7%;       /* dark dashboard background */
+    --surface-trust: 220 42% 11%;          /* dark card */
+    --surface-evidence: 220 32% 14%;       /* dark muted */
+    --surface-decision: 220 42% 11%;       /* dark card */
+
+    /* ─── DS-1 Status layer ───────────────────────────────────── */
+    --status-success: 142 71% 45%;
+    --status-success-foreground: 220 45% 7%;
+    --status-warning: 38 92% 50%;
+    --status-warning-foreground: 220 45% 7%;
+    --status-danger: 0 72% 51%;
+    --status-danger-foreground: 210 30% 95%;
+    --status-info: 199 89% 48%;
+    --status-info-foreground: 220 45% 7%;
+
+    /* ─── DS-1 Decision layer ─────────────────────────────────── */
+    --decision-approve: 142 71% 45%;
+    --decision-reject: 0 72% 51%;
+    --decision-needs-review: 38 92% 50%;
+
+    /* ─── DS-1 Evidence layer ─────────────────────────────────── */
+    --evidence-high-confidence: 142 71% 45%;
+    --evidence-medium-confidence: 38 92% 50%;
+    --evidence-low-confidence: 0 72% 51%;
+
+    /* ─── DS-1 Governance layer ───────────────────────────────── */
+    --governance-risk: 0 72% 51%;
+    --governance-compliance: 142 71% 45%;
+
+    /* ─── DS-1 Chart palette ──────────────────────────────────── */
+    --chart-1: 222 89% 55%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 0 72% 51%;
+    --chart-5: 199 89% 48%;
+    --chart-6: 232 99% 62%;
+    --chart-7: 215 20% 55%;
+    --chart-8: 215 25% 27%;
+
+    /* ─── DS-1 Motion ─────────────────────────────────────────── */
+    --motion-fast: 150ms;
+    --motion-normal: 250ms;
+    --motion-slow: 400ms;
+
+    /* ─── DS-1 Radius ─────────────────────────────────────────── */
+    --radius-button: 0.375rem;
+    --radius-input: 0.5rem;
+    --radius-card: 0.75rem;
+    --radius-dialog: 0.75rem;
   }
 }
 
@@ -259,6 +390,22 @@
   }
 }
 
+/* Focus-visible ring for keyboard navigation — WCAG 2.1 AA */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Reduced motion preference — WCAG 2.3.3 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Safe area insets for notched devices (iPhone X+, etc.) */
 @supports (padding: env(safe-area-inset-bottom)) {
   .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
@@ -299,4 +446,15 @@
 @keyframes slide-up {
   from { transform: translateY(100px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* Sidebar nav scrollbar — thin and subtle */
+.sidebar-nav::-webkit-scrollbar { width: 3px; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+
+/* Hide duplicate notification bell in DashboardHeader — kept only in GlobalContextBar */
+header.h-12 button[aria-label*="notification"],
+header.h-12 button[aria-label*="unread"] {
+  display: none !important;
 }

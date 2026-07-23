@@ -111,7 +111,8 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
   // Monitoring Clarity (0-10)
   // Structural check: successMetrics array presence (from StructuredRecommendation),
   // plus keyword fallback for standalone evidence blocks
-  if ((evidence as any).successMetrics && Array.isArray((evidence as any).successMetrics) && (evidence as any).successMetrics.length > 0) {
+  const evidenceRecord = evidence as Record<string, unknown>;
+  if (evidenceRecord.successMetrics && Array.isArray(evidenceRecord.successMetrics) && evidenceRecord.successMetrics.length > 0) {
     monitoringClarity += 10;
   } else if (evidence.recommendation && /metric|KPI|measure|monitor|track|baseline|target|threshold|delta|rate|score/i.test(evidence.recommendation)) {
     monitoringClarity += 7;

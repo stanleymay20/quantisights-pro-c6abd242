@@ -62,8 +62,8 @@ const AddPortfolioCompanyDialog = ({ organizationId, onAdd }: Props) => {
       toast({ title: "Portfolio company added" });
       setOpen(false);
       resetForm();
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -83,8 +83,8 @@ const AddPortfolioCompanyDialog = ({ organizationId, onAdd }: Props) => {
         <div className="space-y-4 mt-2">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <Label className="text-xs">Company Name *</Label>
-              <Input value={form.name} onChange={e => update("name", e.target.value)} placeholder="e.g. Acme Corp" />
+              <Label htmlFor="company-name" className="text-xs">Company Name *</Label>
+              <Input id="company-name" value={form.name} onChange={e => update("name", e.target.value)} placeholder="e.g. Acme Corp" />
             </div>
             <div>
               <Label className="text-xs">Sector</Label>
@@ -96,40 +96,40 @@ const AddPortfolioCompanyDialog = ({ organizationId, onAdd }: Props) => {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Fund Name</Label>
-              <Input value={form.fund_name} onChange={e => update("fund_name", e.target.value)} placeholder="e.g. Fund III" />
+              <Label htmlFor="fund-name" className="text-xs">Fund Name</Label>
+              <Input id="fund-name" value={form.fund_name} onChange={e => update("fund_name", e.target.value)} placeholder="e.g. Fund III" />
             </div>
             <div>
-              <Label className="text-xs">Investment ($)</Label>
-              <Input type="number" value={form.investment_amount} onChange={e => update("investment_amount", e.target.value)} placeholder="10000000" />
+              <Label htmlFor="investment-amount" className="text-xs">Investment ($)</Label>
+              <Input type="number" id="investment-amount" value={form.investment_amount} onChange={e => update("investment_amount", e.target.value)} placeholder="10000000" />
             </div>
             <div>
-              <Label className="text-xs">Ownership %</Label>
-              <Input type="number" value={form.ownership_pct} onChange={e => update("ownership_pct", e.target.value)} placeholder="25" />
+              <Label htmlFor="ownership-pct" className="text-xs">Ownership %</Label>
+              <Input type="number" id="ownership-pct" value={form.ownership_pct} onChange={e => update("ownership_pct", e.target.value)} placeholder="25" />
             </div>
             <div>
-              <Label className="text-xs">Current Valuation ($)</Label>
-              <Input type="number" value={form.current_valuation} onChange={e => update("current_valuation", e.target.value)} placeholder="50000000" />
+              <Label htmlFor="current-valuation" className="text-xs">Current Valuation ($)</Label>
+              <Input type="number" id="current-valuation" value={form.current_valuation} onChange={e => update("current_valuation", e.target.value)} placeholder="50000000" />
             </div>
             <div>
-              <Label className="text-xs">Revenue LTM ($)</Label>
-              <Input type="number" value={form.revenue_ltm} onChange={e => update("revenue_ltm", e.target.value)} placeholder="5000000" />
+              <Label htmlFor="revenue-ltm" className="text-xs">Revenue LTM ($)</Label>
+              <Input type="number" id="revenue-ltm" value={form.revenue_ltm} onChange={e => update("revenue_ltm", e.target.value)} placeholder="5000000" />
             </div>
             <div>
-              <Label className="text-xs">EBITDA LTM ($)</Label>
-              <Input type="number" value={form.ebitda_ltm} onChange={e => update("ebitda_ltm", e.target.value)} placeholder="1000000" />
+              <Label htmlFor="ebitda-ltm" className="text-xs">EBITDA LTM ($)</Label>
+              <Input type="number" id="ebitda-ltm" value={form.ebitda_ltm} onChange={e => update("ebitda_ltm", e.target.value)} placeholder="1000000" />
             </div>
             <div>
-              <Label className="text-xs">Revenue Growth %</Label>
-              <Input type="number" value={form.revenue_growth_pct} onChange={e => update("revenue_growth_pct", e.target.value)} placeholder="15" />
+              <Label htmlFor="revenue-growth" className="text-xs">Revenue Growth %</Label>
+              <Input type="number" id="revenue-growth" value={form.revenue_growth_pct} onChange={e => update("revenue_growth_pct", e.target.value)} placeholder="15" />
             </div>
             <div>
-              <Label className="text-xs">EBITDA Margin %</Label>
-              <Input type="number" value={form.ebitda_margin_pct} onChange={e => update("ebitda_margin_pct", e.target.value)} placeholder="20" />
+              <Label htmlFor="ebitda-margin" className="text-xs">EBITDA Margin %</Label>
+              <Input type="number" id="ebitda-margin" value={form.ebitda_margin_pct} onChange={e => update("ebitda_margin_pct", e.target.value)} placeholder="20" />
             </div>
             <div>
-              <Label className="text-xs">Headcount</Label>
-              <Input type="number" value={form.headcount} onChange={e => update("headcount", e.target.value)} placeholder="150" />
+              <Label htmlFor="headcount" className="text-xs">Headcount</Label>
+              <Input type="number" id="headcount" value={form.headcount} onChange={e => update("headcount", e.target.value)} placeholder="150" />
             </div>
           </div>
           <Button onClick={handleSubmit} disabled={loading} className="w-full">

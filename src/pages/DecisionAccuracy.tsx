@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,6 +16,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, LineChart, Line, Legend,
 } from "recharts";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface DecisionRecord {
   id: string;
@@ -31,6 +33,7 @@ interface DecisionRecord {
 
 const DecisionAccuracy = () => {
   const { currentOrgId } = useOrganization();
+  const navigate = useNavigate();
   const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -97,12 +100,13 @@ const DecisionAccuracy = () => {
   const positiveOutcomes = evaluated.filter(d => (d.outcome_delta ?? 0) > 0).length;
 
   return (
-    <div className="min-h-screen bg-background">
+    <SectionErrorBoundary sectionName="Decision Accuracy">
+    <div className="min-h-dvh bg-background flex flex-col">
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         <div className="flex items-center gap-3">
           <SidebarMobileToggle />
           <div>
-            <h1 className="text-xl font-bold font-display tracking-tight">Decision Accuracy</h1>
+            <h1 className="text-[16px] font-semibold tracking-tight tracking-tight tracking-tight">Decision Accuracy</h1>
             <p className="text-xs text-muted-foreground">Confidence vs Reality — proving the system learns</p>
           </div>
         </div>
@@ -161,14 +165,26 @@ const DecisionAccuracy = () => {
         </div>
 
         {evaluated.length === 0 ? (
-          <Card className="border-border/50">
-            <CardContent className="p-8 text-center">
-              <Target className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-              <h3 className="text-sm font-semibold mb-1">No evaluated decisions yet</h3>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                Approve decisions from the Decision Queue. The system will automatically evaluate outcomes
-                and build accuracy data as real-world results are measured.
-              </p>
+          <Card className="border-dashed">
+            <CardContent className="p-10 flex flex-col items-center text-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Target className="w-7 h-7 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-base mb-1">No evaluated decisions yet</h3>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Quantivis compares each decision's predicted confidence against its real-world outcome —
+                  building a calibration curve that makes every future recommendation more accurate.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button size="sm" onClick={() => navigate("/decisions")}>
+                  Log a Decision <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => navigate("/deliberation")}>
+                  Review Pending
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -209,8 +225,8 @@ const DecisionAccuracy = () => {
                         return (
                           <div className="bg-popover border border-border rounded-lg p-2 text-xs shadow-lg">
                             <p className="font-medium truncate max-w-[200px]">{d.action}</p>
-                            <p>Confidence: {d.confidence}%</p>
-                            <p>Accuracy: {d.accuracy}%</p>
+                            <p>Confidence: {Math.round(d.confidence)}%</p>
+                            <p>Accuracy: {Math.round(d.accuracy)}%</p>
                             <p>Outcome Δ: {d.delta?.toFixed(2)}</p>
                           </div>
                         );
@@ -278,6 +294,7 @@ const DecisionAccuracy = () => {
         <IntelligenceDisclaimer context="general" />
       </div>
     </div>
+    </SectionErrorBoundary>
   );
 };
 

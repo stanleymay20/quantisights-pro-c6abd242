@@ -35,6 +35,7 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState<{ loaded: number; total: number | null } | null>(null);
   const { subscribed, tier } = useSubscription();
 
   const canStream = subscribed && tier ? REALTIME_TIERS.includes(tier) : false;
@@ -58,14 +59,17 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
 
     const fetchMetrics = async () => {
       setLoading(true);
+      setLoadingProgress({ loaded: 0, total: null });
       // Paginated fetch with safety cap to prevent client-side memory crashes
       const allMetrics: MetricRow[] = [];
       const PAGE_SIZE = 1000;
       const MAX_CLIENT_ROWS = 50_000; // Safety cap: ~50K rows ≈ 10MB in memory
       let offset = 0;
       let hasMore = true;
+      let pageNum = 0;
 
       while (hasMore) {
+        pageNum++;
         const { data, error } = await supabase
           .from("metrics")
           .select("id, metric_type, value, date, region, segment, dataset_id, created_at")
@@ -76,6 +80,7 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
 
         if (error || !data) break;
         allMetrics.push(...data);
+        setLoadingProgress({ loaded: allMetrics.length, total: data.length === PAGE_SIZE ? null : allMetrics.length });
         hasMore = data.length === PAGE_SIZE && allMetrics.length < MAX_CLIENT_ROWS;
         offset += PAGE_SIZE;
       }
@@ -87,54 +92,64 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
       setMetrics(allMetrics);
       updateLastUpdated(allMetrics);
       setLoading(false);
+      setLoadingProgress(null);
     };
 
     fetchMetrics();
   }, [orgId, datasetId, updateLastUpdated]);
 
-  // Realtime subscription (Growth+ only)
+  // Realtime subscription (Growth+ only) — per-instance unique topic name
+  // prevents any possibility of reusing a subscribed channel across
+  // StrictMode remounts or concurrent hook instances.
   useEffect(() => {
     if (!orgId || !datasetId || !canStream) {
       setIsStreaming(false);
       return;
     }
 
-    const channel = supabase
-      .channel(`metrics-live-${orgId}-${datasetId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
-        (payload) => {
-          const newRow = payload.new as MetricRow & { created_at?: string };
-          if (newRow.dataset_id !== datasetId) return;
-          setMetrics((prev) => [...prev, newRow].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-          setLastUpdated(newRow.created_at || new Date().toISOString());
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
-        (payload) => {
-          const updated = payload.new as MetricRow;
-          if (updated.dataset_id !== datasetId) return;
-          setMetrics((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
-        (payload) => {
-          const deleted = payload.old as { id: string };
-          setMetrics((prev) => prev.filter((m) => m.id !== deleted.id));
-        }
-      )
-      .subscribe((status) => {
-        setIsStreaming(status === "SUBSCRIBED");
-      });
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    try {
+      const uniq = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+      channel = supabase
+        .channel(`metrics-live-${orgId}-${datasetId}-${uniq}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
+          (payload) => {
+            const newRow = payload.new as MetricRow & { created_at?: string };
+            if (newRow.dataset_id !== datasetId) return;
+            setMetrics((prev) => [...prev, newRow].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+            setLastUpdated(newRow.created_at || new Date().toISOString());
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
+          (payload) => {
+            const updated = payload.new as MetricRow;
+            if (updated.dataset_id !== datasetId) return;
+            setMetrics((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "DELETE", schema: "public", table: "metrics", filter: `organization_id=eq.${orgId}` },
+          (payload) => {
+            const deleted = payload.old as { id: string };
+            setMetrics((prev) => prev.filter((m) => m.id !== deleted.id));
+          }
+        )
+        .subscribe((status) => {
+          setIsStreaming(status === "SUBSCRIBED");
+        });
+    } catch (err) {
+      console.warn("[useMetrics] realtime subscribe failed:", err);
+      setIsStreaming(false);
+    }
 
     return () => {
-      supabase.removeChannel(channel);
       setIsStreaming(false);
+      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
     };
   }, [orgId, datasetId, canStream]);
 
@@ -229,5 +244,6 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
     revenueByMonth,
     segmentData,
     hasData: metrics.length > 0,
+    loadingProgress,
   };
 };

@@ -3,6 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { createLogger } from "../_shared/logger.ts";
 import { cronGuard } from "../_shared/cron-guard.ts";
+import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
+
+const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // calibration cadence
 
 /**
  * Adaptive Calibration Engine v2
@@ -53,12 +56,16 @@ function computeSuccess(d: any): { value: number; metric: "prediction_accuracy_s
 }
 
 function computeCalibrationModel(decisions: any[]) {
-  // Filter to completed decisions with at least one success signal
+  // Include decisions that have been decided AND have at least one measurable signal.
+  // Previously required execution_status === "completed" which excluded 100% of decisions.
+  // Now: any decision with a decided status and confidence data is eligible.
+  // Success is still computed from prediction_accuracy_score or outcome_delta when available.
   const calibrated = decisions.filter(
     (d) =>
-      d.execution_status === "completed" &&
       d.capped_confidence != null &&
-      (d.prediction_accuracy_score != null || d.outcome_delta != null)
+      (d.execution_status === "completed" ||
+       d.prediction_accuracy_score != null ||
+       d.outcome_delta != null)
   );
 
   if (calibrated.length < MIN_DECISIONS) {
@@ -198,12 +205,25 @@ serve(async (req) => {
       const { data: orgs } = await svc.from("organizations").select("id");
       let calibrated = 0;
 
-      for (const org of (orgs || [])) {
+      // Bound the org loop to the invocation's wall-clock budget, and
+      // rotate the starting point each tick so a sustained overload
+      // doesn't permanently starve whichever orgs sort last -- safe since
+      // skipping an org this tick just leaves its calibration model at
+      // the previous version until the next tick recomputes it.
+      const cronStartedAt = Date.now();
+      const deadline = makeDeadline(cronStartedAt);
+      const rotatedOrgs = rotateForFairness(orgs || [], cronStartedAt, RUN_INTERVAL_MS);
+      let orgsProcessed = 0;
+
+      for (const org of rotatedOrgs) {
+        if (deadline.expired()) break;
+        orgsProcessed++;
+        // Fetch ALL decided decisions (not just "completed") to maximize calibration coverage
         const { data: decisions } = await svc
           .from("decision_ledger")
           .select(DECISION_COLUMNS)
           .eq("organization_id", org.id)
-          .eq("execution_status", "completed")
+          .not("decided_at", "is", null)
           .order("created_at", { ascending: false })
           .limit(WINDOW_SIZE);
 
@@ -242,9 +262,10 @@ serve(async (req) => {
         calibrated++;
       }
 
-      log.info("Cron batch calibration complete", { calibrated });
-      await guard.succeed({ calibrated });
-      return new Response(JSON.stringify({ success: true, calibrated }), {
+      const truncated = orgsProcessed < rotatedOrgs.length;
+      log.info("Cron batch calibration complete", { calibrated, orgsProcessed, orgsTotal: rotatedOrgs.length, truncated });
+      await guard.succeed({ calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated });
+      return new Response(JSON.stringify({ success: true, calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -290,11 +311,12 @@ serve(async (req) => {
     }
 
     // Minimal select — only columns we actually use
+    // Match cron path: include all decided decisions, not just "completed"
     const { data: decisions } = await svc
       .from("decision_ledger")
       .select(DECISION_COLUMNS)
       .eq("organization_id", organization_id)
-      .eq("execution_status", "completed")
+      .not("decided_at", "is", null)
       .order("created_at", { ascending: false })
       .limit(WINDOW_SIZE);
 

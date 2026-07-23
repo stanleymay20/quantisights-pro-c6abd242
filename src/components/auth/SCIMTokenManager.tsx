@@ -39,7 +39,7 @@ const SCIMTokenManager = () => {
     queryFn: async () => {
       if (!currentOrgId) return [];
       const { data } = await supabase
-        .from("scim_tokens" as any)
+        .from("scim_tokens")
         .select("id, description, created_at, last_used_at, revoked_at")
         .eq("organization_id", currentOrgId)
         .order("created_at", { ascending: false });
@@ -61,7 +61,7 @@ const SCIMTokenManager = () => {
       const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(token));
       const tokenHash = btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
 
-      await supabase.from("scim_tokens" as any).insert({
+      await supabase.from("scim_tokens").insert({
         organization_id: currentOrgId,
         token_hash: tokenHash,
         description: description || "SCIM Token",
@@ -74,15 +74,15 @@ const SCIMTokenManager = () => {
       setGeneratedToken(token);
       queryClient.invalidateQueries({ queryKey: ["scim-tokens"] });
     },
-    onError: (err: any) => {
-      toast({ title: "Failed to create token", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Failed to create token", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     },
   });
 
   const revokeToken = useMutation({
     mutationFn: async (id: string) => {
       await supabase
-        .from("scim_tokens" as any)
+        .from("scim_tokens")
         .update({ revoked_at: new Date().toISOString() })
         .eq("id", id);
     },

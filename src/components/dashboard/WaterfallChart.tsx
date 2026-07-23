@@ -125,7 +125,7 @@ const WaterfallChart = ({ data }: WaterfallChartProps) => {
             <Tooltip contentStyle={tooltipStyle} formatter={(val: number) => [formatCurrency(Math.abs(val), { compact: false }), "Value"]} />
             <ReferenceLine y={0} stroke="hsl(var(--border))" />
             <Bar dataKey="bottom" stackId="waterfall" fill="transparent" isAnimationActive={false} />
-            <Bar dataKey="height" stackId="waterfall" radius={[4, 4, 0, 0]} label={({ x, y, width, index }: any) => {
+            <Bar dataKey="height" stackId="waterfall" radius={[4, 4, 0, 0]} label={({ x, y, width, index }: { x: number; y: number; width: number; index: number }) => {
               const entry = analysis![index];
               if (!entry) return null;
               return <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={10} fill="hsl(var(--foreground))" opacity={0.7}>{formatCurrency(Math.abs(entry.value))}</text>;

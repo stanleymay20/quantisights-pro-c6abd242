@@ -64,7 +64,7 @@ const TrendIntelligence = ({ eciTrend, convergenceHistory, roleRisks }: TrendInt
               <div>
                 <div className={`text-3xl font-bold ${trendColorClass}`}>
                   {eciTrend.percentChange > 0 ? "+" : ""}
-                  {eciTrend.percentChange}%
+                  {Math.round(eciTrend.percentChange)}%
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {eciTrend.direction === "up"

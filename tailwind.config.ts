@@ -69,11 +69,91 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        // ─── DS-1 Brand layer ─────────────────────────────────────
+        // bg-brand, bg-brand-secondary, bg-brand-executive-navy, etc.
+        brand: {
+          DEFAULT: "hsl(var(--brand-primary))",
+          primary: "hsl(var(--brand-primary))",
+          secondary: "hsl(var(--brand-secondary))",
+          accent: "hsl(var(--brand-accent))",
+          "executive-navy": "hsl(var(--brand-executive-navy))",
+          "marketing-accent": "hsl(var(--brand-marketing-accent))",
+          "marketing-deep": "hsl(var(--brand-marketing-deep))",
+          "marketing-muted": "hsl(var(--brand-marketing-muted))",
+          "marketing-slate": "hsl(var(--brand-marketing-slate))",
+        },
+        // ─── DS-1 Surface layer ───────────────────────────────────
+        surface: {
+          marketing: "hsl(var(--surface-marketing))",
+          "marketing-dark": "hsl(var(--surface-marketing-dark))",
+          dashboard: "hsl(var(--surface-dashboard))",
+          trust: "hsl(var(--surface-trust))",
+          evidence: "hsl(var(--surface-evidence))",
+          decision: "hsl(var(--surface-decision))",
+        },
+        // ─── DS-1 Status layer ────────────────────────────────────
+        status: {
+          success: {
+            DEFAULT: "hsl(var(--status-success))",
+            foreground: "hsl(var(--status-success-foreground))",
+          },
+          warning: {
+            DEFAULT: "hsl(var(--status-warning))",
+            foreground: "hsl(var(--status-warning-foreground))",
+          },
+          danger: {
+            DEFAULT: "hsl(var(--status-danger))",
+            foreground: "hsl(var(--status-danger-foreground))",
+          },
+          info: {
+            DEFAULT: "hsl(var(--status-info))",
+            foreground: "hsl(var(--status-info-foreground))",
+          },
+        },
+        // ─── DS-1 Decision layer ──────────────────────────────────
+        decision: {
+          approve: "hsl(var(--decision-approve))",
+          reject: "hsl(var(--decision-reject))",
+          "needs-review": "hsl(var(--decision-needs-review))",
+        },
+        // ─── DS-1 Evidence layer ──────────────────────────────────
+        evidence: {
+          "high-confidence": "hsl(var(--evidence-high-confidence))",
+          "medium-confidence": "hsl(var(--evidence-medium-confidence))",
+          "low-confidence": "hsl(var(--evidence-low-confidence))",
+        },
+        // ─── DS-1 Governance layer ────────────────────────────────
+        governance: {
+          risk: "hsl(var(--governance-risk))",
+          compliance: "hsl(var(--governance-compliance))",
+        },
+        // ─── DS-1 Chart palette ───────────────────────────────────
+        chart: {
+          1: "hsl(var(--chart-1))",
+          2: "hsl(var(--chart-2))",
+          3: "hsl(var(--chart-3))",
+          4: "hsl(var(--chart-4))",
+          5: "hsl(var(--chart-5))",
+          6: "hsl(var(--chart-6))",
+          7: "hsl(var(--chart-7))",
+          8: "hsl(var(--chart-8))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        // ─── DS-1 Component-named radius (in addition to lg/md/sm) ──
+        button: "var(--radius-button)",
+        input: "var(--radius-input)",
+        card: "var(--radius-card)",
+        dialog: "var(--radius-dialog)",
+      },
+      // ─── DS-1 Motion ────────────────────────────────────────────
+      transitionDuration: {
+        fast: "var(--motion-fast)",
+        normal: "var(--motion-normal)",
+        slow: "var(--motion-slow)",
       },
       keyframes: {
         "accordion-down": {

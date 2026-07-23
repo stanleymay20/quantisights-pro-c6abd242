@@ -153,7 +153,7 @@ const DecisionTreePanel = ({ decisions, simulations }: { decisions: Decision[]; 
                     </span>
                     {branch.probability != null && (
                       <span className="text-muted-foreground">
-                        P(success): <span className="font-mono font-semibold">{branch.probability}%</span>
+                        P(success): <span className="font-mono font-semibold">{Math.round(branch.probability)}%</span>
                       </span>
                     )}
                     {branch.implCost > 0 && (

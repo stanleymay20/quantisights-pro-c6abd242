@@ -1,141 +1,63 @@
+# Pilot-Readiness Plan — Phases 6–10
 
+The remaining audit findings, grouped by risk and shippability. Each phase is independently deployable and verifiable.
 
-# Forensic UI/UX Audit & Remediation Plan
+## Phase 6 — Quick wins (low risk, high visibility)
 
-## Executive Summary
+- **Broken SAP Connector link** — sidebar points to `/admin/sap-connector` but route is `/admin/connectors/sap`. Update sidebar entry in `DashboardSidebar.tsx`.
+- **Duplicate sidebar Trust Center entries** — both "Governance" and "Governance & Compliance" route to `/trust`. Remove the duplicate.
+- **Bridge Health tense bug** — "Next retry: about 4 hours ago" for a future timestamp. Swap `formatDistanceToNow(..., { addSuffix: true })` for a future-aware helper.
 
-The app has strong architecture but suffers from **vertical compression on mobile** — too many stacked layers before the user reaches actionable content. The dashboard alone renders: GlobalContextBar (28px) → IntelligenceStatusBar (36px) → Header (56px) → DemoBanner (~60px) → Greeting → HeroInsight (~200px+ of dense card) → DecisionMemoryWidget → SystemHealthDashboard — all before the actual command center. On a 390px viewport with browser chrome, users see almost no actionable content above the fold.
+## Phase 7 — Dataset ingestion cleanup
 
----
+16 datasets stuck in `status='processing'` since March 2026 (11× "Middle_East_Economic_Data", 7× "results"). None will ever complete — worker was cancelled long ago.
 
-## Phase 1 — Critical Mobile Fixes (P0)
+- Migration: mark all `datasets` with `status='processing' AND created_at < now() - interval '24 hours'` as `status='failed'`, set `error_message='Ingestion worker abandoned; timeout after 24h'`.
+- Add a nightly cleanup job (`retention-cleanup` already exists) or a Postgres function `mark_stuck_datasets_failed()` invoked hourly, so this doesn't recur.
+- Data Catalog summary stats bug: header shows "0 Active Datasets" contradicting 31 rows. Root-caused in `DataCatalog.tsx` — likely counting `status='active'` but seed data has mixed cases. Verify and fix the aggregation.
 
-### 1.1 Hide GlobalContextBar on mobile
-The org → workspace → project → dataset breadcrumb strip adds 28px of clipped, near-useless chrome on mobile. Hide it below `md` breakpoint — that context is already in the sidebar and header OrgSwitcher.
+## Phase 8 — System Health cron visibility
 
-**File:** `src/components/layout/GlobalContextBar.tsx`
-- Add `hidden md:flex` to the container div
+Investigation shows cron_run_log has 4,765 rows in 7 days: `health-check` 2012, `pipeline-orchestrator` 2011, `alert-monitor` 672, `convergence-reconcile` 28, `evaluate-outcomes` 28, `adaptive-calibration` 14. But `useSystemHealth` shows "no runs" for all six critical jobs.
 
-### 1.2 Collapse IntelligenceStatusBar on mobile
-The scrolling status strip (system status, risk, signals, advisories, freshness) clips on 390px. On mobile, show only the most critical indicator (system status dot + risk level), hide the rest.
+Two possible causes:
+1. **RLS**: `cron_run_log` may not be readable to org members (system-scoped table). Check policies; if so, expose via `SECURITY DEFINER` RPC `get_cron_health_last_24h(_job_names text[])`.
+2. **Job name mismatch**: `CRITICAL_JOBS` array lists `retention-cleanup` and `morning-brief`, neither present in `cron_run_log`. Verify these jobs actually exist in `pg_cron.job`; either re-enable or remove from the critical list.
 
-**File:** `src/components/dashboard/IntelligenceStatusBar.tsx`
-- Wrap non-essential segments in `hidden sm:flex`
-- Reduce height to `h-7` on mobile
+Also fix the Procurement Pack "7 autonomous orchestration jobs" claim — reduce to reflect reality (6 or actual live count).
 
-### 1.3 Compact Dashboard header on mobile
-The header has OrgSwitcher, ProjectSwitcher, refresh, notifications, user menu all on one 56px bar. On mobile, OrgSwitcher and ProjectSwitcher text overflows.
+## Phase 9 — Governance audit + Trust evidence
 
-**File:** `src/pages/Dashboard.tsx`
-- Reduce header height to `h-12` on mobile
-- Hide ProjectSwitcher label on mobile (icon-only)
-- Tighten padding
+- **`context_governance_audit` is empty** (verified: 0 rows). The writer `recordGovernanceUse` in `_shared/governance-audit.ts` exists but is not called from any edge function currently active in the decision pipeline. Wire it into `auto-create-decisions` and `prescriptive-advisory` so every new decision/advisory writes one row.
+- **One-shot backfill** for existing 697 decisions: insert synthetic audit rows citing the org's current governance profile with `backfilled=true` in `decision_path`.
+- **Trust Center "Evidence unavailable"** — `trust-center.ts` returns hardcoded "Evidence unavailable" for control source/method/owner. Populate from real values: SOC2 refs, ISO27001 refs, `subprocessor_registry`, `procurement_readiness_items` (which already exist).
 
-### 1.4 Make HeroInsight card mobile-readable
-Currently renders: signal label, confidence badge, message, recommended action, estimated impact, consequence of inaction, owner/timeframe/readiness, reasoning, category/evidence chain, and "Resolve" button — ALL in one dense card. On 390px this is ~250px+ of compressed text.
+## Phase 10 — AICIS + Advisory timeout
 
-**File:** `src/components/dashboard/HeroInsight.tsx`
-- Hide the reasoning line (`Based on:...`) on mobile
-- Hide the evidence chain footer on mobile
-- Move "Resolve" button from far-right column to a full-width bottom action
-- Reduce padding from `p-5` to `p-3 sm:p-5`
-- Reduce icon size on mobile
+- **AICIS 221-failure streak**: pull last 20 `sync-aicis-bridge` edge function logs to identify the actual error (expected 401 from stale key or endpoint 4xx). Either rotate `AICIS_API_KEY` secret or disable the connector's schedule until credentials are refreshed. Add a "Paused — no valid credential" state to `/aicis-sync` so UI reflects reality instead of showing "Idle" indefinitely.
+- **Advisory `Run Analysis` timeout**: `prescriptive-advisory` currently runs synchronously past the 60s edge function ceiling on datasets with >200 rows. Refactor to enqueue via `pipeline_runs` and return a `job_id` immediately; polling UI already exists in similar flows.
 
-### 1.5 CookieConsent banner — add bottom safe area
-The cookie banner is `fixed bottom-0` with `z-[100]` and overlaps mobile browser navigation chrome + any bottom content.
+## Deferred (not blocking pilot but tracked)
 
-**File:** `src/components/CookieConsent.tsx`
-- Add `pb-safe` / `safe-area-bottom` padding
-- Reduce padding on mobile from `p-4` to `p-3`
-- Make the card more compact on mobile
+- Item 10 (internal_reference_data quality — 107% renewable share): needs domain-specific validators per metric, out of scope this pass.
+- Item 11 (German localization completion): user is running this in parallel.
+- Item 12–15 (SSO not configured, encryption inherited, retention not configured, governance maturity 0/18): configuration tasks for the pilot org, not code bugs.
+- Item 16 (Intelligence Inbox trust badges): needs schema wiring across `aicis_intelligence_items` — depends on Phase 10 AICIS fix landing first.
 
----
+## Technical details
 
-## Phase 2 — Dashboard Density Reduction (P1)
+- Sidebar path fix: single-line edit in `src/components/dashboard/DashboardSidebar.tsx`.
+- Stuck datasets migration: `UPDATE public.datasets SET status='failed'...` — must go through migration tool since it changes rows via schema-level ops (or via `supabase--insert`).
+- Cron RPC: `create or replace function get_cron_health(_jobs text[], _since timestamptz) returns setof cron_run_log language sql security definer`.
+- Trust Center evidence: replace `evidenceUnavailable` sentinel in `src/lib/trust-center.ts` with structured sources.
+- AICIS pause state: add `paused_reason` column to `connector_configs` (nullable text) and surface on `AicisSync.tsx`.
 
-### 2.1 Collapse SystemHealthDashboard on mobile
-The full system health dashboard with progress bars and multiple cards is too dense for mobile first-view. Show a single-line summary with expandable detail.
+## Sequencing
 
-**File:** `src/components/dashboard/SystemHealthDashboard.tsx`
-- On mobile: show a single compact status line (e.g., "System: Healthy · Loop: 50%")
-- Make the full card expandable/collapsible
+Phase 6 first (10 min, pure UI). Then 7 (data cleanup migration). Then 8 (RLS/RPC). Then 9 (largest, governance). Phase 10 last — AICIS needs log inspection which may reveal we can't fix without new credentials.
 
-### 2.2 Collapse DecisionMemoryWidget on mobile
-Similar issue — full lifecycle timeline with learning narratives is too dense.
+## Non-goals
 
-**File:** `src/components/dashboard/DecisionMemoryWidget.tsx`
-- On mobile: show summary count only (e.g., "3 decisions tracked · 1 recalibrated")
-- Expandable for detail
-
-### 2.3 Simplify BoardroomBrief on mobile
-4 text paragraphs + footer with counts + link. On mobile, reduce to 2 lines + action.
-
-**File:** `src/components/dashboard/BoardroomBrief.tsx`
-- On mobile: hide the risk line and calibration line
-- Reduce padding from `p-5` to `p-3 sm:p-5`
-
-### 2.4 ProtectionStatus — compact mobile grid
-The 4-column driver grid becomes 2x2 but is still dense.
-
-**File:** `src/components/dashboard/ProtectionStatus.tsx`
-- On mobile: show as a horizontal scrollable strip instead of grid
-- Reduce padding
-
----
-
-## Phase 3 — Global Design System Fixes (P2)
-
-### 3.1 Consistent card padding
-Cards across the app use inconsistent padding: `p-4`, `p-5`, `p-6`. Standardize to `p-3 sm:p-4 md:p-5` for data-dense cards.
-
-### 3.2 Typography hierarchy
-The `text-[10px]` and `text-[11px]` sizes are used extensively for metadata. On mobile these are barely readable. Set a floor of `text-[11px]` for all visible text, use `text-xs` (12px) as the minimum for actionable content.
-
-### 3.3 Badge/pill overflow
-Confidence badges, status badges, and escalation pills can wrap awkwardly on mobile. Add `whitespace-nowrap` and ensure flex containers use `flex-wrap` with proper gaps.
-
----
-
-## Phase 4 — Page-by-Page Fixes
-
-### Landing page
-- Already mobile-optimized with responsive breakpoints
-- Minor: CTA buttons stack correctly, capability pills wrap well
-- No critical fixes needed
-
-### Login/Register
-- Standard auth forms, already mobile-safe
-- No fixes needed
-
-### Settings/Admin pages
-- These use standard form layouts — verify they don't overflow on mobile
-- Low priority
-
-### Advisory/Decisions pages
-- Decision queue cards have similar density issues to HeroInsight
-- Apply same pattern: reduce metadata on mobile, move actions to bottom
-
----
-
-## Implementation Order
-
-1. GlobalContextBar hide on mobile (1 line change)
-2. IntelligenceStatusBar mobile collapse (3-4 line changes)
-3. Dashboard header compaction (5-6 line changes)
-4. HeroInsight mobile readability (15-20 line changes)
-5. CookieConsent safe-area fix (3-4 line changes)
-6. SystemHealthDashboard mobile collapse (10-15 lines)
-7. DecisionMemoryWidget mobile collapse (10-15 lines)
-8. BoardroomBrief mobile simplification (5-6 lines)
-9. ProtectionStatus mobile compaction (5-6 lines)
-
-**Total: ~9 files, ~70-80 lines of changes. All safe, non-breaking, CSS/conditional-render only.**
-
----
-
-## Expected Outcome
-
-Before: On 390px, the user sees ~120px of chrome (context bar + status bar + header) before any content, then must scroll through 500px+ of dense cards before reaching actionable surfaces.
-
-After: On 390px, the user sees ~48px of chrome (compact header only), then a clean greeting, a readable signal card with visible "Resolve" action, and compact summary widgets — all above the fold.
-
+- Not fixing the underlying advisory recommendation semantics (Amazon → EU AI Act mismatch).
+- Not building new UI for governance maturity onboarding.
+- Not touching the German translation runtime file.

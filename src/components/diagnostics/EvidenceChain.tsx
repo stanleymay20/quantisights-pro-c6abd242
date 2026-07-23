@@ -28,7 +28,7 @@ const EvidenceChain = ({ diagnostic: d, datasetName }: EvidenceChainProps) => {
       detail: d.confidence_source === "adaptive_calibration" ? "Bayesian calibration applied" : "Statistical inference",
       sub: d.adaptive_calibration_applied
         ? `Model v${d.calibration_model_version} · Band: ${d.calibration_band_used} · Correction: ${(d.calibration_correction_applied_pp ?? 0) > 0 ? "+" : ""}${d.calibration_correction_applied_pp}pp`
-        : `Confidence: ${d.capped_confidence}% (cap: ${d.confidence_cap_reason})`,
+        : `Confidence: ${Math.round(d.capped_confidence)}% (cap: ${d.confidence_cap_reason})`,
     },
     {
       icon: AlertTriangle,

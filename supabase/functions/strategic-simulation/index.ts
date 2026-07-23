@@ -483,12 +483,13 @@ serve(async (req) => {
     }
 
     const calibration = await calibrateFromHistory(serviceClient, organization_id, dataset_id);
-    if (!calibration.ok) {
+    if (calibration.ok === false) {
+      const calibFail = calibration as { ok: false; reason?: string; required?: unknown; available?: unknown };
       return new Response(JSON.stringify({
-        error: calibration.reason,
+        error: calibFail.reason,
         details: {
-          required: calibration.required,
-          available: calibration.available,
+          required: calibFail.required,
+          available: calibFail.available,
           recommendation: "Provide deeper time-series history to enable calibrated simulation.",
         },
       }), {

@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Crosshair, Plus, Loader2, ChevronDown, ChevronRight, Target, CheckCircle2, AlertCircle } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface Objective {
   id: string;
@@ -45,7 +46,17 @@ const STATUS_COLORS: Record<string, string> = {
   active: "text-foreground bg-muted",
 };
 
-const TIME_PERIODS = ["Q1 2026", "Q2 2026", "Q3 2026", "Q4 2026", "H1 2026", "H2 2026", "FY 2026"];
+// Hardcoding "2026" meant this list (and the default selection below) went
+// stale the moment the calendar rolled past that year, and even within
+// 2026 the default always pointed at Q1 regardless of the actual current
+// quarter. Derive both from the real current date instead.
+const CURRENT_YEAR = new Date().getFullYear();
+const CURRENT_QUARTER = Math.floor(new Date().getMonth() / 3) + 1;
+const TIME_PERIODS = [
+  `Q1 ${CURRENT_YEAR}`, `Q2 ${CURRENT_YEAR}`, `Q3 ${CURRENT_YEAR}`, `Q4 ${CURRENT_YEAR}`,
+  `H1 ${CURRENT_YEAR}`, `H2 ${CURRENT_YEAR}`, `FY ${CURRENT_YEAR}`,
+];
+const DEFAULT_TIME_PERIOD = `Q${CURRENT_QUARTER} ${CURRENT_YEAR}`;
 
 const OKRs = () => {
   const { currentOrgId } = useOrganization();
@@ -57,7 +68,7 @@ const OKRs = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
-  const [newPeriod, setNewPeriod] = useState("Q1 2026");
+  const [newPeriod, setNewPeriod] = useState(DEFAULT_TIME_PERIOD);
   const [saving, setSaving] = useState(false);
 
   // Add KR state
@@ -67,7 +78,7 @@ const OKRs = () => {
   const [krUnit, setKrUnit] = useState("%");
 
   const fetchOKRs = useCallback(async () => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) { setLoading(false); return; }
     setLoading(true);
     const [objRes, krRes] = await Promise.all([
       supabase.from("objectives").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
@@ -75,7 +86,7 @@ const OKRs = () => {
     ]);
     const objs: Objective[] = (objRes.data || []).map((o: any) => ({
       ...o,
-      key_results: (krRes.data || []).filter((kr: any) => kr.objective_id === o.id),
+      key_results: (krRes.data || []).filter((kr: { objective_id?: string; [key: string]: unknown }) => kr.objective_id === o.id),
     }));
     setObjectives(objs);
     setLoading(false);
@@ -157,7 +168,7 @@ const OKRs = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <Crosshair className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">OKR Alignment</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">OKR Alignment</h1>
           </div>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -231,6 +242,7 @@ const OKRs = () => {
                       {krs.map(kr => {
                         const pct = kr.target_value > 0 ? (kr.current_value / kr.target_value) * 100 : 0;
                         return (
+    <SectionErrorBoundary sectionName="OKRs">
                           <div key={kr.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30">
                             {pct >= 100 ? <CheckCircle2 className="w-4 h-4 text-success shrink-0" /> : <Target className="w-4 h-4 text-primary shrink-0" />}
                             <div className="flex-1 min-w-0">
@@ -249,6 +261,7 @@ const OKRs = () => {
                               onChange={e => updateKRProgress(kr.id, Number(e.target.value))}
                             />
                           </div>
+    </SectionErrorBoundary>
                         );
                       })}
 

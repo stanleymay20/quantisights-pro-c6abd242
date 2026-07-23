@@ -1,0 +1,13 @@
+# Python dependencies for Quantivis test harnesses.
+#
+# Used by:
+#   tests/e2e/multi-user-harness.py   (npm run e2e:multi-user)
+#
+# Install (choose one):
+#   pip install -r requirements-dev.txt
+#   uv pip install -r requirements-dev.txt
+#
+# The Playwright browser binaries must also be installed once:
+#   python -m playwright install chromium
+
+playwright==1.48.0

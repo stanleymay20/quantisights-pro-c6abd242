@@ -22,10 +22,12 @@ import RetentionPolicySettings from "@/components/settings/RetentionPolicySettin
 import GovernanceKPIs from "@/components/dashboard/GovernanceKPIs";
 import MFAEnroll from "@/components/auth/MFAEnroll";
 import SecurityPosture from "@/components/security/SecurityPosture";
+import { OrgSecuritySettings } from "@/components/security/OrgSecuritySettings";
 import SessionManagement from "@/components/auth/SessionManagement";
 import AuthEventLog from "@/components/auth/AuthEventLog";
 import PasskeyManagement from "@/components/auth/PasskeyManagement";
 import SCIMTokenManager from "@/components/auth/SCIMTokenManager";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -49,6 +51,7 @@ const Settings = () => {
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
   const [seedingDemo, setSeedingDemo] = useState(false);
 
   // Profile
@@ -118,7 +121,7 @@ const Settings = () => {
         setWeeklyBrief(prefs.weekly_brief_enabled);
         setAlertThreshold(prefs.alert_threshold);
         setEscalationThreshold(prefs.escalation_threshold);
-        const recipients = (prefs as any).email_recipients || [];
+        const recipients = ((prefs as Record<string, unknown>).email_recipients as string[]) || [];
         setEmailRecipients(recipients);
         savedNotif.current = {
           emailEnabled: prefs.email_enabled,
@@ -169,8 +172,8 @@ const Settings = () => {
       setFullName(trimmed);
       await refreshProfile();
       toast({ title: "Profile updated" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally { setSavingProfile(false); }
   };
 
@@ -189,8 +192,8 @@ const Settings = () => {
       if (error) throw error;
       savedOrg.current = { name: trimmedName, industry: trimmedIndustry || "" };
       toast({ title: "Organization updated" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally { setSavingOrg(false); }
   };
 
@@ -210,8 +213,8 @@ const Settings = () => {
       if (error) throw error;
       savedNotif.current = { emailEnabled, weeklyBrief, alertThreshold: safeAlert, escalationThreshold: safeEsc, emailRecipients: [...emailRecipients] };
       toast({ title: "Notification preferences saved" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally { setSavingNotif(false); }
   };
 
@@ -255,28 +258,29 @@ const Settings = () => {
         <header className="h-14 border-b border-border/30 flex items-center px-8 shrink-0 bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
-            <h1 className="text-xl font-semibold font-display">Settings</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Settings</h1>
           </div>
         </header>
 
         <main className="flex-1 p-8 overflow-auto">
           <div className="max-w-3xl mx-auto">
             <Tabs defaultValue="profile" className="space-y-6">
-              <TabsList className="grid w-full grid-cols-4 sm:grid-cols-7">
-                <TabsTrigger value="profile" className="gap-1 text-xs sm:text-sm sm:gap-2"><User className="w-4 h-4 hidden sm:block" /> Profile</TabsTrigger>
-                <TabsTrigger value="appearance" className="gap-1 text-xs sm:text-sm sm:gap-2"><Sun className="w-4 h-4 hidden sm:block" /> Appearance</TabsTrigger>
-                <TabsTrigger value="security" className="gap-1 text-xs sm:text-sm sm:gap-2"><ShieldCheck className="w-4 h-4 hidden sm:block" /> Security</TabsTrigger>
-                <TabsTrigger value="organization" className="gap-1 text-xs sm:text-sm sm:gap-2"><Building2 className="w-4 h-4 hidden sm:block" /> Organization</TabsTrigger>
-                <TabsTrigger value="identity" className="gap-1 text-xs sm:text-sm sm:gap-2"><Compass className="w-4 h-4 hidden sm:block" /> Identity</TabsTrigger>
-                <TabsTrigger value="notifications" className="gap-1 text-xs sm:text-sm sm:gap-2"><Bell className="w-4 h-4 hidden sm:block" /> Notifications</TabsTrigger>
-                <TabsTrigger value="audit" className="gap-1 text-xs sm:text-sm sm:gap-2" onClick={fetchAuditLog}><ScrollText className="w-4 h-4 hidden sm:block" /> Audit</TabsTrigger>
+              <TabsList className="border-0 bg-transparent p-0 gap-0 border-b border-border/30 rounded-none justify-start h-auto w-full flex-wrap">
+                <TabsTrigger value="profile" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><User className="w-4 h-4 hidden sm:block" /> Profile</TabsTrigger>
+                <TabsTrigger value="appearance" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><Sun className="w-4 h-4 hidden sm:block" /> Appearance</TabsTrigger>
+                <TabsTrigger value="security" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><ShieldCheck className="w-4 h-4 hidden sm:block" /> Security</TabsTrigger>
+                <TabsTrigger value="organization" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><Building2 className="w-4 h-4 hidden sm:block" /> Organization</TabsTrigger>
+                <TabsTrigger value="identity" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><Compass className="w-4 h-4 hidden sm:block" /> Identity</TabsTrigger>
+                <TabsTrigger value="notifications" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5"><Bell className="w-4 h-4 hidden sm:block" /> Notifications</TabsTrigger>
+                <TabsTrigger value="audit" className="rounded-none border-0 border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none text-[13px] pb-2 pt-1 px-3 h-auto font-medium gap-1.5" onClick={() => fetchAuditLog()}><ScrollText className="w-4 h-4 hidden sm:block" /> Audit Log</TabsTrigger>
               </TabsList>
 
               {/* Profile */}
               <TabsContent value="profile">
+                <SectionErrorBoundary sectionName="Profile settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-2"><User className="w-5 h-5 text-primary" /> Profile Settings</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-[14px] font-semibold text-foreground">Profile</CardTitle></CardHeader>
                     <CardContent className="space-y-6">
                       <div className="space-y-2">
                         <Label>Email</Label>
@@ -288,23 +292,63 @@ const Settings = () => {
                         <Input value={fullName} onChange={e => setFullName(e.target.value)} maxLength={200} placeholder="Your full name" />
                       </div>
                       <Button onClick={saveProfile} disabled={savingProfile || !profileDirty} className="gap-2">
-                        {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Profile
+                        {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
                       </Button>
                     </CardContent>
                   </Card>
 
-                  {/* Account Deletion */}
-                  <Card className="border-destructive/30 mt-6">
+                  {/* Current Role — read-only display */}
+                  <Card className="mt-6">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        Role
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium capitalize bg-primary/10 text-primary px-3 py-1 rounded-full">
+                          {orgRole ?? "member"}
+                        </span>
+                        <p className="text-xs text-muted-foreground">
+                          Your role controls which sections appear in your sidebar.
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground space-y-1 bg-muted/30 rounded-lg p-3">
+                        {orgRole === "owner" || orgRole === "admin" ? (
+                          <p>Full access — all 9 sidebar sections visible.</p>
+                        ) : orgRole === "executive" ? (
+                          <p>Executive access — Home, Copilot, Decisions, Monitor, Reports, Governance, Team, Settings.</p>
+                        ) : orgRole === "analyst" ? (
+                          <p>Analyst access — Home, Copilot, Decisions, Reports, Data, Monitor, Settings.</p>
+                        ) : orgRole === "steward" ? (
+                          <p>Steward access — Home, Copilot, Decisions, Data, Governance, Settings.</p>
+                        ) : (
+                          <p>Viewer access — Home, Copilot, Decisions, Reports, Settings.</p>
+                        )}
+                        <p className="text-[10px] mt-1 opacity-70">To change your role, contact your organization owner.</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Account Deletion — scroll-mt pushes this below the fold on page load */}
+                  <Card className="border-destructive/30 mt-6 scroll-mt-8" id="danger-zone">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-destructive"><AlertTriangle className="w-5 h-5" /> Danger Zone</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm text-muted-foreground mb-4">
+                      <p className="text-sm text-muted-foreground mb-2">
                         Permanently delete your account and all associated data. This action cannot be undone. Your data will be purged per our <a href="/data-retention" className="text-primary hover:underline">Data Retention Policy</a>.
                       </p>
+                      <p className="text-xs text-muted-foreground mb-4">Type <strong>delete</strong> below to enable the button.</p>
+                      <Input
+                        value={deleteConfirm}
+                        onChange={(e) => setDeleteConfirm(e.target.value)}
+                        placeholder="Type delete to confirm"
+                        className="mb-3 max-w-xs"
+                      />
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="destructive" className="gap-2"><Trash2 className="w-4 h-4" /> Delete Account</Button>
+                          <Button variant="destructive" className="gap-2" disabled={deleteConfirm !== "delete"}><Trash2 className="w-4 h-4" /> Delete Account</Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
@@ -325,8 +369,8 @@ const Settings = () => {
                                   if (error) throw error;
                                   await signOut();
                                   toast({ title: "Account deleted", description: "Your data has been permanently removed." });
-                                } catch (err: any) {
-                                  toast({ title: "Error", description: err.message, variant: "destructive" });
+                                } catch (err: unknown) {
+                                  toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
                                 } finally {
                                   setDeletingAccount(false);
                                 }
@@ -341,10 +385,12 @@ const Settings = () => {
                     </CardContent>
                   </Card>
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Appearance */}
               <TabsContent value="appearance">
+                <SectionErrorBoundary sectionName="Appearance settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <Card>
                     <CardHeader><CardTitle className="flex items-center gap-2"><Sun className="w-5 h-5 text-primary" /> Appearance</CardTitle></CardHeader>
@@ -373,11 +419,14 @@ const Settings = () => {
                     </CardContent>
                   </Card>
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Security */}
               <TabsContent value="security">
+                <SectionErrorBoundary sectionName="Security settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                  <OrgSecuritySettings />
                   <SecurityPosture />
                   <MFAEnroll />
                   <PasskeyManagement />
@@ -391,10 +440,12 @@ const Settings = () => {
                   <RetentionPolicySettings />
                   <GovernanceKPIs />
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Organization */}
               <TabsContent value="organization">
+                <SectionErrorBoundary sectionName="Organization settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <Card>
                     <CardHeader><CardTitle className="flex items-center gap-2"><Building2 className="w-5 h-5 text-primary" /> Organization Settings</CardTitle></CardHeader>
@@ -435,16 +486,23 @@ const Settings = () => {
                           className="gap-2"
                           onClick={async () => {
                             setSeedingDemo(true);
+                            toast({ title: "Seeding demo data…", description: "Loading 15 months of Acme Corp sample data." });
                             try {
                               const { data, error } = await supabase.functions.invoke("seed-demo-data");
                               if (error) throw error;
-                              if (data?.error) throw new Error(data.error);
+                              if (data?.error) throw new Error(String(data.error));
+                              const summary = data?.summary;
                               toast({
                                 title: "Demo data loaded",
-                                description: `${data.summary.metrics} metrics, ${data.summary.decisions} decisions, ${data.summary.advisories} advisories seeded.`,
+                                description: summary
+                                  ? `${summary.metrics ?? 0} metrics, ${summary.decisions ?? 0} decisions, ${summary.advisories ?? 0} advisories seeded.`
+                                  : "Sample data loaded. Refresh the dashboard to see it.",
                               });
-                            } catch (err: any) {
-                              toast({ title: "Error", description: err.message, variant: "destructive" });
+                              // Soft reload to reflect new data
+                              setTimeout(() => window.location.reload(), 1500);
+                            } catch (err: unknown) {
+                              const msg = err instanceof Error ? err.message : "The demo seed function could not be reached. Please try again.";
+                              toast({ title: "Demo seed failed", description: msg, variant: "destructive" });
                             } finally {
                               setSeedingDemo(false);
                             }
@@ -457,10 +515,12 @@ const Settings = () => {
                     </Card>
                   )}
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Notifications */}
               <TabsContent value="notifications">
+                <SectionErrorBoundary sectionName="Notification settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <Card>
                     <CardHeader><CardTitle className="flex items-center gap-2"><Bell className="w-5 h-5 text-primary" /> Notification Preferences</CardTitle></CardHeader>
@@ -475,12 +535,18 @@ const Settings = () => {
                       </div>
                       <div className="space-y-2">
                         <Label>Alert Threshold (Risk Score)</Label>
-                        <Input type="number" min={0} max={100} value={alertThreshold} onChange={e => setAlertThreshold(Number(e.target.value))} />
+                        {/* HTML min/max on type="number" only affects the spinner
+                            buttons and :invalid styling, not typed/pasted values --
+                            saveNotifications() already clamps before persisting, but
+                            leaving the field itself unclamped let a user type e.g.
+                            99999999, see it sit there, and get a bare "saved"
+                            toast with no indication it was silently capped to 100. */}
+                        <Input type="number" min={0} max={100} value={alertThreshold} onChange={e => setAlertThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
                         <p className="text-xs text-muted-foreground">Trigger alerts when risk score exceeds this value</p>
                       </div>
                       <div className="space-y-2">
                         <Label>Escalation Threshold</Label>
-                        <Input type="number" min={0} max={100} value={escalationThreshold} onChange={e => setEscalationThreshold(Number(e.target.value))} />
+                        <Input type="number" min={0} max={100} value={escalationThreshold} onChange={e => setEscalationThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
                         <p className="text-xs text-muted-foreground">Auto-escalate to board when score exceeds this value</p>
                       </div>
                       <div className="space-y-2">
@@ -493,7 +559,7 @@ const Settings = () => {
                             maxLength={255}
                             onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addRecipient())}
                           />
-                          <Button variant="outline" size="sm" onClick={addRecipient}><Mail className="w-4 h-4" /></Button>
+                          <Button variant="outline" size="sm" aria-label="Add email recipient" onClick={addRecipient}><Mail className="w-4 h-4" /></Button>
                         </div>
                         <div className="flex flex-wrap gap-2 mt-2">
                           {emailRecipients.map(email => (
@@ -510,10 +576,12 @@ const Settings = () => {
                     </CardContent>
                   </Card>
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Audit Log */}
               <TabsContent value="audit">
+                <SectionErrorBoundary sectionName="Audit log">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <Card>
                     <CardHeader>
@@ -553,14 +621,20 @@ const Settings = () => {
                     </CardContent>
                   </Card>
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
 
               {/* Organizational Identity */}
               <TabsContent value="identity">
+                <SectionErrorBoundary sectionName="Organizational identity settings">
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <OrganizationalIdentitySettings organizationId={currentOrgId} />
                 </motion.div>
+                </SectionErrorBoundary>
               </TabsContent>
+
+
+
             </Tabs>
           </div>
         </main>

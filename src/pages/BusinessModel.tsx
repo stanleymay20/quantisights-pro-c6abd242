@@ -111,7 +111,7 @@ const VALUE_PROPS = [
 
 const BusinessModel = () => {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       <Navbar />
 
       {/* Hero */}
@@ -119,7 +119,7 @@ const BusinessModel = () => {
         <div className="container mx-auto px-6">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-16">
             <Badge variant="outline" className="mb-4 text-xs tracking-widest uppercase">Business Model Canvas</Badge>
-            <h1 className="text-3xl sm:text-5xl font-bold font-display mb-4">
+            <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
               B2B Decision Intelligence <span className="gradient-text">Revenue Engine</span>
             </h1>
             <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
@@ -145,11 +145,11 @@ const BusinessModel = () => {
                         <span className="text-xs font-mono text-muted-foreground mb-2">LAYER {layer.number}</span>
                         <div className="flex items-center gap-3 mb-3">
                           <layer.icon className={`w-6 h-6 ${layer.color}`} />
-                          <h3 className="text-xl font-bold font-display">{layer.title}</h3>
+                          <h3 className="text-[16px] font-semibold tracking-tight tracking-tight">{layer.title}</h3>
                         </div>
                         <p className="text-sm text-muted-foreground text-center lg:text-left">{layer.subtitle}</p>
                         <div className="mt-4 pt-4 border-t border-border/30 w-full">
-                          <p className={`text-2xl font-bold font-display ${layer.color}`}>{layer.pricing}</p>
+                          <p className={`text-[18px] font-semibold tracking-tight ${layer.color}`}>{layer.pricing}</p>
                           <p className="text-xs text-muted-foreground">{layer.pricingNote}</p>
                         </div>
                       </div>
@@ -189,7 +189,7 @@ const BusinessModel = () => {
             viewport={{ once: true }}
             className="max-w-4xl mx-auto mb-20"
           >
-            <h2 className="text-2xl font-bold font-display text-center mb-8">
+            <h2 className="text-[18px] font-semibold tracking-tight text-center mb-8">
               Revenue <span className="gradient-text">Flywheel</span>
             </h2>
             <div className="flex flex-wrap items-center justify-center gap-3">
@@ -212,7 +212,7 @@ const BusinessModel = () => {
             viewport={{ once: true }}
             className="max-w-5xl mx-auto mb-20"
           >
-            <h2 className="text-2xl font-bold font-display text-center mb-3">
+            <h2 className="text-[18px] font-semibold tracking-tight text-center mb-3">
               Who <span className="gradient-text">Pays</span>
             </h2>
             <p className="text-muted-foreground text-center mb-8 text-sm">The most valuable buyers are institutional decision-makers, not random small businesses.</p>
@@ -242,7 +242,7 @@ const BusinessModel = () => {
               <CardContent className="p-8 space-y-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Layers className="w-5 h-5 text-primary" />
-                  <h3 className="text-lg font-bold font-display">Core Value Proposition</h3>
+                  <h3 className="text-lg font-bold tracking-tight">Core Value Proposition</h3>
                 </div>
                 {VALUE_PROPS.map((v, i) => (
                   <p key={i} className="text-sm text-foreground/80 flex items-start gap-3">
@@ -261,7 +261,7 @@ const BusinessModel = () => {
             viewport={{ once: true }}
             className="max-w-4xl mx-auto mb-20"
           >
-            <h2 className="text-2xl font-bold font-display text-center mb-8">
+            <h2 className="text-[18px] font-semibold tracking-tight text-center mb-8">
               Three Ways to <span className="gradient-text">Describe</span> the Model
             </h2>
             <div className="grid md:grid-cols-3 gap-4">

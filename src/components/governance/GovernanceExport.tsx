@@ -161,7 +161,8 @@ export const GovernanceExportButton = ({ data }: { data: GovernanceExportData })
           toast({ title: "Downloaded as HTML — open and print to PDF" });
         }
       }
-    } catch {
+    } catch (e: unknown) {
+      console.error("[GovernanceExport] Export failed:", e instanceof Error ? e.message : e);
       toast({ title: "Export failed", variant: "destructive" });
     } finally {
       setExporting(false);

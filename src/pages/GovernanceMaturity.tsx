@@ -1,4 +1,5 @@
 import { useState } from "react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { motion } from "framer-motion";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -173,9 +174,9 @@ const GovernanceMaturity = () => {
       organization_id: currentOrgId,
       assessed_by: user.id,
       overall_score: overall,
-      dimensions: dimScores,
-      recommendations,
-    } as any);
+      dimensions: dimScores as unknown as import("@/integrations/supabase/types").Json,
+      recommendations: recommendations as unknown as import("@/integrations/supabase/types").Json,
+    });
 
     if (error) {
       toast({ title: "Save failed", description: error.message, variant: "destructive" });
@@ -197,7 +198,7 @@ const GovernanceMaturity = () => {
       <div className="flex items-center gap-3">
         <SidebarMobileToggle />
         <div>
-          <h1 className="text-2xl font-bold font-display">Governance Maturity Assessment</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight">Governance Maturity Assessment</h1>
           <p className="text-sm text-muted-foreground">
             Evaluate your organization across 6 dimensions from the Data Governance framework.
           </p>
@@ -214,7 +215,7 @@ const GovernanceMaturity = () => {
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
-                  <span className="text-4xl font-bold font-display">{overall}</span>
+                  <span className="text-4xl font-bold tracking-tight">{overall}</span>
                   <span className="text-muted-foreground text-sm">/100</span>
                   <Badge className={`${level.bg} ${level.color} border-0 text-xs`}>
                     {level.label}
@@ -311,7 +312,7 @@ const GovernanceMaturity = () => {
 
       {/* Executive Summary + Trend */}
       {lastAssessment && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+        <SectionErrorBoundary sectionName="Governance Executive Summary">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
@@ -405,7 +406,7 @@ const GovernanceMaturity = () => {
               )}
             </CardContent>
           </Card>
-        </motion.div>
+        </SectionErrorBoundary>
       )}
     </div>
   );

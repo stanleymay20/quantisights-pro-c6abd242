@@ -48,7 +48,7 @@ export function usePermissions() {
 
   const hasPermission = (permission: Permission): boolean => {
     // Check explicit permissions first
-    const explicit = permissions.find((p: any) => p.permission === permission);
+    const explicit = permissions.find((p: { permission: string; granted: boolean }) => p.permission === permission);
     if (explicit) return explicit.granted;
 
     // Fallback defaults by role

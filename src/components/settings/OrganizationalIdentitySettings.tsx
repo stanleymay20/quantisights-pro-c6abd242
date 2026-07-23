@@ -21,7 +21,7 @@ interface Props {
 const TagInput = ({
   label, description, icon: Icon, values, onChange, placeholder,
 }: {
-  label: string; description: string; icon: any; values: string[];
+  label: string; description: string; icon: React.ElementType; values: string[];
   onChange: (v: string[]) => void; placeholder: string;
 }) => {
   const [input, setInput] = useState("");
@@ -128,8 +128,8 @@ const OrganizationalIdentitySettings = ({ organizationId }: Props) => {
     try {
       await saveIdentity(updates);
       toast({ title: "Identity profile saved", description: "Organizational identity updated — this will influence all future decision intelligence." });
-    } catch (err: any) {
-      toast({ title: "Error saving", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "Error saving", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     }
   }, [vision, mission, coreValues, strategicPriorities, riskAppetite, innovationPosture, decisionSpeed, stakeholderOrientation, decisionPrinciples, ethicalBoundaries, governanceModel, competitivePosition, regulatoryEnv, marketStage, industryContext, stakeholders, saveIdentity, toast]);
 
@@ -174,12 +174,12 @@ const OrganizationalIdentitySettings = ({ organizationId }: Props) => {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Vision Statement</Label>
-            <Textarea value={vision} onChange={(e) => setVision(e.target.value)} placeholder="Our long-term aspirational goal..." rows={3} />
+            <Label htmlFor="vision-statement">Vision Statement</Label>
+            <Textarea id="vision-statement" value={vision} onChange={(e) => setVision(e.target.value)} placeholder="Our long-term aspirational goal..." rows={3} />
           </div>
           <div className="space-y-2">
-            <Label>Mission Statement</Label>
-            <Textarea value={mission} onChange={(e) => setMission(e.target.value)} placeholder="Why our organization exists and what we do..." rows={3} />
+            <Label htmlFor="mission-statement">Mission Statement</Label>
+            <Textarea id="mission-statement" value={mission} onChange={(e) => setMission(e.target.value)} placeholder="Why our organization exists and what we do..." rows={3} />
           </div>
         </CardContent>
       </Card>
@@ -328,17 +328,17 @@ const OrganizationalIdentitySettings = ({ organizationId }: Props) => {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Industry Context</Label>
-              <Input value={industryContext} onChange={(e) => setIndustryContext(e.target.value)} placeholder="e.g., B2B SaaS, Healthcare, Manufacturing" />
+              <Label htmlFor="industry-context">Industry Context</Label>
+              <Input id="industry-context" value={industryContext} onChange={(e) => setIndustryContext(e.target.value)} placeholder="e.g., B2B SaaS, Healthcare, Manufacturing" />
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Competitive Position</Label>
-            <Textarea value={competitivePosition} onChange={(e) => setCompetitivePosition(e.target.value)} placeholder="Key competitive advantages and market position..." rows={2} />
+            <Label htmlFor="competitive-position">Competitive Position</Label>
+            <Textarea id="competitive-position" value={competitivePosition} onChange={(e) => setCompetitivePosition(e.target.value)} placeholder="Key competitive advantages and market position..." rows={2} />
           </div>
           <div className="space-y-2">
-            <Label>Regulatory Environment</Label>
-            <Textarea value={regulatoryEnv} onChange={(e) => setRegulatoryEnv(e.target.value)} placeholder="Key regulations, compliance requirements, political factors..." rows={2} />
+            <Label htmlFor="regulatory-env">Regulatory Environment</Label>
+            <Textarea id="regulatory-env" value={regulatoryEnv} onChange={(e) => setRegulatoryEnv(e.target.value)} placeholder="Key regulations, compliance requirements, political factors..." rows={2} />
           </div>
         </CardContent>
       </Card>
@@ -370,7 +370,7 @@ const OrganizationalIdentitySettings = ({ organizationId }: Props) => {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Influence</Label>
-                <Select value={s.influence} onValueChange={(v: any) => {
+                <Select value={s.influence} onValueChange={(v: "high" | "medium" | "low") => {
                   const updated = [...stakeholders];
                   updated[i] = { ...s, influence: v };
                   setStakeholders(updated);
@@ -385,7 +385,7 @@ const OrganizationalIdentitySettings = ({ organizationId }: Props) => {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Interest</Label>
-                <Select value={s.interest} onValueChange={(v: any) => {
+                <Select value={s.interest} onValueChange={(v: "high" | "medium" | "low") => {
                   const updated = [...stakeholders];
                   updated[i] = { ...s, interest: v };
                   setStakeholders(updated);

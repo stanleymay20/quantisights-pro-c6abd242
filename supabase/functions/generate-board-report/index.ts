@@ -4,6 +4,7 @@ import { applyAdaptiveConfidence, fetchCalibrationModel } from "../_shared/adapt
 import { capConfidence } from "../_shared/confidence-cap.ts";
 import { applyRateLimit } from "../_shared/rate-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { requireFeatureAccess } from "../_shared/feature-access.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
@@ -90,10 +91,15 @@ serve(async (req) => {
         .select("rule_triggered, severity, role_1, role_2, description, created_at")
         .eq("organization_id", organization_id).is("resolved_at", null)
         .order("created_at", { ascending: false }),
+      // A single scenario run inserts one row per (KPI x forecast date) in one
+      // batch, so they typically share the same created_at — "order by
+      // created_at desc limit 10" has no reliable tiebreak and can surface
+      // several dates of the SAME kpi_id instead of a spread across KPIs.
+      // Fetch a wider window and dedupe to one (latest-dated) row per KPI below.
       serviceClient.from("scenario_results")
         .select("kpi_id, baseline_value, simulated_value, delta_value, date")
         .eq("organization_id", organization_id)
-        .order("created_at", { ascending: false }).limit(10),
+        .order("created_at", { ascending: false }).limit(200),
     ]);
 
     const roleRisks = (riskResult.data || []).map((r: any) => ({
@@ -105,7 +111,16 @@ serve(async (req) => {
     const convergence = convergenceLatestResult.data || null;
     const convergenceHistory = convergenceHistoryResult.data || [];
     const conflicts = conflictsResult.data || [];
-    const simulation = simulationResult.data || [];
+
+    // One row per KPI (its latest-dated projection), not the raw top-200 —
+    // otherwise the summary can show several dates of a single KPI instead
+    // of a spread across the org's actual KPIs.
+    const latestByKpi = new Map<string, { kpi_id: string; baseline_value: number; simulated_value: number; delta_value: number; date: string }>();
+    for (const row of (simulationResult.data || []) as Array<{ kpi_id: string; baseline_value: number; simulated_value: number; delta_value: number; date: string }>) {
+      const existing = latestByKpi.get(row.kpi_id);
+      if (!existing || row.date > existing.date) latestByKpi.set(row.kpi_id, row);
+    }
+    const simulation = Array.from(latestByKpi.values());
 
     // Governance posture
     const maxRiskScore = roleRisks.length > 0 ? Math.max(...roleRisks.map((r: any) => r.score)) : 0;

@@ -150,8 +150,10 @@ function deriveReasoning(insight: Insight): string {
   const parts: string[] = [];
   if (insight.category) parts.push(`${insight.category.replace(/_/g, " ")} signal detected`);
   if (insight.sample_size) parts.push(`${insight.sample_size} data points analyzed`);
-  if (insight.variance_score != null && insight.variance_score > 0.3) parts.push("high variance observed");
-  if (insight.data_quality_index != null) parts.push(`data quality: ${Math.round(insight.data_quality_index * 100)}%`);
+  // variance_score and data_quality_index are already 0-100 scale, not 0-1
+  // fractions -- see InsightEvidencePanel.tsx for the same fix and why.
+  if (insight.variance_score != null && insight.variance_score > 30) parts.push("high variance observed");
+  if (insight.data_quality_index != null) parts.push(`data quality: ${Math.round(insight.data_quality_index)}%`);
   return parts.length > 0
     ? `Based on: ${parts.join(" · ")}`
     : "Based on: pattern analysis across available metrics";
@@ -162,20 +164,20 @@ function buildConfidenceExplanation(confidence: number, intel: DerivedIntel, ins
   const drivers = intel.confidenceDrivers.join(", ");
   const limiters: string[] = [...intel.confidenceLimiters];
   if (insight.sample_size != null && insight.sample_size < 30) limiters.unshift("limited sample size");
-  if (insight.data_quality_index != null && insight.data_quality_index < 0.7) limiters.unshift("data quality below threshold");
+  if (insight.data_quality_index != null && insight.data_quality_index < 70) limiters.unshift("data quality below threshold");
   const limiterStr = limiters.length > 0 ? ` · Limited by: ${limiters.join(", ")}` : "";
-  return `${confidence}% — Driven by: ${drivers}${limiterStr}`;
+  return `${Math.round(confidence)}% — Driven by: ${drivers}${limiterStr}`;
 }
 
 /** Derive execution readiness from data quality signals */
 function deriveExecutionReadiness(insight: Insight, confidence: number): { level: string; reason: string } {
   const sample = insight.sample_size ?? 0;
-  const dqi = insight.data_quality_index ?? 0.5;
-  if (confidence >= 70 && sample >= 30 && dqi >= 0.7) return { level: "High", reason: "Strong data foundation" };
+  const dqi = insight.data_quality_index ?? 50;
+  if (confidence >= 70 && sample >= 30 && dqi >= 70) return { level: "High", reason: "Strong data foundation" };
   const gaps: string[] = [];
   if (confidence < 70) gaps.push("moderate confidence");
   if (sample < 30) gaps.push("limited sample");
-  if (dqi < 0.7) gaps.push("data quality gaps");
+  if (dqi < 70) gaps.push("data quality gaps");
   if (gaps.length <= 1) return { level: "Moderate", reason: `Actionable, limited by: ${gaps[0] ?? "data coverage"}` };
   return { level: "Low", reason: `Requires: ${gaps.join(", ")}` };
 }

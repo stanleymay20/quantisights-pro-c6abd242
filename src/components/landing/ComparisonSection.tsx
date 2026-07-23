@@ -67,7 +67,7 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
         className="text-center mb-10"
       >
         <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Traditional BI vs Decision Intelligence</p>
-        <h2 className="text-2xl md:text-3xl font-bold font-display mb-3">
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">
           From Describing Data to <span className="gradient-text">Diagnosing Businesses</span>
         </h2>
         <p className="text-muted-foreground text-sm max-w-xl mx-auto">

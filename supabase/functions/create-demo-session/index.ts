@@ -6,10 +6,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
-  // Rate limit: 5 demo sessions per IP per hour
+  // Rate limit: 15 demo sessions per IP per hour (generous for demos/testing)
   const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const { allowed, retryAfterMs } = checkRateLimit(`demo:${clientIp}`, 5, 3600_000);
-  if (!allowed) return rateLimitResponse(retryAfterMs);
+  const { allowed, retryAfterMs } = checkRateLimit(`demo:${clientIp}`, 15, 3600_000);
+  if (!allowed) return rateLimitResponse(retryAfterMs, req);
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -29,15 +29,21 @@ Deno.serve(async (req) => {
     if (authErr) throw authErr;
     const userId = authData.user.id;
 
-    await new Promise(r => setTimeout(r, 1500));
-
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("organization_id")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (!profile?.organization_id) throw new Error("Profile not created");
-    const orgId = profile.organization_id;
+    // Poll for profile creation (trigger-based) with timeout
+    let orgId: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const { data: profile } = await admin
+        .from("profiles")
+        .select("organization_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (profile?.organization_id) {
+        orgId = profile.organization_id;
+        break;
+      }
+    }
+    if (!orgId) throw new Error("Profile not created after 5s — trigger may have failed");
 
     // Get default workspace
     const { data: workspace } = await admin
@@ -117,7 +123,17 @@ Deno.serve(async (req) => {
         });
       }
     }
-    await admin.from("metrics").insert(metricRows);
+    const { error: metricsErr } = await admin.from("metrics").insert(metricRows);
+    if (metricsErr) throw new Error("Failed to seed demo metrics: " + metricsErr.message);
+
+    // Dashboard first paint depends on precomputed summaries. Without this,
+    // demo data exists but the dashboard still reads hasData=false and shows
+    // the empty-state CTA again.
+    const { error: summaryErr } = await admin.rpc("refresh_metric_summaries", {
+      _org_id: orgId,
+      _dataset_id: datasetId,
+    });
+    if (summaryErr) throw new Error("Failed to prepare demo metric summaries: " + summaryErr.message);
 
     // ─── Executive Risk Index ───
     await admin.from("executive_risk_index").insert([
@@ -148,14 +164,13 @@ Deno.serve(async (req) => {
     ]);
 
     // ─── Decision Ledger ───
-    await admin.from("decision_ledger").insert([
+    const { error: dlErr } = await admin.from("decision_ledger").insert([
       {
         organization_id: orgId, recommended_action: "Expand enterprise sales team by 4 AEs focused on $100K+ ACV deals",
         decision_type: "growth", decision_status: "approved", execution_status: "in_progress",
         chosen_action: "Approved with modified timeline — hiring 3 AEs in Q2, 1 in Q3",
         capped_confidence: 68, raw_confidence: 82, predicted_net_impact: 420000,
         confidence_cap_reason: "Limited historical data on enterprise segment conversion rates",
-        dataset_id: datasetId,
       },
       {
         organization_id: orgId, recommended_action: "Implement automated onboarding reducing time-to-value from 14 days to 3 days",
@@ -164,16 +179,15 @@ Deno.serve(async (req) => {
         capped_confidence: 74, raw_confidence: 88, predicted_net_impact: 180000,
         outcome_delta: 145000, actual_value: 995000, baseline_value: 850000, prediction_accuracy_score: 80,
         confidence_cap_reason: "Churn attribution model has moderate variance",
-        dataset_id: datasetId,
       },
       {
         organization_id: orgId, recommended_action: "Reduce infrastructure costs by migrating to serverless architecture",
         decision_type: "cost_optimization", decision_status: "pending", execution_status: "not_started",
         capped_confidence: 55, raw_confidence: 71, predicted_net_impact: 95000,
         confidence_cap_reason: "Migration complexity estimates based on comparable companies",
-        dataset_id: datasetId,
       },
     ]);
+    if (dlErr) console.error("Decision ledger seed error:", dlErr.message);
 
     // ─── Advisory Instances ───
     await admin.from("advisory_instances").insert([
@@ -278,6 +292,124 @@ Deno.serve(async (req) => {
       },
     ]);
 
+    // ─── Phase 5E.5: Additional intelligence signals (16–24 total) ───
+    // Increases semantic density naturally so topology activation happens
+    // WITHOUT lowering governance thresholds or fabricating relationships.
+    await admin.from("insights").insert([
+      {
+        organization_id: orgId, severity: "high", dataset_id: datasetId,
+        message: "Enterprise pipeline coverage dropped to 2.6x — below the 3.5x healthy threshold. Three enterprise opportunities ($340K combined ACV) slipped from Q2 to Q3 due to procurement delays. Sales cycle elongated from 87 to 112 days.",
+        category: "sales", confidence_score: 76, raw_confidence: 84, capped_confidence: 76,
+        data_quality_index: 85, sample_size: 14,
+        confidence_cap_reason: "Limited enterprise deal sample over the last quarter",
+      },
+      {
+        organization_id: orgId, severity: "medium", dataset_id: datasetId,
+        message: "Engineering velocity declined 18% over the last 6 sprints. Cycle time from PR open to merge increased from 1.4 to 2.1 days. The single largest contributor is review latency on the platform team (4 PRs blocked >5 days).",
+        category: "operations", confidence_score: 72, raw_confidence: 81, capped_confidence: 72,
+        data_quality_index: 78, sample_size: 6,
+        confidence_cap_reason: "Velocity attribution moderately confounded by holiday window",
+      },
+      {
+        organization_id: orgId, severity: "medium", dataset_id: datasetId,
+        message: "Two contract renewals (combined $96K ARR) approach their auto-renew window in 21 days with NPS scores below 30. Without a structured save-motion, base-case loss probability is 55%.",
+        category: "retention", confidence_score: 68, raw_confidence: 76, capped_confidence: 68,
+        data_quality_index: 82, sample_size: 2,
+        confidence_cap_reason: "Small n; loss probability uses peer-benchmarked priors",
+      },
+      {
+        organization_id: orgId, severity: "info", dataset_id: datasetId,
+        message: "Self-serve trial activation rate improved 14% after onboarding redesign (37% → 42%). Time-to-first-value dropped from 14 days to 9 days for SMB cohort. Mid-market cohort still lags at 17 days.",
+        category: "activation", confidence_score: 80, raw_confidence: 87, capped_confidence: 80,
+        data_quality_index: 88, sample_size: 24,
+        confidence_cap_reason: "Cohort split limits per-segment precision",
+      },
+      {
+        organization_id: orgId, severity: "high", dataset_id: datasetId,
+        message: "Compliance attention required: 4 of 12 sub-processors are missing renewed DPAs as of last review. DSGVO Art. 28 exposure if not refreshed before next quarterly procurement review.",
+        category: "governance", confidence_score: 88, raw_confidence: 95, capped_confidence: 85,
+        data_quality_index: 92, sample_size: 12,
+        confidence_cap_reason: "Directly observed; capped per governance policy",
+      },
+      {
+        organization_id: orgId, severity: "medium", dataset_id: datasetId,
+        message: "Support deflection rate from the help center dropped from 38% to 29% over 8 weeks. Three high-traffic articles fall outside their freshness window; the team has not opened maintenance tickets.",
+        category: "support", confidence_score: 70, raw_confidence: 78, capped_confidence: 70,
+        data_quality_index: 80, sample_size: 8,
+        confidence_cap_reason: "Deflection attribution is partly inferential",
+      },
+      {
+        organization_id: orgId, severity: "info", dataset_id: datasetId,
+        message: "Outbound campaign A/B test concluded: variant B (value-led messaging) outperformed variant A (feature-led) by 31% in reply rate at p<0.05 over 1,420 sends.",
+        category: "marketing", confidence_score: 83, raw_confidence: 90, capped_confidence: 83,
+        data_quality_index: 89, sample_size: 1420,
+        confidence_cap_reason: "Large n, controlled experiment",
+      },
+      {
+        organization_id: orgId, severity: "medium", dataset_id: datasetId,
+        message: "Hiring funnel conversion from screen → offer dropped from 7% to 4% over the last two quarters. Time-to-fill on senior engineering roles is now 71 days vs. 49 day target. Two roles open >120 days.",
+        category: "people", confidence_score: 74, raw_confidence: 82, capped_confidence: 74,
+        data_quality_index: 81, sample_size: 38,
+        confidence_cap_reason: "Funnel attribution sensitive to role-mix shifts",
+      },
+    ]);
+
+    await admin.from("advisory_instances").insert([
+      {
+        organization_id: orgId, title: "Sub-processor DPA Refresh — DSGVO Art. 28 Window Closing",
+        action: "Initiate DPA renewal with the four flagged sub-processors before the next quarterly review",
+        advisory_type: "prescriptive", priority: "high", category: "compliance", status: "open",
+        rationale: "Four sub-processors lack renewed DPAs. Under DSGVO Art. 28 controllers must maintain current processor agreements. Procurement reviews on a quarterly cadence and the next window closes in 38 days.",
+        expected_impact: "Closes a high-visibility procurement audit finding before it surfaces in DE enterprise reviews.",
+        impact_score: 70, capped_confidence: 75, raw_confidence: 84, data_quality_index: 90,
+        confidence_cap_reason: "Directly observed registry state; governance cap applied.",
+        dataset_id: datasetId,
+        source_evidence: [
+          { type: "registry", description: "subprocessor_registry rows missing renewal", weight: 0.6 },
+          { type: "policy", description: "DSGVO Art. 28 quarterly cadence", weight: 0.4 },
+        ],
+        playbook_steps: [
+          { step: 1, action: "Pull current sub-processor registry snapshot", owner: "DPO" },
+          { step: 2, action: "Draft renewal request emails to the four vendors", owner: "DPO" },
+          { step: 3, action: "Log renewal status in registry as evidence", owner: "DPO" },
+        ],
+      },
+      {
+        organization_id: orgId, title: "Engineering Throughput — Review Latency Bottleneck",
+        action: "Rebalance platform-team PR review load and introduce a 2-day review SLA for blocking reviews",
+        advisory_type: "prescriptive", priority: "medium", category: "operations", status: "open",
+        rationale: "Engineering cycle time increased 50% over six sprints. The root cause is concentrated: four blocking PRs await review for >5 days, all on the platform team. Re-distributing review load is a single-step intervention.",
+        expected_impact: "Return cycle time to the 1.5-day target within two sprints.",
+        impact_score: 55, capped_confidence: 62, raw_confidence: 73, data_quality_index: 78,
+        confidence_cap_reason: "Velocity attribution moderately confounded.",
+        dataset_id: datasetId,
+        source_evidence: [
+          { type: "metric_trend", description: "Cycle time 1.4d → 2.1d over 6 sprints", weight: 0.5 },
+          { type: "concentration", description: "4 of 7 blocked PRs on platform team", weight: 0.5 },
+        ],
+        playbook_steps: [
+          { step: 1, action: "Open the four blocked PRs in a single review session", owner: "Eng Manager" },
+          { step: 2, action: "Publish a 2-day review SLA for blocking reviews", owner: "Eng Manager" },
+          { step: 3, action: "Track cycle time weekly until 1.5-day target restored", owner: "Eng Manager" },
+        ],
+      },
+      {
+        organization_id: orgId, title: "Mid-Market Activation Gap — Replicate SMB Onboarding Playbook",
+        action: "Port the SMB onboarding flow into the mid-market segment with one tailoring change per persona",
+        advisory_type: "strategic", priority: "medium", category: "activation", status: "open",
+        rationale: "SMB activation improved 14% after redesign. Mid-market time-to-first-value remains nearly 2x SMB. The redesign is portable and has measured uplift in the adjacent segment.",
+        expected_impact: "Cut mid-market time-to-first-value from 17 to 11 days, reducing 60-day churn risk.",
+        impact_score: 48, capped_confidence: 56, raw_confidence: 67, data_quality_index: 80,
+        confidence_cap_reason: "Cross-segment portability is partly inferential.",
+        dataset_id: datasetId,
+        source_evidence: [
+          { type: "experiment", description: "SMB activation +14% post-redesign", weight: 0.6 },
+          { type: "benchmark", description: "Mid-market TTV nearly 2x SMB", weight: 0.4 },
+        ],
+      },
+    ]);
+
+
     // ─── Simulation Results ───
     await admin.from("simulation_results").insert([
       {
@@ -333,6 +465,84 @@ Deno.serve(async (req) => {
         escalation_threshold: 80, weekly_brief_enabled: true,
       },
     ]);
+
+    // ─── Portfolio Companies (demo) ───
+    await admin.from("portfolio_companies").insert([
+      {
+        organization_id: orgId, dataset_id: datasetId, name: "NovaPay Solutions",
+        sector: "Fintech", investment_amount: 4200000, ownership_pct: 22,
+        current_valuation: 18500000, revenue_ltm: 3800000, ebitda_ltm: 680000,
+        revenue_growth_pct: 34, ebitda_margin_pct: 17.9, cash_runway_months: 18,
+        headcount: 62, risk_score: 35, risk_trend: "improving", health_status: "healthy",
+        fund_name: "Growth Fund I",
+      },
+      {
+        organization_id: orgId, dataset_id: datasetId, name: "CloudMetrics AG",
+        sector: "Enterprise SaaS", investment_amount: 2800000, ownership_pct: 15,
+        current_valuation: 12000000, revenue_ltm: 2200000, ebitda_ltm: 220000,
+        revenue_growth_pct: 18, ebitda_margin_pct: 10.0, cash_runway_months: 14,
+        headcount: 45, risk_score: 52, risk_trend: "stable", health_status: "watch",
+        fund_name: "Growth Fund I",
+      },
+      {
+        organization_id: orgId, dataset_id: datasetId, name: "DataBridge Systems",
+        sector: "Data Infrastructure", investment_amount: 6500000, ownership_pct: 28,
+        current_valuation: 32000000, revenue_ltm: 7100000, ebitda_ltm: 1420000,
+        revenue_growth_pct: 42, ebitda_margin_pct: 20.0, cash_runway_months: 24,
+        headcount: 110, risk_score: 22, risk_trend: "improving", health_status: "healthy",
+        fund_name: "Growth Fund II",
+      },
+      {
+        organization_id: orgId, dataset_id: datasetId, name: "SupplyChain.io",
+        sector: "Supply Chain / Logistics", investment_amount: 3100000, ownership_pct: 18,
+        current_valuation: 8500000, revenue_ltm: 1900000, ebitda_ltm: -120000,
+        revenue_growth_pct: 8, ebitda_margin_pct: -6.3, cash_runway_months: 9,
+        headcount: 38, risk_score: 78, risk_trend: "worsening", health_status: "at_risk",
+        fund_name: "Growth Fund I",
+      },
+    ]);
+
+    // ─── Activation pipeline (background; do NOT block sign-in) ───
+    // Fires downstream engines so the dashboard the user lands on actually
+    // has narrative clusters, pressure snapshots, graph nodes/edges, and
+    // prioritised interventions — instead of empty panels.
+    const activationChain = [
+      "refresh-aggregates",
+      "executive-brief-generator",
+      "narrative-fusion-engine",
+      "compute-organizational-pressure",
+      "intervention-priority-engine",
+      "build-operational-graph",
+      "compute-graph-topology",
+      "compress-graph-attention",
+    ];
+    const runActivation = async () => {
+      for (const fn of activationChain) {
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`,
+            },
+            body: JSON.stringify(fn === "refresh-aggregates"
+              ? { organization_id: orgId, dataset_id: datasetId, workspace_id: workspaceId }
+              : { organization_id: orgId }),
+          });
+        } catch (e) {
+          console.error(`[demo-activation] ${fn} failed:`, (e as Error).message);
+        }
+      }
+    };
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(runActivation());
+    } else {
+      // Fallback: fire-and-forget (still returns response promptly)
+      runActivation();
+    }
 
     // Sign in
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;

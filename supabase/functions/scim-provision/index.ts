@@ -1,6 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { createHash } from "https://deno.land/std@0.224.0/crypto/mod.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+
+// deno-lint-ignore no-explicit-any
+const corsHeaders: any = { "Access-Control-Allow-Origin": "*" };
 
 /**
  * SCIM 2.0 Provisioning Endpoint
@@ -279,7 +281,8 @@ Deno.serve(async (req) => {
           await serviceClient
             .from("profiles")
             .update({ full_name: op.value })
-            .eq("user_id", userId);
+            .eq("user_id", userId)
+            .eq("organization_id", orgId);
         }
       }
 

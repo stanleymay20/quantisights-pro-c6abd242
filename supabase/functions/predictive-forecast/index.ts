@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { applyRateLimit } from "../_shared/rate-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { requireFeatureAccess } from "../_shared/feature-access.ts";
 
 // ── Server-side statistical helpers ──
 
@@ -83,8 +84,9 @@ function detectSeasonality(values: number[], maxLag = 24): { detected: boolean; 
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return corsPreflightResponse(req);try {
+  if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
+  try {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -134,6 +136,15 @@ serve(async (req) => {
     if (!isMember) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Tier gating: forecasting requires Growth/Enterprise
+    const fcAccess = await requireFeatureAccess(supabaseUrl, serviceKey, authHeader, "forecasting");
+    if (fcAccess.ok === false) {
+      return new Response(JSON.stringify(fcAccess.body), {
+        status: fcAccess.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 

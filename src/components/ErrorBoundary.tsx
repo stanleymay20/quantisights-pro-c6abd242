@@ -37,9 +37,9 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         this.props.fallback || (
-          <div className="min-h-screen flex items-center justify-center bg-background px-4">
+          <div className="min-h-dvh flex items-center justify-center bg-background px-4">
             <div className="glass-card p-8 max-w-md w-full text-center rounded-xl space-y-4">
-              <h2 className="text-xl font-semibold font-display mb-2">Something went wrong</h2>
+              <h2 className="text-[16px] font-semibold tracking-tight mb-2">Something went wrong</h2>
               <p className="text-sm text-muted-foreground">
                 An unexpected error occurred. Our team has been notified.
               </p>

@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { Network, Loader2, ArrowRight, AlertTriangle, CheckCircle } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 interface CausalNode {
   id: string;
@@ -47,14 +49,15 @@ const CausalInference = () => {
     if (!currentOrgId || !activeDatasetId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("causal-inference", {
+      const { data, error } = await invokeWithRetry<CausalResult & { error?: string }>("causal-inference", {
         body: { organization_id: currentOrgId, dataset_id: activeDatasetId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      setResult(data);
-    } catch (e: any) {
-      toast({ title: "Analysis failed", description: e.message, variant: "destructive" });
+      if (data) setResult(data);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Analysis failed";
+      toast({ title: "Analysis failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -70,7 +73,7 @@ const CausalInference = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <Network className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold font-display">Causal Inference Engine</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Causal Inference Engine</h1>
             <Badge variant="outline" className="text-xs">DAG Analysis</Badge>
           </div>
           <Button onClick={runAnalysis} disabled={loading} className="gap-2">
@@ -79,6 +82,7 @@ const CausalInference = () => {
           </Button>
         </header>
 
+        <SectionErrorBoundary sectionName="Causal Inference">
         <main className="flex-1 p-8 overflow-auto space-y-6">
           {!result && !loading && (
             <Card className="border-dashed border-border/50">
@@ -96,6 +100,18 @@ const CausalInference = () => {
             </Card>
           )}
 
+          {loading && (
+            <Card className="border-dashed border-border/50">
+              <CardContent className="p-12 text-center space-y-4">
+                <Loader2 className="w-10 h-10 text-primary mx-auto animate-spin" />
+                <h2 className="text-lg font-semibold">Building causal model…</h2>
+                <p className="text-sm text-muted-foreground max-w-lg mx-auto">
+                  Running temporal precedence analysis across your metrics to identify directional cause-and-effect relationships. This can take up to 30 seconds.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {result?.insufficient_data && (
             <Card className="border-warning/30">
               <CardContent className="p-6 flex items-center gap-4">
@@ -103,7 +119,7 @@ const CausalInference = () => {
                 <div>
                   <p className="font-medium">Insufficient Data</p>
                   <p className="text-sm text-muted-foreground">{result.message}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Current data points: {(result as any).data_points || 0}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Current data points: {(result as unknown as any).data_points as number || 0}</p>
                 </div>
               </CardContent>
             </Card>
@@ -129,7 +145,7 @@ const CausalInference = () => {
                   <CardContent className="p-4 text-center">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Confidence</p>
                     <p className={`text-2xl font-bold font-mono mt-1 ${result.confidence >= 70 ? "text-success" : result.confidence >= 50 ? "text-warning" : "text-destructive"}`}>
-                      {result.confidence}%
+                      {Math.round(result.confidence)}%
                     </p>
                   </CardContent>
                 </Card>
@@ -218,6 +234,7 @@ const CausalInference = () => {
             </>
           )}
         </main>
+        </SectionErrorBoundary>
     </>
     </DatasetRequired>
   );

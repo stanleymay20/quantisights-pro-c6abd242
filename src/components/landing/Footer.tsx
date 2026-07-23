@@ -1,6 +1,19 @@
+/**
+ * Canonical public marketing footer (DS-0).
+ *
+ * Use this on public marketing pages that need the full Quantivis brand
+ * footer (brand block, contact, social, three link columns, bottom bar
+ * with auto-updating copyright). Do not mount on dashboard/internal pages.
+ *
+ * Utility/legal pages mounted via layout: "public" intentionally render
+ * no footer at present; revisit during the broader design-system migration.
+ *
+ * The homepage (Index.tsx) still renders its own inline footer; migration
+ * of that surface is deferred past DS-0.
+ */
 import { forwardRef } from "react";
 import { Link } from "react-router-dom";
-import { Mail, Phone, MapPin, Linkedin } from "lucide-react";
+import { Mail, MapPin, Linkedin } from "lucide-react";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
 
@@ -8,19 +21,21 @@ const FOOTER_SECTIONS = [
   {
     title: "Platform",
     links: [
-      { label: "How It Works", href: "#how-it-works" },
-      { label: "Capabilities", href: "#features" },
-      { label: "Case Studies", href: "#case-studies" },
+      { label: "How It Works", to: "/#how-it-works" },
+      { label: "Capabilities", to: "/#features" },
+      { label: "Case Studies", to: "/#case-studies" },
       { label: "Pricing", to: "/pricing" },
     ],
   },
   {
     title: "Enterprise Trust",
     links: [
+      { label: "Trust Center", to: "/trust" },
       { label: "System Status", to: "/status" },
       { label: "SLA & Incident Response", to: "/sla" },
-      { label: "Security", to: "/security" },
-      { label: "Documentation", to: "/docs" },
+      { label: "Security & Compliance", to: "/security" },
+      { label: "Security Questionnaire", to: "/security-questionnaire" },
+      { label: "Contact Enterprise Sales", to: "/enterprise/contact" },
     ],
   },
   {
@@ -53,10 +68,6 @@ const Footer = forwardRef<HTMLElement>((_, ref) => (
               <Mail className="w-3.5 h-3.5 text-primary" />
               {CONTACT.email.general}
             </a>
-            <a href={CONTACT.phone.href} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              <Phone className="w-3.5 h-3.5 text-primary" />
-              {CONTACT.phone.display}
-            </a>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
               {CONTACT.location}
@@ -85,7 +96,7 @@ const Footer = forwardRef<HTMLElement>((_, ref) => (
                       {link.label}
                     </Link>
                   ) : (
-                    <a href={(link as any).href} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    <a href={"href" in link ? (link as { href: string }).href : "#"} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                       {link.label}
                     </a>
                   )}
@@ -110,9 +121,9 @@ const Footer = forwardRef<HTMLElement>((_, ref) => (
               </Link>
             </li>
             <li>
-              <a href={`mailto:${CONTACT.email.general}`} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <Link to="/demo" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                 Request Demo
-              </a>
+              </Link>
             </li>
             <li>
               <Link to="/docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">

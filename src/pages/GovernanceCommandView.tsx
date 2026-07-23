@@ -15,6 +15,7 @@ import {
   Shield, Award, Clock, Users, AlertTriangle, CheckCircle2,
   ArrowRight, TrendingUp, TrendingDown, Minus, BarChart3,
 } from "lucide-react";
+import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 const MATURITY_LEVELS = [
   { min: 0, max: 20, label: "Initial", color: "text-destructive", bg: "bg-destructive/10" },
@@ -88,9 +89,9 @@ const GovernanceCommandView = () => {
 
   // Enforcement breakdown
   const enforcementCounts = {
-    configured: (retentionData ?? []).filter((p: any) => (p.enforcement_status ?? "configured") === "configured").length,
-    scheduled: (retentionData ?? []).filter((p: any) => p.enforcement_status === "scheduled").length,
-    enforced: (retentionData ?? []).filter((p: any) => p.enforcement_status === "enforced").length,
+    configured: (retentionData ?? []).filter((p: { enforcement_status?: string | null; data_category?: string }) => (p.enforcement_status ?? "configured") === "configured").length,
+    scheduled: (retentionData ?? []).filter((p: { enforcement_status?: string | null; data_category?: string }) => p.enforcement_status === "scheduled").length,
+    enforced: (retentionData ?? []).filter((p: { enforcement_status?: string | null; data_category?: string }) => p.enforcement_status === "enforced").length,
   };
 
   // Risk detection using centralized rules
@@ -132,12 +133,13 @@ const GovernanceCommandView = () => {
   };
 
   return (
+    <SectionErrorBoundary sectionName="Governance Command">
     <div className="space-y-8 max-w-6xl pb-12">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <SidebarMobileToggle />
           <div>
-            <h1 className="text-2xl font-bold font-display">Governance Command View</h1>
+            <h1 className="text-[18px] font-semibold tracking-tight">Governance Command View</h1>
             <p className="text-sm text-muted-foreground">
               Unified executive view — are we governed, where are we weak, and what to do next.
             </p>
@@ -156,7 +158,7 @@ const GovernanceCommandView = () => {
                 <span className="text-xs font-semibold text-muted-foreground">Maturity Score</span>
               </div>
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold font-display">{latestScore !== null ? latestScore : "—"}</span>
+                <span className="text-3xl font-bold tracking-tight">{latestScore !== null ? latestScore : "—"}</span>
                 <span className="text-sm text-muted-foreground">/100</span>
                 {latestScore !== null && (
                   <Badge className={`${latestLevel.bg} ${latestLevel.color} border-0 text-[10px] ml-1`}>
@@ -175,7 +177,9 @@ const GovernanceCommandView = () => {
                 </div>
               )}
               {latestScore === null && (
-                <p className="text-[10px] text-muted-foreground/60 mt-2">No assessment yet</p>
+                <p className="text-[10px] text-muted-foreground/60 mt-2">
+                  No assessment yet — this tracks governance process maturity (stewardship, retention, data quality discipline), separate from the always-on technical Security Posture score under Settings.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -188,7 +192,7 @@ const GovernanceCommandView = () => {
                 <Users className="w-4 h-4 text-primary" />
                 <span className="text-xs font-semibold text-muted-foreground">Data Stewards</span>
               </div>
-              <span className="text-3xl font-bold font-display">{stewardCount ?? 0}</span>
+              <span className="text-3xl font-bold tracking-tight">{stewardCount ?? 0}</span>
               <p className="text-[10px] text-muted-foreground/60 mt-2">
                 {(stewardCount ?? 0) >= 2 ? "Good coverage" : (stewardCount ?? 0) >= 1 ? "Minimum viable" : "None assigned — high risk"}
               </p>
@@ -204,7 +208,7 @@ const GovernanceCommandView = () => {
                 <span className="text-xs font-semibold text-muted-foreground">Retention Coverage</span>
               </div>
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold font-display">{retentionCount}</span>
+                <span className="text-3xl font-bold tracking-tight">{retentionCount}</span>
                 <span className="text-sm text-muted-foreground">/6 categories</span>
               </div>
               <Progress value={retentionCoverage} className="h-1.5 mt-2" />
@@ -321,6 +325,7 @@ const GovernanceCommandView = () => {
         </Card>
       </div>
     </div>
+    </SectionErrorBoundary>
   );
 };
 

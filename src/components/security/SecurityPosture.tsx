@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -61,7 +62,7 @@ const SecurityPosture = () => {
       });
 
       // 4. AI Data Boundary
-      const aiEnabled = (currentOrg as any)?.ai_raw_text_enabled ?? false;
+      const aiEnabled = (currentOrg as unknown as Record<string, unknown>)?.ai_raw_text_enabled ?? false;
       checks.push({
         label: "AI Data Boundary",
         status: aiEnabled ? "warning" : "pass",
@@ -180,8 +181,12 @@ const SecurityPosture = () => {
           </div>
 
           <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
-            Security posture is assessed in real-time based on your organization's configuration. 
+            Security posture is assessed in real-time based on your organization's configuration.
             Infrastructure controls (encryption, RLS) are enforced at the platform level and cannot be disabled.
+          </p>
+          <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
+            This measures technical security controls, not organizational governance maturity (data stewardship, retention coverage, process discipline) —
+            {" "}see the <Link to="/governance" className="underline hover:text-foreground">Governance Command View</Link> for that assessment.
           </p>
         </CardContent>
       </Card>

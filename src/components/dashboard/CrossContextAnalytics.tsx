@@ -19,6 +19,9 @@ interface CrossContextAnalyticsProps {
   organizationId: string;
 }
 
+const MIN_BASELINE_SAMPLE = 10;
+const PRELIMINARY_SAMPLE = 30;
+
 const CrossContextAnalytics = memo(({ organizationId }: CrossContextAnalyticsProps) => {
   const [data, setData] = useState<ContextPerformance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,6 +171,8 @@ const CrossContextAnalytics = memo(({ organizationId }: CrossContextAnalyticsPro
       <CardContent className="space-y-3">
         {data.filter(d => d.totalDecisions > 0).slice(0, 6).map((ctx) => {
           const evaluated = ctx.totalDecisions - ctx.pendingEvaluation;
+          const hasCredibleBaseline = evaluated >= MIN_BASELINE_SAMPLE;
+          const isPreliminary = evaluated >= MIN_BASELINE_SAMPLE && evaluated < PRELIMINARY_SAMPLE;
           return (
             <div key={ctx.contextId} className="p-3 rounded-lg border border-border/30 bg-card/50 space-y-2">
               <div className="flex items-center justify-between">
@@ -182,19 +187,28 @@ const CrossContextAnalytics = memo(({ organizationId }: CrossContextAnalyticsPro
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Success Rate</p>
-                    <div className="flex items-center gap-1">
-                      <TrendingUp className="w-3 h-3 text-primary" />
-                      <span className={`text-sm font-bold ${ctx.successRate >= 60 ? "text-primary" : "text-destructive"}`}>
-                        {ctx.successRate}%
-                      </span>
-                    </div>
-                    <Progress value={ctx.successRate} className="h-0.5 mt-1" />
+                    {hasCredibleBaseline ? (
+                      <>
+                        <div className="flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3 text-primary" />
+                          <span className={`text-sm font-bold ${ctx.successRate >= 60 ? "text-primary" : "text-destructive"}`}>
+                            {isPreliminary ? "Preliminary " : ""}{ctx.successRate}%
+                          </span>
+                        </div>
+                        <Progress value={ctx.successRate} className="h-0.5 mt-1" />
+                      </>
+                    ) : (
+                      <div className="space-y-1">
+                        <span className="text-sm font-bold text-muted-foreground">Building baseline</span>
+                        <p className="text-[9px] text-muted-foreground/70">Needs {MIN_BASELINE_SAMPLE - evaluated} more evaluated decisions</p>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Avg Accuracy</p>
                     <div className="flex items-center gap-1">
                       <Target className="w-3 h-3 text-primary" />
-                      <span className="text-sm font-bold text-foreground">{ctx.avgAccuracy}%</span>
+                      <span className="text-sm font-bold text-foreground">{Math.round(ctx.avgAccuracy)}%</span>
                     </div>
                     <Progress value={ctx.avgAccuracy} className="h-0.5 mt-1" />
                   </div>
