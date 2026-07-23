@@ -53,6 +53,12 @@ const DEFAULT_MAX_PAGES = 10;
 const BREAKER_FAILURE_THRESHOLD = 3;
 const BREAKER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour (max)
 
+// Wall-clock budget for a single invocation. The edge platform kills requests
+// around ~60s (504 gateway timeout). We stop starting new surfaces once we're
+// within RUN_BUDGET_MS so partial results always land and remaining surfaces
+// are deferred to the next cron tick instead of taking the whole run down.
+const RUN_BUDGET_MS = 45_000;
+
 const STALE_HOURS = 24;
 const EXPECTED_MIN_COUNTRIES = 211; // AICIS Bridge v2 country universe (UN + sovereign + dependencies)
 
