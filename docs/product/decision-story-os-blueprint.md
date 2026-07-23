@@ -178,7 +178,7 @@ Situation → Context → Evidence → Insight → Prediction → Recommendation
 Risks → Decision → Implementation → Outcome → Learning
 ```
 
-Each step maps directly onto a field of the Decision Story object (§13.2) and onto a stage of the Decision Evidence Graph (§9). Concretely:
+Each step maps directly onto a field of the Decision Story object (§13.2, split into pre-publish and post-decision field groups) and onto a stage of the Decision Evidence Graph (§9). Concretely:
 
 | Step | Decision Story field | Evidence Graph stage | Primary component |
 |---|---|---|---|
@@ -396,11 +396,15 @@ USER: Generate the {summary_type}.
 No separate vector retrieval step for narrative generation itself — the evidence is already scoped and typed by `build-decision-story`. Vector search (`embed-decisions`, already implemented with pgvector) is used for one specific purpose: **finding similar past decisions** to cite as precedent in the narrative ("a similar pattern in Q2 led to a 4% lift after price adjustment — see Decision #1842"), via `match_decision_embeddings()` (already exists per the security doc read above). This is the only place retrieval augments generation beyond the evidence bundle, and cited precedents are themselves evidence nodes (`edge_type = 'supports'`), so they're subject to the same grounding check.
 
 ### 11.5 Hallucination prevention (the gate)
-Reuses and extends the existing `ai-validation.ts` pattern:
-1. LLM output is required to include inline citation markers `[[node:<uuid>]]` for every factual claim.
-2. A post-generation validator (`validateNarrativeGrounding`, new, same shape as `validateInsightArray`) strips citation markers, confirms every referenced node id exists in the `EvidenceBundle` that was actually sent, and **rejects** (not silently degrades) the response if any numeric claim in the text doesn't match a node's `payload` value within tolerance.
-3. On rejection, the system falls back to a deterministic template narrative built directly from the evidence bundle (no LLM) rather than showing a broken or unvalidated narrative — mirroring the "insufficient quality data" hard-stop already present in `generate-insights/index.ts` (`qualityMetrics.length < 8`).
-4. Every accepted narrative stores its `grounding_node_ids` in `decision_stories.narrative` and `decision_story_summaries.grounding_node_ids` — this is what makes citations clickable in the UI and auditable in the Decision Evidence Graph viewer (§9).
+An earlier draft of this section validated only that cited node IDs exist and that *numeric* claims matched a node's payload — which does nothing to stop a fabricated qualitative or causal claim ("this decline was driven by the EMEA pricing change") from passing, since it can cite any real node without that node actually supporting the claim. The gate below closes that: existence-checking and numeric matching are necessary but explicitly **not sufficient**, and are supplemented with per-claim citation coverage plus an entailment check on every citation, not just numeric ones.
+
+Reuses and extends the existing `ai-validation.ts` pattern, in three layers:
+
+1. **Citation coverage (structural, deterministic).** LLM output is required to include an inline citation marker `[[node:<uuid>]]` after *every* declarative sentence that asserts a fact — not only sentences containing a number. `validateNarrativeGrounding` (new, same shape as `validateInsightArray`) parses the narrative into sentences and **rejects** the response outright if any sentence makes a factual assertion (detected via a fixed list of claim-indicating patterns — comparatives, causal verbs like "caused"/"drove"/"led to", trend words) with zero citation markers attached. This is a hard, mechanical check with no semantic component, and it is what would have caught the "unsupported cause with no new number" failure mode: an uncited causal sentence fails at this layer regardless of what it claims.
+2. **Reference validity + numeric match (structural, deterministic, as before).** Confirms every referenced node id exists in the `EvidenceBundle` that was actually sent, and rejects if any numeric claim in the text doesn't match a node's `payload` value within tolerance.
+3. **Per-citation entailment check (LLM-assisted, narrower and more auditable than generation itself).** For every `[[node:<uuid>]]` marker that survives layers 1–2, a second, separate LLM call is issued — not the generation call — with only the single cited sentence and only that one node's `payload` as input, asked a strictly yes/no question: *"Does this evidence support this exact claim? Answer only YES or NO."* Any NO, or any answer that isn't cleanly YES/NO, rejects the narrative. This is a materially narrower task than open-ended narrative generation (one sentence, one fact, one binary judgment), which makes it far easier to audit and spot-check than the generation step itself — but it is still an LLM call, and this document does not claim it makes entailment failures impossible, only that it catches the class of "cites a real but non-supporting node" errors that layers 1–2 cannot. Full guaranteed semantic entailment validation is an open problem; this is a mitigation layered on top of the structural checks, not a substitute for human review of published stories (§16 collaboration flow still allows a "challenge" against any cited claim).
+4. On rejection at any layer, the system falls back to a deterministic template narrative built directly from the evidence bundle (no LLM) rather than showing a broken or unvalidated narrative — mirroring the "insufficient quality data" hard-stop already present in `generate-insights/index.ts` (`qualityMetrics.length < 8`).
+5. Every accepted narrative stores its `grounding_node_ids` in `decision_stories.narrative` and `decision_story_summaries.grounding_node_ids` — this is what makes citations clickable in the UI and auditable in the Decision Evidence Graph viewer (§9).
 
 ### 11.6 Confidence reporting
 Narrative AI is prohibited from generating its own confidence language ("we're fairly confident that…"). It must render the numeric `confidence` field (already computed by `adaptive-confidence.ts`/`confidence-cap.ts`) through a fixed, audience-aware phrase table, e.g. board audience sees "High confidence (82%, based on 14 months of data)" while a data-scientist audience sees the full calibration detail (Brier score, sample size, `data_sufficiency_rating`) via `CalibrationCurve.tsx`/`BayesianPriorVisualization.tsx`, already built.
@@ -410,23 +414,37 @@ Narrative AI is prohibited from generating its own confidence language ("we're f
 ### 12.1 Chart-or-not-or-table-or-text decision algorithm
 Deterministic decision tree (not an LLM call — visual form should not hallucinate), run per story step:
 
+Each evidence bundle is classified along two independent axes — **shape** (does it have a time dimension, categories, part-to-whole structure, or multiple variables?) and **reader need** (exact lookup vs. trend vs. comparison vs. deviation-from-target) — then mapped to a chart type. Shape is evaluated first and is not a single nested if/else, so a categorical dataset with no time dimension at all still reaches the categorical branch:
+
 ```
+0. Classify evidence shape (not mutually exclusive with reader-need, evaluated independently):
+     has_time_dimension   := series has ≥2 ordered timestamps
+     is_categorical        := series is grouped by ≤7 discrete category labels, no time dimension required
+     is_part_to_whole      := categories sum to a meaningful 100% of something
+     is_deviation_from_target := a target/threshold value exists alongside the actual value(s)
+     is_multivariate        := ≥2 independent variables plotted against each other
+
 1. If evidence is a single number (or a comparison of 2 numbers) with no meaningful trend
       → TEXT or big-number tile (no chart). ("Revenue is up 12% this quarter.")
-2. Else if evidence is a time series (≥1 metric over time)
-      a. 1 series, no need for exact value comparison at each point → LINE
-      b. Categorical comparison across ≤7 categories → BAR (horizontal if labels are long)
-      c. Part-to-whole, ≤5 slices, and audience.detail_level != technical → simple STACKED BAR (never pie/donut/3D)
-      d. Deviation from a target/threshold → SLOPE or BULLET chart
-      e. >7 categories or need for exact lookups by the reader → TABLE
-3. Else if evidence is multivariate / correlation-driven and audience.technical_depth in {statistical, full_methodology}
+2. Else if is_deviation_from_target
+      → SLOPE or BULLET chart (applies whether or not a time dimension is present)
+3. Else if is_part_to_whole and category_count ≤ 5 and audience.detail_level != technical
+      → simple STACKED BAR (never pie/donut/3D) — applies whether or not a time dimension is present
+4. Else if is_categorical and category_count ≤ 7
+      → BAR (horizontal if labels are long) — this fires for plain categorical comparisons with NO time
+        dimension just as readily as for a single time slice broken out by category
+5. Else if has_time_dimension and NOT is_categorical
+      → LINE (1+ series, reader does not need to read off exact values at each point)
+6. Else if category_count > 7, or the reader needs exact values at each point (lookup, not trend)
+      → TABLE
+7. Else if is_multivariate and audience.technical_depth in {statistical, full_methodology}
       → SCATTER / control chart / box plot (never shown to headline-detail audiences — collapsed to a text
         insight sentence instead, e.g. "Regions with lower support-ticket volume show 2.3x retention")
-4. Else if >1 of the above is simultaneously required to support ONE claim
+8. Else if >1 of the above is simultaneously required to support ONE claim
       → small multiples of the SAME chart type, never a mixed dashboard grid
 ```
 
-This directly implements "choose the right visual" — including the explicit case (2c) forbidding pie/donut/3D by construction, not by style guide.
+This directly implements "choose the right visual" — including the explicit case (step 3) forbidding pie/donut/3D by construction, not by style guide — and, per review feedback on an earlier draft, categorical and part-to-whole selection no longer requires a time dimension to be reachable: an ordinary categorical dataset (e.g. revenue by region, no dates at all) resolves at step 4, independent of whether `has_time_dimension` is true.
 
 ### 12.2 Automatic clutter removal (rule engine, applied to every generated spec)
 - Remove gridlines by default; add back only the single gridline needed to read the highlighted value.
@@ -449,10 +467,15 @@ The engine assigns **exactly one** dominant color (from the existing brand-neutr
 ## 13. Decision Story Engine — Design (Part 1)
 
 ### 13.1 What replaces the dashboard
-Instead of a user opening "Dashboard" and hunting for what matters, every `advisory_instance` that crosses a materiality threshold (existing logic in `prescriptive-advisory`) automatically triggers `build-decision-story`, which assembles the 16-field object below and enters `status = 'draft'`. A human (or an auto-publish rule for low-risk/high-confidence stories) promotes it to `published`, at which point it appears in the audience's Story Feed (replacing the chart grid on `Dashboard.tsx`).
+Instead of a user opening "Dashboard" and hunting for what matters, every `advisory_instance` that crosses a materiality threshold (existing logic in `prescriptive-advisory`) automatically triggers `build-decision-story`, which assembles the Decision Story object below (§13.2) and enters `status = 'draft'`. A human (or an auto-publish rule for low-risk/high-confidence stories) promotes it to `published` once the pre-publish field set is complete, at which point it appears in the audience's Story Feed (replacing the chart grid on `Dashboard.tsx`).
 
-### 13.2 The 16 required fields (from the prompt)
-`context`, `business_question`, `objective`, `audience`, `evidence`, `analysis`, `insights`, `narrative`, `recommendation`, `risks`, `expected_business_impact`, `confidence`, `supporting_evidence`, `alternative_actions`, `decision_request`, `decision_outcome`, `lessons_learned` — each is a named column or JSONB field on `decision_stories` (§9.2). This is not a formatting nicety: `build-decision-story` refuses to set `status = 'published'` on a row missing any required field, giving the "no orphan visuals" rule (§2) real teeth.
+### 13.2 The required fields, split by lifecycle stage
+The prompt names 17 conceptual fields. An earlier draft required all 17 before `status = 'published'` — but `decision_outcome` and `lessons_learned` can only exist once a *published* story has been decided and executed (§13.4), so requiring them pre-publish makes `published` unreachable. The fix is two separate, lifecycle-appropriate gates, and the field names below are corrected to match the actual `decision_stories` schema (§9.2): the prompt's `audience` is the column `primary_audience`, and the prompt's `supporting_evidence` is not a separate column — it is represented as additional entries in the `evidence` JSONB array (each still an `evidence_node_id` reference), so there is no dangling `supporting_evidence` field to satisfy.
+
+**Pre-publish gate** (`build-decision-story` refuses to set `status = 'published'` unless all 14 are non-empty — this is what gives the "no orphan visuals" rule, §2, real teeth):
+`context`, `business_question`, `objective`, `primary_audience`, `evidence` (inclusive of supporting evidence), `analysis`, `insights`, `narrative`, `recommendation`, `risks`, `expected_business_impact`, `confidence`, `alternative_actions`, `decision_request`.
+
+**Post-decision gate** (checked separately, only once `decision_ledger.execution_status` reaches a terminal state — a published story that hasn't reached this point is simply "awaiting outcome," not invalid): `decision_outcome`, `lessons_learned`. The Decision Communication Score (§14) is computed once, at publish time, against the pre-publish 14; the Decision Learning Loop (§17) only counts a story as "closed" once the post-decision pair is also populated — these are two different completeness checks for two different purposes, not one 16/17-field gate.
 
 ### 13.3 Assembly pipeline
 ```
@@ -462,13 +485,16 @@ advisory_instances (trigger)
        2. Pull evidence: relevant insights, statistical outputs, causal-inference results, 
           cognitive-bias-detect flags → create evidence_nodes + evidence_edges
        3. Pull confidence: adaptive-confidence.ts / confidence-cap.ts output (unchanged)
-       4. Resolve audience: resolve-audience helper using advisory_instances.role_type or org default
+       4. Resolve audience: resolve-audience helper using advisory_instances.role_type (see schema note
+          below) or org default
        5. Call generate-narrative for the audience's default narrative_type
        6. Call render-visualization-plan per step
        7. Write decision_stories row, status='draft'
    → (async) generate-big-idea for the 8 summary types, cached for later reuse
-   → (on publish) score-decision-communication runs and stores the score
+   → (on publish) score-decision-communication runs against the pre-publish 14 fields (§13.2)
 ```
+
+**Schema note on step 4 — this is a real gap, not a simplification.** `advisory_instances` (migration `20260225161019`) has no `role_type` column today, and `prescriptive-advisory/index.ts` accepts `role_type` in its request body (line 12) but never writes it onto the inserted advisory row (see the `rows.map(...)` insert block ~line 307) — the only place `role_type` is currently persisted is on `executive_risk_index`, a different table. As written, step 4 would either query a nonexistent column or silently always fall back to the org default, quietly losing per-advisory audience adaptation. This blueprint's Phase 2 (§18) must therefore include, as an explicit prerequisite: (a) `ALTER TABLE public.advisory_instances ADD COLUMN role_type text;`, and (b) a one-line fix to `prescriptive-advisory/index.ts`'s insert payload to carry the `role_type` already present in its request body onto the new row. Without both, step 4 degrades to "org default only," which is a safe but silent failure mode worth calling out rather than leaving implicit.
 
 ### 13.4 Decision flow (state machine)
 ```
@@ -615,7 +641,7 @@ CREATE TABLE public.decision_story_learning (
 | **1 — Immediate wins** | `audience_profiles` table + seed data; `resolve-audience` helper wired into existing `executive-brief`/`generate-board-report` (generalizing `ROLE_CONFIGS`); Decision Design System components (§15) for confidence chips & risk bands, retrofitted onto existing board-report components | Small (2-3 wk) | Low — additive, no schema migration risk beyond one new table | None | Immediate visual/consistency lift on existing surfaces | Low |
 | **2 — AI narrative engine** | `evidence_nodes`/`evidence_edges` (minimal viable graph), `generate-narrative` + grounding gate (§11.5), `decision_stories` table (draft-only, no publish gate yet) | Medium (4-6 wk) | Medium — hallucination-gate correctness is the critical path; mitigate with the deterministic-fallback-template safety net (§11.5.3) | Phase 1 | High — first real "story," not just prettier charts | Medium |
 | **3 — Visualization intelligence** | `render-visualization-plan`, chart-or-not algorithm (§12.1), clutter/highlight rule engine, dual renderer (Recharts + export SVG) | Medium (4-5 wk) | Low-Medium — mostly deterministic logic, main risk is Recharts spec-coverage gaps for edge-case chart types | Phase 1 | High — directly visible quality jump | Medium |
-| **4 — Decision Story Engine** | Full `build-decision-story` pipeline, 11-step journey UI (§8), publish gate enforcing all 16 required fields | Large (6-8 wk) | Medium — orchestration complexity across many upstream functions; mitigate by building the pipeline as sequential, independently-retryable steps (reuse `retry.ts`) | Phases 2, 3 | Very high — this is the product's new core loop | High |
+| **4 — Decision Story Engine** | `advisory_instances.role_type` column + `prescriptive-advisory` insert fix (§13.3 schema note); full `build-decision-story` pipeline, 11-step journey UI (§8), pre-publish field gate (§13.2) | Large (6-8 wk) | Medium — orchestration complexity across many upstream functions; mitigate by building the pipeline as sequential, independently-retryable steps (reuse `retry.ts`) | Phases 2, 3 | Very high — this is the product's new core loop | High |
 | **5 — Adaptive audience reporting** | Full `audience_profiles` matrix (15 audiences), Big Idea Generator (8 formats, §11.3), Presentation Generator (`generate-presentation`, reusing `pptxgenjs`/`jspdf`) | Medium-Large (5-7 wk) | Low — mostly composition of existing pieces | Phase 4 | Very high — this is what actually reaches CEOs/boards/investors without manual deck-building | Medium |
 | **6 — Decision Communication Scoring** | `decision_communication_scores`, weighting model, improvement-recommendation engine, auto-publish gate | Medium (3-4 wk) | Low | Phases 4, 5 | High — makes quality measurable and improvable, an actual moat vs. competitors who ship raw charts | Low-Medium |
 | **7 — Enterprise collaboration** | `decision_story_comments`, challenge/evidence-request/escalation flows, realtime wiring | Medium (4 wk) | Low — extends existing `DecisionComments.tsx` and realtime patterns | Phase 4 | Medium-High — needed for enterprise multi-stakeholder adoption | Low-Medium |
