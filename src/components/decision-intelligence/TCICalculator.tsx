@@ -14,6 +14,16 @@ import { AlertTriangle, DollarSign, Clock, TrendingDown, BookOpen } from "lucide
  * avoiding, or failing to execute a critical strategic decision.
  */
 
+// Named, documented modeling assumptions for this what-if calculator —
+// illustrative weights, not empirically fitted coefficients.
+const COMPETITIVE_EROSION_MULTIPLIER = 1.5; // assumed cost multiplier when a competitor is actively moving
+const ENTROPY_WEEKLY_DELAY_WEIGHT = 8; // entropy points per week of decision delay
+const ENTROPY_COMPETITOR_MOVING_WEIGHT = 20; // entropy points added when a competitor is moving
+const ENTROPY_IMPACT_PCT_WEIGHT = 2; // entropy points per percentage point of estimated impact
+const SEVERITY_CRITICAL_REVENUE_FRACTION = 0.5; // TCI as a fraction of monthly revenue considered "critical"
+const SEVERITY_HIGH_REVENUE_FRACTION = 0.1; // ...considered "high"
+const SEVERITY_MODERATE_REVENUE_FRACTION = 0.02; // ...considered "moderate"
+
 const TCICalculator = () => {
   const [inputs, setInputs] = useState({
     monthlyRevenue: 500000,
@@ -36,7 +46,7 @@ const TCICalculator = () => {
       ((Math.pow(1 + weeklyGrowthRate, decisionDelayWeeks) - 1) / weeklyGrowthRate - decisionDelayWeeks);
 
     // Competitive erosion multiplier
-    const competitiveMultiplier = competitorMoving ? 1.5 : 1.0;
+    const competitiveMultiplier = competitorMoving ? COMPETITIVE_EROSION_MULTIPLIER : 1.0;
 
     // Total Cost of Inaction
     const totalTCI = (directLoss + compoundedOpportunityCost) * competitiveMultiplier;
@@ -46,14 +56,14 @@ const TCICalculator = () => {
 
     // Decision Entropy score (0-100, higher = more entropy/disorder)
     const entropyScore = Math.min(100, Math.round(
-      decisionDelayWeeks * 8 +
-      (competitorMoving ? 20 : 0) +
-      estimatedImpactPct * 2
+      decisionDelayWeeks * ENTROPY_WEEKLY_DELAY_WEIGHT +
+      (competitorMoving ? ENTROPY_COMPETITOR_MOVING_WEIGHT : 0) +
+      estimatedImpactPct * ENTROPY_IMPACT_PCT_WEIGHT
     ));
 
-    const severity = totalTCI > monthlyRevenue * 0.5 ? "critical"
-      : totalTCI > monthlyRevenue * 0.1 ? "high"
-      : totalTCI > monthlyRevenue * 0.02 ? "moderate"
+    const severity = totalTCI > monthlyRevenue * SEVERITY_CRITICAL_REVENUE_FRACTION ? "critical"
+      : totalTCI > monthlyRevenue * SEVERITY_HIGH_REVENUE_FRACTION ? "high"
+      : totalTCI > monthlyRevenue * SEVERITY_MODERATE_REVENUE_FRACTION ? "moderate"
       : "low";
 
     return {
@@ -201,8 +211,10 @@ const TCICalculator = () => {
         <div className="flex items-start gap-2 pt-2 border-t border-border/50">
           <BookOpen className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
           <p className="text-[10px] text-muted-foreground/60">
-            TCI framework from <em>"Decision Intelligence"</em> by Stanley Osei-Wusu (Ch. 3). 
+            TCI framework from <em>"Decision Intelligence"</em> by Stanley Osei-Wusu (Ch. 3).
             "Calculated inaction can prove significantly more damaging than a well-intentioned, albeit imperfect, decision."
+            {" "}This is an illustrative what-if model driven entirely by the inputs above — the weights are
+            assumptions, not empirically fitted, so treat outputs as directional scenarios, not forecasts.
           </p>
         </div>
       </CardContent>

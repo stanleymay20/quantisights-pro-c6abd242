@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Network, Loader2, ArrowRight, AlertTriangle, CheckCircle } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { getSystemConfig } from "@/lib/system-config";
 
 interface CausalNode {
   id: string;
@@ -144,7 +145,7 @@ const CausalInference = () => {
                 <Card>
                   <CardContent className="p-4 text-center">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Confidence</p>
-                    <p className={`text-2xl font-bold font-mono mt-1 ${result.confidence >= 70 ? "text-success" : result.confidence >= 50 ? "text-warning" : "text-destructive"}`}>
+                    <p className={`text-2xl font-bold font-mono mt-1 ${result.confidence >= getSystemConfig().confidenceDisplay.aiConfidenceHigh ? "text-success" : result.confidence >= getSystemConfig().confidenceDisplay.aiConfidenceModerate ? "text-warning" : "text-destructive"}`}>
                       {Math.round(result.confidence)}%
                     </p>
                   </CardContent>

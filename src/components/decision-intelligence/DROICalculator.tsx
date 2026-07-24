@@ -22,6 +22,13 @@ interface DROICalculatorProps {
   loading?: boolean;
 }
 
+// Named, documented modeling assumptions — illustrative estimates, not
+// empirically fitted coefficients. Kept here (rather than inline) so the
+// basis for every downstream euro/percentage figure is visible in one place.
+const FALSE_POSITIVE_REDUCTION_CAP_PCT = 50; // max % of false-positive cost assumed recoverable via better accuracy
+const DROI_SUCCESS_RATE_WEIGHT = 200; // divisor applied to successRate's contribution to the DROI multiplier
+const TCI_REVENUE_LOSS_RATE = 0.15; // assumed fraction of revenue lost per decision with a negative outcome
+
 const DROICalculator = ({ performance, avgRevenue = 0, loading }: DROICalculatorProps) => {
   const metrics = useMemo(() => {
     if (!performance || performance.totalDecisions === 0) return null;
@@ -36,13 +43,13 @@ const DROICalculator = ({ performance, avgRevenue = 0, loading }: DROICalculator
 
     // Estimated DROI multiplier based on calibration improvement
     // Better calibration → fewer false positives → less wasted capital
-    const falsePositiveReduction = Math.min(50, (avgAccuracy / 100) * 50);
-    const droiMultiplier = 1 + (falsePositiveReduction / 100) + (successRate / 200);
+    const falsePositiveReduction = Math.min(FALSE_POSITIVE_REDUCTION_CAP_PCT, (avgAccuracy / 100) * FALSE_POSITIVE_REDUCTION_CAP_PCT);
+    const droiMultiplier = 1 + (falsePositiveReduction / 100) + (successRate / DROI_SUCCESS_RATE_WEIGHT);
 
     // TCI proxy: decisions with negative outcomes × estimated avg cost
     const negativeRate = performance.negativeCount / Math.max(1, performance.evaluableDecisions);
     const estimatedTCI = avgRevenue > 0
-      ? Math.round(avgRevenue * negativeRate * 0.15) // 15% of revenue lost per failed decision
+      ? Math.round(avgRevenue * negativeRate * TCI_REVENUE_LOSS_RATE)
       : null;
 
     // Calibration value: improvement in accuracy reduces decision error cost
@@ -147,7 +154,9 @@ const DROICalculator = ({ performance, avgRevenue = 0, loading }: DROICalculator
         <div className="flex items-start gap-2 pt-2 border-t border-border/50">
           <BookOpen className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
           <p className="text-[10px] text-muted-foreground/60">
-            DROI & TCI metrics from <em>"Decision Intelligence"</em> by Stanley Osei-Wusu (Ch. 3)
+            DROI & TCI framework from <em>"Decision Intelligence"</em> by Stanley Osei-Wusu (Ch. 3). Figures are
+            computed from your organization's real decision outcomes, but the multiplier and cost-rate
+            assumptions are an illustrative model, not empirically fitted — treat as directional, not audited.
           </p>
         </div>
       </CardContent>
