@@ -10,6 +10,7 @@ import {
   ExecutiveBriefHero,
 } from "@/components/decisions/ExecutiveBriefHero";
 import type { ReviewableDecision } from "@/components/decisions/executive-review-flow";
+import { NarrativeHeader } from "@/components/narrative/NarrativeHeader";
 
 /**
  * UX-2 Executive Brief (/executive-brief): the single strongest pending
