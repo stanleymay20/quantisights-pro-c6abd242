@@ -127,6 +127,12 @@ function getTier(calibrationScore: number): CalibrationTier {
   return TIERS.find((t) => calibrationScore >= t.range[0] && calibrationScore < t.range[1]) || TIERS[0];
 }
 
+// Named, documented constants for the illustrative "downside exposure"
+// heuristic below — kept in one place instead of inline magic numbers so
+// the basis for the estimate is visible and adjustable.
+const DOWNSIDE_ESTIMATE_SCALING_FACTOR = 1.2; // pts of avg calibration error -> pts of downside estimate
+const DOWNSIDE_ESTIMATE_CAP = 45; // upper bound so the illustrative figure stays plausible
+
 // ── Scoring engine ─────────────────────────────────────────────
 interface Response {
   scenarioId: string;
@@ -170,7 +176,11 @@ function computeResults(responses: Response[]) {
   if (overconfidentResponses.length >= n * 0.7) biasMarkers.push("Systematic Optimism");
 
   const avgAbsDelta = responses.reduce((s, r) => s + Math.abs(r.delta), 0) / n;
-  const downsideReduction = Math.round(Math.min(avgAbsDelta * 1.2, 45));
+  // Illustrative heuristic, not a measured business outcome: scales the
+  // quiz's measured average calibration error (probability-percentage-points)
+  // into an indicative "potential downside exposure" figure, capped so the
+  // estimate stays plausible. See DOWNSIDE_ESTIMATE_SCALING_FACTOR usage below.
+  const downsideReduction = Math.round(Math.min(avgAbsDelta * DOWNSIDE_ESTIMATE_SCALING_FACTOR, DOWNSIDE_ESTIMATE_CAP));
 
   const tier = getTier(calibrationScore);
 
@@ -610,12 +620,15 @@ const CalibrationAssessment = () => {
                 {/* Downside reduction simulation */}
                 <Card className="border-success/20 bg-success/5">
                   <CardContent className="p-6 text-center space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Calibration Impact Simulation</p>
+                    <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Illustrative Calibration Impact</p>
                     <p className="text-lg text-foreground leading-relaxed">
-                      If you had used calibrated probabilities in your last 10 decisions, your estimated
-                      downside exposure would have reduced by
+                      Based on the calibration error measured in this quiz, an illustrative estimate of
+                      the downside exposure better-calibrated probability judgments could help reduce is
                     </p>
                     <p className="text-4xl font-bold text-success">~{results.downsideReduction}%</p>
+                    <p className="text-xs text-muted-foreground">
+                      A heuristic estimate scaled from your quiz performance — not a measured outcome from real business decisions.
+                    </p>
                   </CardContent>
                 </Card>
 

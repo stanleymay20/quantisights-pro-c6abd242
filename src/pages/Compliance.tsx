@@ -21,153 +21,247 @@ interface ComplianceControl {
   evidence: string;
   framework: string[];
   lastAudit?: string;
+  /**
+   * live: checked against this organization's real data on every load.
+   * platform: a structural guarantee (schema/RLS/infra) true for every
+   *   tenant by construction — nothing per-org to query, so it's disclosed
+   *   but excluded from the score.
+   * external: depends on a real-world event (e.g. a third-party audit)
+   *   that cannot be derived from platform data — attested manually,
+   *   also excluded from the score.
+   */
+  checkType: "live" | "platform" | "external";
 }
 
 const Compliance = () => {
-  const { currentOrgId } = useOrganization();
+  const { currentOrgId, currentOrg } = useOrganization();
   const [controls, setControls] = useState<ComplianceControl[]>([]);
   const [score, setScore] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    computeControls();
+    if (currentOrgId) computeControls();
   }, [currentOrgId]);
 
   const computeControls = async () => {
-    // Automated compliance assessment based on actual platform state
+    setLoading(true);
+    const orgId = currentOrgId as string;
+    // sso_configs and audit_log are RLS-restricted to owner/admin — for any
+    // other role those queries silently return zero rows, which would read
+    // as a false "non-compliant" rather than "can't verify from this role".
+    const canViewAdminData = currentOrg?.role === "owner" || currentOrg?.role === "admin";
+
+    // --- Live checks: real queries against this organization's data ---
+
+    const { data: factors } = await supabase.auth.mfa.listFactors();
+    const hasMfa = (factors?.totp?.length ?? 0) > 0;
+
+    const { count: retentionCount } = await supabase
+      .from("data_retention_policies")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId);
+
+    const { count: lineageCount } = await supabase
+      .from("dataset_versions")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId);
+
+    const { count: syncCount } = await supabase
+      .from("data_sync_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId);
+
+    const { data: ssoConfig } = canViewAdminData
+      ? await supabase
+          .from("sso_configs")
+          .select("is_active, provider_type")
+          .eq("organization_id", orgId)
+          .maybeSingle()
+      : { data: null as { is_active: boolean; provider_type: string } | null };
+
+    const { data: workspaceRows } = await supabase
+      .from("workspaces")
+      .select("id")
+      .eq("organization_id", orgId);
+    const workspaceIds = (workspaceRows ?? []).map((w) => w.id);
+    const { data: quota } = workspaceIds.length
+      ? await supabase
+          .from("workspace_quotas")
+          .select("max_api_calls_per_day")
+          .in("workspace_id", workspaceIds)
+          .limit(1)
+          .maybeSingle()
+      : { data: null as { max_api_calls_per_day: number } | null };
+
+    const { count: auditCount, error: auditError } = canViewAdminData
+      ? await supabase
+          .from("audit_log")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", orgId)
+      : { count: null as number | null, error: null as { message: string } | null };
+
     const assessedControls: ComplianceControl[] = [
       // Access Control
       {
         id: "AC-1", category: "Access Control", name: "Row-Level Security",
         description: "All data tables enforce organization-scoped RLS policies preventing cross-tenant access.",
-        status: "compliant", evidence: "100% of data tables have RLS enabled with org_id scoping.",
-        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4"],
+        status: "compliant", evidence: "Structural guarantee — every data table ships with org_id-scoped RLS policies; not configurable per tenant.",
+        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4"], checkType: "platform",
       },
       {
         id: "AC-2", category: "Access Control", name: "Role-Based Access Control",
         description: "Separate user_roles table with SECURITY DEFINER functions for privilege checks.",
-        status: "compliant", evidence: "Roles stored in dedicated table; no client-side role checks.",
-        framework: ["SOC 2 CC6.3", "ISO 27001 A.9.2"],
+        status: "compliant", evidence: "Structural guarantee — roles stored in a dedicated table; no client-side role checks exist in the codebase.",
+        framework: ["SOC 2 CC6.3", "ISO 27001 A.9.2"], checkType: "platform",
       },
       {
         id: "AC-3", category: "Access Control", name: "Multi-Factor Authentication",
-        description: "MFA enrollment available for all user accounts.",
-        status: "compliant", evidence: "TOTP-based MFA via auth provider with enrollment UI.",
-        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4.2"],
+        description: "MFA enrollment for the current user's account.",
+        status: hasMfa ? "compliant" : "partial",
+        evidence: hasMfa ? "TOTP MFA is enrolled and active for your account." : "TOTP MFA is available but not yet enrolled for your account.",
+        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4.2"], checkType: "live",
       },
       {
         id: "AC-4", category: "Access Control", name: "Session Management",
         description: "JWT-based sessions with automatic expiry and refresh token rotation.",
-        status: "compliant", evidence: "Auth sessions managed by infrastructure with configurable TTL.",
-        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4.3"],
+        status: "compliant", evidence: "Structural guarantee — auth sessions are managed by Supabase Auth with configurable TTL.",
+        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4.3"], checkType: "platform",
       },
       // Data Protection
       {
         id: "DP-1", category: "Data Protection", name: "Encryption at Rest",
         description: "All data encrypted using AES-256 at the storage layer.",
-        status: "compliant", evidence: "Database uses AES-256 encryption for all stored data.",
-        framework: ["SOC 2 CC6.7", "ISO 27001 A.10.1"],
+        status: "compliant", evidence: "Structural guarantee — Supabase-managed storage uses AES-256 for all stored data.",
+        framework: ["SOC 2 CC6.7", "ISO 27001 A.10.1"], checkType: "platform",
       },
       {
         id: "DP-2", category: "Data Protection", name: "Encryption in Transit",
-        description: "All connections use TLS 1.3 for data in transit.",
-        status: "compliant", evidence: "HTTPS enforced on all endpoints; TLS 1.3 minimum.",
-        framework: ["SOC 2 CC6.7", "ISO 27001 A.13.1"],
+        description: "All connections use TLS for data in transit.",
+        status: "compliant", evidence: "Structural guarantee — HTTPS/TLS 1.2+ enforced on all endpoints.",
+        framework: ["SOC 2 CC6.7", "ISO 27001 A.13.1"], checkType: "platform",
       },
       {
         id: "DP-3", category: "Data Protection", name: "PII Redaction",
         description: "Automated PII stripping before AI model processing.",
-        status: "compliant", evidence: "AI redaction layer strips emails, phones, SSNs, IBANs before external API calls.",
-        framework: ["SOC 2 CC6.5", "ISO 27001 A.18.1", "GDPR Art. 25"],
+        status: "compliant", evidence: "Structural guarantee — the AI redaction layer strips emails, phones, SSNs, and IBANs before every external model call.",
+        framework: ["SOC 2 CC6.5", "ISO 27001 A.18.1", "GDPR Art. 25"], checkType: "platform",
       },
       {
         id: "DP-4", category: "Data Protection", name: "Data Retention Policy",
         description: "Configurable per-organization data retention with automated cleanup.",
-        status: "compliant", evidence: "data_retention_days configurable per org; cleanup functions available.",
-        framework: ["SOC 2 CC6.5", "ISO 27001 A.8.3", "GDPR Art. 17"],
+        status: (retentionCount ?? 0) > 0 ? "compliant" : "non_compliant",
+        evidence: (retentionCount ?? 0) > 0
+          ? `${retentionCount} retention ${retentionCount === 1 ? "policy is" : "policies are"} configured for this organization.`
+          : "No data retention policy has been configured for this organization yet.",
+        framework: ["SOC 2 CC6.5", "ISO 27001 A.8.3", "GDPR Art. 17"], checkType: "live",
       },
       // Audit & Monitoring
       {
         id: "AU-1", category: "Audit & Monitoring", name: "Immutable Audit Trail",
         description: "Write-once audit log with DENY policies on UPDATE/DELETE.",
-        status: "compliant", evidence: "audit_log and intelligence_audit_trail tables are INSERT-only with DB-level DENY on UPDATE/DELETE.",
-        framework: ["SOC 2 CC7.2", "ISO 27001 A.12.4"],
+        status: !canViewAdminData ? "not_applicable" : auditError ? "non_compliant" : "compliant",
+        evidence: !canViewAdminData
+          ? "Requires owner or admin access to verify from your role."
+          : auditError
+          ? "Could not verify audit log access for this organization."
+          : `Append-only log reachable — ${auditCount ?? 0} event${auditCount === 1 ? "" : "s"} recorded to date.`,
+        framework: ["SOC 2 CC7.2", "ISO 27001 A.12.4"], checkType: "live",
       },
       {
         id: "AU-2", category: "Audit & Monitoring", name: "Data Lineage Tracking",
-        description: "Full source-to-decision data lineage with dataset versioning.",
-        status: "compliant", evidence: "dataset_versions table tracks all changes; raw_records preserves immutable JSONB audit trail.",
-        framework: ["SOC 2 CC8.1", "ISO 27001 A.12.1"],
+        description: "Source-to-decision data lineage via dataset versioning.",
+        status: (lineageCount ?? 0) > 0 ? "compliant" : "partial",
+        evidence: (lineageCount ?? 0) > 0
+          ? `${lineageCount} dataset version${lineageCount === 1 ? "" : "s"} tracked for this organization.`
+          : "The versioning mechanism is available, but no dataset versions exist for this organization yet.",
+        framework: ["SOC 2 CC8.1", "ISO 27001 A.12.1"], checkType: "live",
       },
       {
         id: "AU-3", category: "Audit & Monitoring", name: "Pipeline Observability",
-        description: "Structured logging and sync job tracking for all data pipelines.",
-        status: "compliant", evidence: "data_sync_jobs tracks every sync; structured JSON logging in edge functions.",
-        framework: ["SOC 2 CC7.1", "ISO 27001 A.12.4"],
+        description: "Sync job tracking for all data pipelines.",
+        status: (syncCount ?? 0) > 0 ? "compliant" : "partial",
+        evidence: (syncCount ?? 0) > 0
+          ? `${syncCount} sync job${syncCount === 1 ? "" : "s"} tracked for this organization.`
+          : "The sync-tracking mechanism is available, but no sync jobs have run for this organization yet.",
+        framework: ["SOC 2 CC7.1", "ISO 27001 A.12.4"], checkType: "live",
       },
       // AI Governance
       {
         id: "AI-1", category: "AI Governance", name: "Confidence Governance",
         description: "AI confidence scores capped by evidence volume; never fabricated.",
-        status: "compliant", evidence: "Epistemic confidence caps: <12pts=60%, <30pts=75%, 30+=90%. Adaptive calibration from historical decisions.",
-        framework: ["EU AI Act Art. 13", "NIST AI RMF"],
+        status: "compliant", evidence: "Structural guarantee — epistemic confidence caps (<12pts=60%, <30pts=75%, 30+=90%) are enforced server-side in every AI edge function via a shared cap utility.",
+        framework: ["EU AI Act Art. 13", "NIST AI RMF"], checkType: "platform",
       },
       {
         id: "AI-2", category: "AI Governance", name: "Model Explainability",
-        description: "All AI outputs include traceability panel with method, assumptions, and limitations.",
-        status: "compliant", evidence: "Evidence Contract enforces 4-layer classification: OBSERVED_FACT, STATISTICAL_INFERENCE, HEURISTIC_ESTIMATE, AI_RECOMMENDATION.",
-        framework: ["EU AI Act Art. 13", "NIST AI RMF"],
+        description: "All AI outputs include traceability with method, assumptions, and limitations.",
+        status: "compliant", evidence: "Structural guarantee — outputs are classified into OBSERVED_FACT, STATISTICAL_INFERENCE, HEURISTIC_ESTIMATE, or AI_RECOMMENDATION.",
+        framework: ["EU AI Act Art. 13", "NIST AI RMF"], checkType: "platform",
       },
       {
         id: "AI-3", category: "AI Governance", name: "Multi-Model Failover",
-        description: "AI pipeline uses model chain with automatic fallback on failure.",
-        status: "compliant", evidence: "3-model failover chain: Gemini Flash → GPT-5-mini → Gemini Flash Lite. Validation layer rejects hallucinated metrics.",
-        framework: ["NIST AI RMF"],
+        description: "AI pipeline uses a model chain with automatic fallback on failure.",
+        status: "compliant", evidence: "Structural guarantee — model failover chain with a validation layer that rejects hallucinated metrics.",
+        framework: ["NIST AI RMF"], checkType: "platform",
       },
       {
         id: "AI-4", category: "AI Governance", name: "Non-Fiduciary Disclaimers",
         description: "Platform explicitly establishes non-fiduciary status with decision responsibility dialogs.",
-        status: "compliant", evidence: "DecisionResponsibilityDialog enforces acknowledgment before approval. IntelligenceDisclaimer on all strategic surfaces.",
-        framework: ["SOC 2 CC2.2"],
+        status: "compliant", evidence: "Structural guarantee — decision responsibility acknowledgment is required before approval on every strategic surface.",
+        framework: ["SOC 2 CC2.2"], checkType: "platform",
       },
       // Infrastructure
       {
         id: "IN-1", category: "Infrastructure", name: "Tenant Isolation",
         description: "Workspace-level data isolation with SECURITY DEFINER membership checks.",
-        status: "compliant", evidence: "is_workspace_member() function gates all strategic data access at DB level.",
-        framework: ["SOC 2 CC6.1", "ISO 27001 A.13.1"],
+        status: "compliant", evidence: "Structural guarantee — workspace membership is checked at the database level for all strategic data access.",
+        framework: ["SOC 2 CC6.1", "ISO 27001 A.13.1"], checkType: "platform",
       },
       {
         id: "IN-2", category: "Infrastructure", name: "Rate Limiting",
-        description: "API rate limits on all ingestion endpoints.",
-        status: "compliant", evidence: "50K records/hour per source; per-org quotas via workspace_quotas table.",
-        framework: ["SOC 2 CC6.6"],
+        description: "Per-workspace API and ingestion quotas.",
+        status: quota ? "compliant" : "partial",
+        evidence: quota
+          ? `Configured — ${quota.max_api_calls_per_day.toLocaleString()} API calls/day for this workspace.`
+          : "No quota row is configured for this workspace yet.",
+        framework: ["SOC 2 CC6.6"], checkType: "live",
       },
       {
         id: "IN-3", category: "Infrastructure", name: "Input Validation",
         description: "Strict validation on all data inputs: ISO dates, finite numbers, bounded values.",
-        status: "compliant", evidence: "All ingestion paths validate: ISO date format, |value| < 1T, date age < 5 years, finite numbers only.",
-        framework: ["SOC 2 CC6.6", "OWASP"],
+        status: "compliant", evidence: "Structural guarantee — every ingestion path validates date format, magnitude bounds, and finiteness before write.",
+        framework: ["SOC 2 CC6.6", "OWASP"], checkType: "platform",
       },
       // Compliance Readiness
       {
         id: "CR-1", category: "Compliance Readiness", name: "SSO/SAML Integration",
         description: "Enterprise SSO support for identity federation.",
-        status: "partial", evidence: "SSO configuration UI available. SAML integration requires enterprise identity provider setup.",
-        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4"],
+        status: !canViewAdminData
+          ? "not_applicable"
+          : ssoConfig?.is_active ? "compliant" : ssoConfig ? "partial" : "non_compliant",
+        evidence: !canViewAdminData
+          ? "Requires owner or admin access to verify from your role."
+          : ssoConfig?.is_active
+          ? `Active — ${ssoConfig.provider_type.toUpperCase()} configured for this organization.`
+          : ssoConfig
+          ? `${ssoConfig.provider_type.toUpperCase()} is configured but not yet activated.`
+          : "No SSO provider has been configured for this organization.",
+        framework: ["SOC 2 CC6.1", "ISO 27001 A.9.4"], checkType: "live",
       },
       {
         id: "CR-2", category: "Compliance Readiness", name: "SOC 2 Type II Audit",
         description: "Formal third-party SOC 2 audit certification.",
-        status: "partial", evidence: "Architecture designed for SOC 2 compliance. All technical controls implemented. Formal audit pending.",
-        framework: ["SOC 2"],
+        status: "partial", evidence: "Manually attested — pending a formal third-party audit; not derivable from platform data.",
+        framework: ["SOC 2"], checkType: "external",
       },
     ];
 
     setControls(assessedControls);
 
-    const compliant = assessedControls.filter(c => c.status === "compliant").length;
-    const total = assessedControls.filter(c => c.status !== "not_applicable").length;
-    setScore(Math.round((compliant / total) * 100));
+    const scored = assessedControls.filter(c => c.checkType === "live" && c.status !== "not_applicable");
+    const compliant = scored.filter(c => c.status === "compliant").length;
+    setScore(scored.length ? Math.round((compliant / scored.length) * 100) : 0);
+    setLoading(false);
   };
 
   const statusIcon = (status: string) => {
@@ -191,6 +285,14 @@ const Compliance = () => {
       </Badge>
     );
   };
+
+  if (loading) {
+    return (
+      <div className="p-4 md:p-6 max-w-7xl mx-auto flex items-center justify-center min-h-[40vh]">
+        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const categories = [...new Set(controls.map(c => c.category))];
   const categoryIcon: Record<string, React.ElementType> = {
@@ -225,11 +327,18 @@ const Compliance = () => {
               <div>
                 <p className="text-lg font-semibold">Compliance Score</p>
                 <p className="text-sm text-muted-foreground">
-                  {controls.filter(c => c.status === "compliant").length} of {controls.length} controls compliant
+                  {controls.filter(c => c.checkType === "live" && c.status === "compliant").length} of{" "}
+                  {controls.filter(c => c.checkType === "live" && c.status !== "not_applicable").length} verified controls compliant
                 </p>
                 <div className="mt-2">
                   <Progress value={score} className="h-2" />
                 </div>
+                <p className="text-[10px] text-muted-foreground/70 mt-1.5 leading-relaxed max-w-md">
+                  Computed only from controls checked live against this organization's data.{" "}
+                  {controls.filter(c => c.checkType === "platform").length} platform guarantees and{" "}
+                  {controls.filter(c => c.checkType === "external").length} externally-attested control
+                  {controls.filter(c => c.checkType === "external").length === 1 ? "" : "s"} are shown below but excluded from the score.
+                </p>
               </div>
             </div>
           </CardContent>
@@ -280,6 +389,11 @@ const Compliance = () => {
                             <span className="font-mono text-xs text-muted-foreground">{control.id}</span>
                             <span className="font-semibold text-sm">{control.name}</span>
                             {statusBadge(control.status)}
+                            {control.checkType !== "live" && (
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 text-muted-foreground">
+                                {control.checkType === "platform" ? "Platform" : "External"}
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-sm text-muted-foreground mt-1">{control.description}</p>
                           <div className="mt-2 p-2 rounded bg-muted/50 border border-border/30">

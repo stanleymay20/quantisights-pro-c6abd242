@@ -7,6 +7,7 @@ import {
   Layers, Shield, Target, TrendingUp, TrendingDown,
   AlertTriangle, CheckCircle2, Activity, BarChart3,
 } from "lucide-react";
+import { getSystemConfig } from "@/lib/system-config";
 
 interface WorkspaceSummary {
   id: string;
@@ -41,6 +42,7 @@ const CrossWorkspaceIntelligence = memo(({ organizationId }: CrossWorkspaceIntel
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [totals, setTotals] = useState<OrgTotals | null>(null);
   const [loading, setLoading] = useState(true);
+  const { calibrationGood } = getSystemConfig().confidenceDisplay;
 
   useEffect(() => {
     if (!organizationId) return;
@@ -247,8 +249,8 @@ const CrossWorkspaceIntelligence = memo(({ organizationId }: CrossWorkspaceIntel
                 {totals.calibrationScore != null ? `${totals.calibrationScore}%` : "—"}
               </span>
             </div>
-            {totals.calibrationScore != null && totals.calibrationScore < 65 && (
-              <p className="text-[10px] text-warning mt-0.5">Below 65% threshold</p>
+            {totals.calibrationScore != null && totals.calibrationScore < calibrationGood && (
+              <p className="text-[10px] text-warning mt-0.5">Below {calibrationGood}% threshold</p>
             )}
           </div>
         </div>

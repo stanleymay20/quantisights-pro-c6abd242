@@ -95,7 +95,7 @@ const ValueOfInformation = ({ decisions }: { decisions: Decision[] }) => {
             <div className="grid grid-cols-4 gap-2 text-center mb-3">
               <div>
                 <p className="text-[10px] text-muted-foreground">Confidence</p>
-                <p className={`text-sm font-bold font-mono ${item.confidence >= 75 ? "text-success" : item.confidence >= 50 ? "text-warning" : "text-destructive"}`}>
+                <p className={`text-sm font-bold font-mono ${item.confidence >= getSystemConfig().confidenceDisplay.aiConfidenceHigh ? "text-success" : item.confidence >= getSystemConfig().confidenceDisplay.aiConfidenceModerate ? "text-warning" : "text-destructive"}`}>
                   {item.confidence}%
                 </p>
               </div>

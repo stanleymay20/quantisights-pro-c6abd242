@@ -75,6 +75,21 @@ export interface SystemConfig {
     };
     reconcileIntervalMs: number;
   };
+  /**
+   * Shared "is this score good/moderate/bad" display cutoffs. Previously
+   * each component re-declared its own literal (70/50, 75/50, 80/50 for AI
+   * confidence; 65 vs. 50/70 for calibration score), so the same underlying
+   * value could render as a different color/tier depending on which screen
+   * showed it. One canonical pair per metric fixes that.
+   */
+  confidenceDisplay: {
+    /** AI/decision confidence percentage (0-100) badge & indicator color tiers. */
+    aiConfidenceHigh: number;
+    aiConfidenceModerate: number;
+    /** Calibration score percentage (0-100) status tiers. */
+    calibrationGood: number;
+    calibrationWarning: number;
+  };
 }
 
 let _cachedConfig: SystemConfig | null = null;
@@ -199,6 +214,12 @@ export function getSystemConfig(): SystemConfig {
         operationalImbalancePenalty: envFloat("VITE_CONV_OP_IMBAL_PENALTY", 25),
       },
       reconcileIntervalMs: envInt("VITE_CONV_RECONCILE_INTERVAL", 6 * 60 * 60 * 1000),
+    },
+    confidenceDisplay: {
+      aiConfidenceHigh: envFloat("VITE_CONF_AI_HIGH", 70),
+      aiConfidenceModerate: envFloat("VITE_CONF_AI_MODERATE", 50),
+      calibrationGood: envFloat("VITE_CONF_CALIBRATION_GOOD", 70),
+      calibrationWarning: envFloat("VITE_CONF_CALIBRATION_WARNING", 50),
     },
   };
 

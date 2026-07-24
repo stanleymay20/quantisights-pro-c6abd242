@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ShieldCheck, Database, AlertTriangle, Info, Cpu } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { getSystemConfig } from "@/lib/system-config";
 
 export interface ConfidenceObject {
   raw_confidence?: number;
@@ -45,7 +46,8 @@ const ConfidenceBadge = React.forwardRef<HTMLSpanElement, ConfidenceBadgeProps>(
   ({ confidence, showDetails = false, isHeuristic = false, className = "", ...rest }, ref) => {
     const score = resolveConfidence(confidence);
     const meta = resolveConfidenceMeta(confidence);
-    const color = score >= 80 ? "text-success" : score >= 50 ? "text-warning" : "text-destructive";
+    const { aiConfidenceHigh, aiConfidenceModerate } = getSystemConfig().confidenceDisplay;
+    const color = score >= aiConfidenceHigh ? "text-success" : score >= aiConfidenceModerate ? "text-warning" : "text-destructive";
 
     // Determine if heuristic from cap reason or explicit prop
     const heuristicFlag = isHeuristic || meta?.confidence_cap_reason?.toLowerCase().includes("heuristic");

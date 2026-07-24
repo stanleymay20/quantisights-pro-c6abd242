@@ -2,6 +2,7 @@ import { useEffect, useState, memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Shield, ShieldCheck, ShieldAlert, Activity, Brain, AlertTriangle, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { getSystemConfig } from "@/lib/system-config";
 
 interface ProtectionStatusProps {
   organizationId: string;
@@ -98,6 +99,8 @@ const ProtectionStatus = memo(({ organizationId, calibrationScore, pendingDecisi
     fetchDrivers();
   }, [organizationId]);
 
+  const { calibrationGood, calibrationWarning } = getSystemConfig().confidenceDisplay;
+
   const level = useMemo((): ProtectionLevel => {
     let score = 0;
     if (criticalSignals > 0) score += 3;
@@ -105,8 +108,8 @@ const ProtectionStatus = memo(({ organizationId, calibrationScore, pendingDecisi
     else if (unclosedOutcomes > 0) score += 1;
     if (driftStatus === "degrading") score += 2;
     else if (driftStatus === "watch") score += 1;
-    if (calibrationScore != null && calibrationScore < 50) score += 2;
-    else if (calibrationScore != null && calibrationScore < 70) score += 1;
+    if (calibrationScore != null && calibrationScore < calibrationWarning) score += 2;
+    else if (calibrationScore != null && calibrationScore < calibrationGood) score += 1;
     if (pendingDecisions > 5) score += 1;
 
     if (score >= 4) return "exposed";
@@ -121,7 +124,7 @@ const ProtectionStatus = memo(({ organizationId, calibrationScore, pendingDecisi
     {
       label: "Calibration",
       value: calibrationScore != null ? `${calibrationScore}%` : "No data",
-      status: calibrationScore == null ? "warning" : calibrationScore >= 70 ? "good" : calibrationScore >= 50 ? "warning" : "critical",
+      status: calibrationScore == null ? "warning" : calibrationScore >= calibrationGood ? "good" : calibrationScore >= calibrationWarning ? "warning" : "critical",
       icon: Brain,
     },
     {
