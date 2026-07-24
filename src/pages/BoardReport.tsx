@@ -141,6 +141,56 @@ const BoardReport = () => {
           tier={report.tier}
         />
 
+        {/*
+          Ch.1 "Context before chart" + Ch.7 story arc: lead the report with
+          who it's for, what they should decide, one takeaway sentence, and
+          the Situation → Change → Decision → Evidence spine — before any
+          KPI grid loads.
+        */}
+        <div className="px-16 pt-10 space-y-6 print:break-after-page">
+          <NarrativeHeader
+            audience="For the Board & Executive Committee"
+            action={
+              report.has_escalation
+                ? "Ratify escalation path and approve mitigating decisions"
+                : report.active_conflicts_count > 0
+                ? "Resolve active governance conflicts"
+                : "Confirm governance posture and sign off"
+            }
+            takeaway={report.governance_headline}
+          />
+          <StoryArc
+            situation={{
+              label: "Baseline",
+              body: (
+                <>
+                  Target governance posture is <span className="font-semibold text-foreground">ALIGNED</span> with peak risk ≤ 25 and zero active conflicts across roles.
+                </>
+              ),
+            }}
+            change={{
+              label: "What Changed",
+              body: (
+                <>
+                  Peak risk is now <span className="font-semibold text-foreground">{report.max_risk_score}</span>{report.has_escalation ? " and an escalation is active" : ""}. {report.active_conflicts_count} active conflict{report.active_conflicts_count === 1 ? "" : "s"} across roles.
+                </>
+              ),
+            }}
+            decision={{
+              label: "Recommendation",
+              body: report.board_summary?.[0] ?? "Continue current governance posture.",
+            }}
+            evidence={{
+              label: "Evidence",
+              body: (
+                <>
+                  Trend Intelligence, Risk Attribution, and Simulation sections below anchor this recommendation with historical data and deterministic modelling.
+                </>
+              ),
+            }}
+          />
+        </div>
+
         {/* Page 1: Executive Summary */}
         <ExecutiveSummary
           governanceStatus={report.governance_status}
@@ -150,6 +200,7 @@ const BoardReport = () => {
           hasEscalation={report.has_escalation}
           activeConflictsCount={report.active_conflicts_count}
         />
+
 
         {/* Trend Intelligence */}
         <TrendIntelligence
