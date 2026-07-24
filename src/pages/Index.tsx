@@ -63,8 +63,9 @@ const ResponsiveStyles = () => (
     @media (max-width: 900px) {
       .qv-wrap { padding: 72px 18px; }
       .qv-nav-inner { height: 60px; padding: 0 18px; }
-      .qv-nav-links a:not(:last-child):not([href='#demo']) { display: none; }
-      .qv-nav-links { gap: 14px; }
+      .qv-nav-links a:not(:last-child):not([href='#demo']):not(.qv-nav-signin) { display: none; }
+      .qv-nav-links { gap: 10px; }
+      .qv-nav-signin { font-size: 13px !important; padding: 8px 12px !important; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #fff !important; }
       .qv-grid-2, .qv-grid-3, .qv-grid-4, .qv-footer-grid { grid-template-columns: 1fr; gap: 24px; }
       .qv-hero { min-height: auto; }
       .qv-hero-content { padding: 104px 18px 48px; }
