@@ -13,6 +13,8 @@ import RiskAttribution from "@/components/board-report/RiskAttribution";
 import GovernanceActions from "@/components/board-report/GovernanceActions";
 import ConflictsSection from "@/components/board-report/ConflictsSection";
 import SimulationSection from "@/components/board-report/SimulationSection";
+import { NarrativeHeader } from "@/components/narrative/NarrativeHeader";
+import { StoryArc } from "@/components/narrative/StoryArc";
 
 interface ReportData {
   organization_name: string;
