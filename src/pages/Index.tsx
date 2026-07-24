@@ -135,7 +135,8 @@ const Nav = () => {
           <a href="#platform" className={linkClass("platform")} aria-current={activeSection === "platform" ? "true" : undefined}>Platform</a>
           <a href="#pricing" className={linkClass("pricing")} aria-current={activeSection === "pricing" ? "true" : undefined}>Pricing</a>
           <Link to="/trust" className="qv-nav-link">Security</Link>
-          <Link to="/login" className="qv-nav-link" style={{ color: "rgba(255,255,255,0.55)" }}>Sign In</Link>
+          <Link to="/login" className="qv-nav-link qv-nav-signin" style={{ color: "rgba(255,255,255,0.75)" }}>Sign In</Link>
+          <Link to="/register" className="qv-nav-link qv-hide-mobile" style={{ color: "rgba(255,255,255,0.55)" }}>Sign Up</Link>
           <a href="#demo" style={{ fontSize: 13, fontWeight: 700, color: "#fff", background: ACCENT, padding: "9px 18px", borderRadius: 4, textDecoration: "none" }}>Request Demo</a>
         </nav>
       </div>
