@@ -318,4 +318,91 @@ function DistributionBand({ sim }: { sim: any }) {
   );
 }
 
+/**
+ * MonteCarloDistributionChart — data-driven distribution rendered from the
+ * five real percentiles the simulation engine persists (P10/P25/median/P75/P90).
+ * Annotations mark the "so what": downside floor, central expectation, upside
+ * ceiling, and (when present) the last observed value as a "today" reference.
+ */
+function MonteCarloDistributionChart({ sim }: { sim: any }) {
+  const p10 = Number(sim.p10_value);
+  const p25 = Number(sim.p25_value);
+  const p50 = Number(sim.median_value);
+  const p75 = Number(sim.p75_value);
+  const p90 = Number(sim.p90_value);
+  const probNeg = Number(sim.probability_negative);
+
+  // Bin the sim into 5 real percentile buckets; height = relative density
+  // (interquartile bins are naturally denser than the tails, so we scale
+  // width-of-bucket -> inverse density for a proper histogram silhouette).
+  const buckets = [
+    { label: "P10", value: p10, width: p25 - p10 },
+    { label: "P25", value: p25, width: p50 - p25 },
+    { label: "Median", value: p50, width: p75 - p50 },
+    { label: "P75", value: p75, width: p90 - p75 },
+    { label: "P90", value: p90, width: (p90 - p75) || 1 },
+  ].map((b) => ({
+    label: b.label,
+    value: b.value,
+    density: b.width > 0 ? 1 / b.width : 0,
+  }));
+  const maxDensity = Math.max(...buckets.map((b) => b.density), 1);
+  const data = buckets.map((b) => ({
+    label: b.label,
+    value: b.value,
+    density: Math.round((b.density / maxDensity) * 100),
+  }));
+
+  const tone: AnnotationTone = probNeg >= 60 ? "danger" : probNeg >= 40 ? "warning" : "success";
+  const takeaway =
+    probNeg >= 50
+      ? `${Math.round(probNeg)}% of simulated paths end below today — downside floor at P10 = ${fmt(p10)}.`
+      : `${Math.round(100 - probNeg)}% of paths end above today — central case ${fmt(p50)}, upside ${fmt(p90)}.`;
+
+  const annotations: ChartAnnotation[] = [
+    { kind: "band", axis: "x", from: "P25", to: "P75", label: "Interquartile range", tone: "primary" },
+    { kind: "y", value: 0, label: "", tone: "neutral" },
+  ];
+
+  return (
+    <AnnotatedChart
+      title={`Distribution of ${String(sim.metric_type).replace(/_/g, " ")} — ${sim.forecast_horizon}mo horizon`}
+      takeaway={takeaway}
+      tone={tone}
+      caption={`${sim.simulation_runs?.toLocaleString?.() ?? sim.simulation_runs} paths simulated · confidence ${Math.round(sim.capped_confidence)}% · VaR₉₅ = ${fmt(sim.value_at_risk_95)}`}
+    >
+      <div className="h-[240px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 16, right: 24, bottom: 8, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} hide />
+            <RTooltip
+              formatter={(_v, _k, p: any) => [fmt(p?.payload?.value), p?.payload?.label]}
+              labelFormatter={() => ""}
+            />
+            <Bar dataKey="density" radius={[6, 6, 0, 0]}>
+              {data.map((d) => (
+                <Cell
+                  key={d.label}
+                  fill={
+                    d.label === "Median"
+                      ? "hsl(var(--primary))"
+                      : d.label === "P10"
+                        ? "hsl(var(--destructive) / 0.55)"
+                        : d.label === "P90"
+                          ? "hsl(var(--success) / 0.55)"
+                          : "hsl(var(--primary) / 0.35)"
+                  }
+                />
+              ))}
+            </Bar>
+            {buildAnnotationElements(annotations)}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </AnnotatedChart>
+  );
+}
+
 export default Simulations;
