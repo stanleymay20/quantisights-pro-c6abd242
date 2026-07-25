@@ -198,8 +198,9 @@ const Simulations = () => {
                   </TooltipContent>
                 </Tooltip>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 <DistributionBand sim={latest} />
+                <MonteCarloDistributionChart sim={latest} />
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
                   <div>Mean Growth Rate: <span className="font-mono text-foreground">{latest.mean_growth_rate}%/period</span></div>
                   <div>Volatility (σ): <span className="font-mono text-foreground">{latest.volatility}%</span></div>
