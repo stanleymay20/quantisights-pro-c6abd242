@@ -192,33 +192,59 @@ const Forecasting = () => {
                 </Card>
               </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Historical + Forecast ({metricType})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-[400px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                        <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={d => new Date(d).toLocaleDateString("en", { month: "short", year: "2-digit" })} />
-                        <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip labelFormatter={d => new Date(d).toLocaleDateString("en", { month: "long", year: "numeric" })} />
-                        <Area dataKey="upper" fill="hsl(var(--primary) / 0.1)" stroke="none" />
-                        <Area dataKey="lower" fill="hsl(var(--background))" stroke="none" />
-                        <Line dataKey="actual" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} name="Actual" />
-                        <Line dataKey="forecast" stroke="hsl(var(--primary))" strokeWidth={2} strokeDasharray="8 4" dot={{ r: 3 }} name="Forecast" />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
+              {(() => {
+                const lastHist = data.historical[data.historical.length - 1];
+                const firstForecast = data.predictions[0];
+                const finalForecast = data.predictions[data.predictions.length - 1];
+                const growth = Number(data.growth_rate_pct ?? 0);
+                const tone: AnnotationTone =
+                  data.trend_direction === "growing" ? "success"
+                  : data.trend_direction === "declining" ? "danger"
+                  : "neutral";
+                const annotations: ChartAnnotation[] = [];
+                if (firstForecast) {
+                  annotations.push({ kind: "x", value: firstForecast.date, label: "Forecast begins", tone: "primary" });
+                }
+                if (lastHist) {
+                  annotations.push({ kind: "y", value: lastHist.value, label: `Today: ${lastHist.value.toLocaleString()}`, tone: "neutral" });
+                }
+                if (finalForecast) {
+                  annotations.push({
+                    kind: "y",
+                    value: finalForecast.value,
+                    label: `${horizon}-mo target: ${Math.round(finalForecast.value).toLocaleString()}`,
+                    tone,
+                  });
+                }
+                const takeaway = lastHist && finalForecast
+                  ? `${data.trend_direction === "growing" ? "Growth" : data.trend_direction === "declining" ? "Decline" : "Flat"} of ${growth.toFixed(1)}% projected over ${horizon} months (MAPE ${data.mape_estimate?.toFixed(1)}%).`
+                  : undefined;
+                return (
+                  <AnnotatedChart
+                    title={`Historical + Forecast — ${metricType.replace(/_/g, " ")}`}
+                    takeaway={takeaway}
+                    tone={tone}
+                    caption={data.confidence_narrative}
+                  >
+                    <div className="h-[380px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 10, right: 24, bottom: 8, left: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={d => new Date(d).toLocaleDateString("en", { month: "short", year: "2-digit" })} />
+                          <YAxis tick={{ fontSize: 11 }} />
+                          <Tooltip labelFormatter={d => new Date(d).toLocaleDateString("en", { month: "long", year: "numeric" })} />
+                          <Area dataKey="upper" fill="hsl(var(--primary) / 0.1)" stroke="none" />
+                          <Area dataKey="lower" fill="hsl(var(--background))" stroke="none" />
+                          <Line dataKey="actual" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} name="Actual" />
+                          <Line dataKey="forecast" stroke="hsl(var(--primary))" strokeWidth={2} strokeDasharray="8 4" dot={{ r: 3 }} name="Forecast" />
+                          {buildAnnotationElements(annotations)}
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </AnnotatedChart>
+                );
+              })()}
 
-              <Card>
-                <CardContent className="p-4">
-                  <p className="text-sm text-muted-foreground">{data.confidence_narrative}</p>
-                </CardContent>
-              </Card>
             </>
           )}
         </main>
