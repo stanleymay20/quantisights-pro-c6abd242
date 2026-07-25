@@ -15,6 +15,8 @@ import { Activity, TrendingUp, TrendingDown, Shield, Info, Loader2, BarChart3 } 
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { AnnotatedChart, buildAnnotationElements, type ChartAnnotation, type AnnotationTone } from "@/components/charts/AnnotatedChart";
+import { Bar, BarChart, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
 
 const Simulations = () => {
   const { currentOrgId: organizationId } = useOrganization();
