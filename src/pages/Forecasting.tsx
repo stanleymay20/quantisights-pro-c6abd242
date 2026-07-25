@@ -10,8 +10,9 @@ import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ComposedChart } from "recharts";
+import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ComposedChart } from "recharts";
 import { TrendingUp, TrendingDown, Minus, Loader2, Sparkles, BarChart3, Activity, Database, Upload } from "lucide-react";
+import { AnnotatedChart, buildAnnotationElements, type ChartAnnotation, type AnnotationTone } from "@/components/charts/AnnotatedChart";
 
 const HORIZONS = [3, 6, 12];
 
