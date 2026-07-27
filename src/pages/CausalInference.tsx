@@ -37,6 +37,7 @@ interface CausalResult {
   causal_chains: string[][];
   insufficient_data?: boolean;
   message?: string;
+  data_points?: number;
 }
 
 const CausalInference = () => {
@@ -120,7 +121,7 @@ const CausalInference = () => {
                 <div>
                   <p className="font-medium">Insufficient Data</p>
                   <p className="text-sm text-muted-foreground">{result.message}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Current data points: {(result as unknown as any).data_points as number || 0}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Current data points: {result.data_points || 0}</p>
                 </div>
               </CardContent>
             </Card>

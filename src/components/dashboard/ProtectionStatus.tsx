@@ -115,7 +115,7 @@ const ProtectionStatus = memo(({ organizationId, calibrationScore, pendingDecisi
     if (score >= 4) return "exposed";
     if (score >= 2) return "watch";
     return "covered";
-  }, [criticalSignals, unclosedOutcomes, driftStatus, calibrationScore, pendingDecisions]);
+  }, [criticalSignals, unclosedOutcomes, driftStatus, calibrationScore, pendingDecisions, calibrationGood, calibrationWarning]);
 
   const config = LEVEL_CONFIG[level];
   const LevelIcon = config.icon;
@@ -145,7 +145,7 @@ const ProtectionStatus = memo(({ organizationId, calibrationScore, pendingDecisi
       status: unclosedOutcomes === 0 ? "good" : unclosedOutcomes <= 2 ? "warning" : "critical",
       icon: Clock,
     },
-  ], [calibrationScore, driftStatus, criticalSignals, unclosedOutcomes]);
+  ], [calibrationScore, driftStatus, criticalSignals, unclosedOutcomes, calibrationGood, calibrationWarning]);
 
   return (
     <motion.div
