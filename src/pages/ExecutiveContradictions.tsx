@@ -142,7 +142,7 @@ function ContradictionCard({
 }
 
 const ExecutiveContradictions = () => {
-  const { organizationId } = useActiveDataContext();
+  const { orgId: organizationId } = useActiveDataContext();
   const { toast } = useToast();
   const {
     contradictions, loading, detecting, error, summary, runDetection, updateStatus,
