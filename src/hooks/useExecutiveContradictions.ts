@@ -116,15 +116,13 @@ export function useExecutiveContradictions(orgId: string | null) {
   const updateStatus = useCallback(
     async (id: string, status: ContradictionStatus, resolutionNote?: string) => {
       const { data: authData } = await supabase.auth.getUser();
-      const patch: Record<string, unknown> = { status };
-      if (resolutionNote !== undefined) patch.resolution_note = resolutionNote;
-      if (status === "resolved" || status === "accepted") {
-        patch.resolved_at = new Date().toISOString();
-        patch.resolved_by = authData?.user?.id ?? null;
-      } else {
-        patch.resolved_at = null;
-        patch.resolved_by = null;
-      }
+      const finalised = status === "resolved" || status === "accepted";
+      const patch = {
+        status,
+        ...(resolutionNote !== undefined ? { resolution_note: resolutionNote } : {}),
+        resolved_at: finalised ? new Date().toISOString() : null,
+        resolved_by: finalised ? authData?.user?.id ?? null : null,
+      };
       const { error: upErr } = await supabase
         .from("executive_contradictions")
         .update(patch)
