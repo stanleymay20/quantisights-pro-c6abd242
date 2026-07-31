@@ -5510,6 +5510,120 @@ export type Database = {
           },
         ]
       }
+      executive_contradictions: {
+        Row: {
+          affected_decision_ids: string[]
+          affected_decision_types: string[]
+          blocks_decision: boolean
+          category: string
+          confidence: number
+          contradiction_key: string
+          created_at: string
+          dataset_id: string | null
+          detected_at: string
+          evidence: Json
+          explanation: string
+          function_a: string
+          function_b: string
+          gap_absolute: number | null
+          gap_pct: number | null
+          id: string
+          last_seen_at: string
+          lineage: Json
+          organization_id: string
+          owner_user_id: string | null
+          period_label: string | null
+          recommended_action: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          root_cause: string | null
+          scope: string | null
+          severity: string
+          source_a: string
+          source_b: string
+          status: string
+          subject: string
+          updated_at: string
+          value_a: number | null
+          value_b: number | null
+        }
+        Insert: {
+          affected_decision_ids?: string[]
+          affected_decision_types?: string[]
+          blocks_decision?: boolean
+          category?: string
+          confidence?: number
+          contradiction_key: string
+          created_at?: string
+          dataset_id?: string | null
+          detected_at?: string
+          evidence?: Json
+          explanation: string
+          function_a: string
+          function_b: string
+          gap_absolute?: number | null
+          gap_pct?: number | null
+          id?: string
+          last_seen_at?: string
+          lineage?: Json
+          organization_id: string
+          owner_user_id?: string | null
+          period_label?: string | null
+          recommended_action?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          root_cause?: string | null
+          scope?: string | null
+          severity?: string
+          source_a: string
+          source_b: string
+          status?: string
+          subject: string
+          updated_at?: string
+          value_a?: number | null
+          value_b?: number | null
+        }
+        Update: {
+          affected_decision_ids?: string[]
+          affected_decision_types?: string[]
+          blocks_decision?: boolean
+          category?: string
+          confidence?: number
+          contradiction_key?: string
+          created_at?: string
+          dataset_id?: string | null
+          detected_at?: string
+          evidence?: Json
+          explanation?: string
+          function_a?: string
+          function_b?: string
+          gap_absolute?: number | null
+          gap_pct?: number | null
+          id?: string
+          last_seen_at?: string
+          lineage?: Json
+          organization_id?: string
+          owner_user_id?: string | null
+          period_label?: string | null
+          recommended_action?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          root_cause?: string | null
+          scope?: string | null
+          severity?: string
+          source_a?: string
+          source_b?: string
+          status?: string
+          subject?: string
+          updated_at?: string
+          value_a?: number | null
+          value_b?: number | null
+        }
+        Relationships: []
+      }
       executive_convergence_index: {
         Row: {
           alignment_status: string
