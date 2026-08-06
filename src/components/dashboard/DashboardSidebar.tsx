@@ -181,6 +181,7 @@ const navSections: NavSection[] = [
     subItems: [
       { icon: Target,         label: "Outcome Tracking",  path: "/outcomes" },
       { icon: BarChart3,      label: "Decision Accuracy", path: "/decision-accuracy" },
+      { icon: Factory,        label: "Industrial Ops",    path: "/industrial-operations" },
       { icon: Scale,          label: "Contradictions",    path: "/contradictions" },
       { icon: ShieldAlert,    label: "Executive Intel",   path: "/executive-intelligence" },
       { icon: ShieldAlert,    label: "Interventions",     path: "/interventions" },
