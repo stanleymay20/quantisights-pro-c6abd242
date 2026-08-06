@@ -295,6 +295,7 @@ export const routes: RouteEntry[] = [
   { path: "/intelligence-inbox", element: <IntelligenceInbox />, layout: "full" },
   { path: "/executive-intelligence", element: <ExecutiveIntelligence />, layout: "full" },
   { path: "/contradictions", element: <ExecutiveContradictions />, layout: "full" },
+  { path: "/industrial-operations", element: <IndustrialOperations />, layout: "full" },
   { path: "/interventions", element: <Interventions />, layout: "full" },
   { path: "/narratives", element: <NarrativeCockpit />, layout: "full" },
   { path: "/operational-graph", element: <OperationalGraph />, layout: "full" },
