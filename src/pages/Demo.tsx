@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { Brain, Loader2, AlertCircle, CheckCircle2, Shield, BarChart3, Zap, Target, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,6 +19,7 @@ const MAX_RETRIES = 3;
 
 const Demo = () => {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -28,12 +30,15 @@ const Demo = () => {
       setError(null);
       setCurrentStep(0);
 
-      await supabase.auth.signOut();
+      // Use the AuthContext's signOut() rather than calling
+      // supabase.auth.signOut() directly: it marks the sign-out as
+      // deliberate so the global "Your session ended" unexpected-signout
+      // toast doesn't fire on top of the demo provisioning UI (it
+      // previously did, since a SIGNED_OUT event from a call the context
+      // didn't know about reads as unexpected session loss).
+      await signOut().catch(() => undefined);
 
       sessionStorage.setItem("quantivis_demo_mode", "true");
-      sessionStorage.removeItem("quantivis_org_id");
-      sessionStorage.removeItem("quantivis_workspace_id");
-      sessionStorage.removeItem("quantivis_project_id");
 
       localStorage.setItem("quantivis_welcome_completed", "true");
       localStorage.setItem("quantivis_tour_completed", "true");
