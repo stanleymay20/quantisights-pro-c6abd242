@@ -7019,6 +7019,204 @@ export type Database = {
           },
         ]
       }
+      industrial_decision_templates: {
+        Row: {
+          applies_to_node_type: string
+          comparator: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          organization_id: string
+          recommended_action: string | null
+          template_key: string
+          threshold: number
+          title: string
+          trigger_metric: string
+          updated_at: string
+        }
+        Insert: {
+          applies_to_node_type?: string
+          comparator?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          organization_id: string
+          recommended_action?: string | null
+          template_key: string
+          threshold: number
+          title: string
+          trigger_metric: string
+          updated_at?: string
+        }
+        Update: {
+          applies_to_node_type?: string
+          comparator?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          organization_id?: string
+          recommended_action?: string | null
+          template_key?: string
+          threshold?: number
+          title?: string
+          trigger_metric?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "industrial_decision_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      industrial_metrics: {
+        Row: {
+          created_at: string
+          data_quality_score: number | null
+          dataset_id: string | null
+          granularity: string
+          id: string
+          metadata: Json
+          metric_key: string
+          node_id: string
+          organization_id: string
+          period_end: string
+          period_start: string
+          source: string
+          target_value: number | null
+          unit: string | null
+          updated_at: string
+          value: number
+        }
+        Insert: {
+          created_at?: string
+          data_quality_score?: number | null
+          dataset_id?: string | null
+          granularity?: string
+          id?: string
+          metadata?: Json
+          metric_key: string
+          node_id: string
+          organization_id: string
+          period_end: string
+          period_start: string
+          source?: string
+          target_value?: number | null
+          unit?: string | null
+          updated_at?: string
+          value: number
+        }
+        Update: {
+          created_at?: string
+          data_quality_score?: number | null
+          dataset_id?: string | null
+          granularity?: string
+          id?: string
+          metadata?: Json
+          metric_key?: string
+          node_id?: string
+          organization_id?: string
+          period_end?: string
+          period_start?: string
+          source?: string
+          target_value?: number | null
+          unit?: string | null
+          updated_at?: string
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "industrial_metrics_dataset_id_fkey"
+            columns: ["dataset_id"]
+            isOneToOne: false
+            referencedRelation: "datasets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "industrial_metrics_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "industrial_nodes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "industrial_metrics_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      industrial_nodes: {
+        Row: {
+          country_code: string | null
+          created_at: string
+          depth: number
+          external_code: string | null
+          id: string
+          is_active: boolean
+          metadata: Json
+          name: string
+          node_type: string
+          organization_id: string
+          parent_id: string | null
+          path: string | null
+          updated_at: string
+        }
+        Insert: {
+          country_code?: string | null
+          created_at?: string
+          depth?: number
+          external_code?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name: string
+          node_type: string
+          organization_id: string
+          parent_id?: string | null
+          path?: string | null
+          updated_at?: string
+        }
+        Update: {
+          country_code?: string | null
+          created_at?: string
+          depth?: number
+          external_code?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name?: string
+          node_type?: string
+          organization_id?: string
+          parent_id?: string | null
+          path?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "industrial_nodes_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "industrial_nodes_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "industrial_nodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       industry_benchmarks: {
         Row: {
           created_at: string
