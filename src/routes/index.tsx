@@ -144,6 +144,7 @@ const IntelligenceDashboard = lazy(() => import("@/pages/IntelligenceDashboard")
 const IntelligenceInbox = lazy(() => import("@/pages/IntelligenceInbox"));
 const ExecutiveIntelligence = lazy(() => import("@/pages/ExecutiveIntelligence"));
 const ExecutiveContradictions = lazy(() => import("@/pages/ExecutiveContradictions"));
+const IndustrialOperations = lazy(() => import("@/pages/IndustrialOperations"));
 const Interventions = lazy(() => import("@/pages/Interventions"));
 const NarrativeCockpit = lazy(() => import("@/pages/NarrativeCockpit"));
 const OperationalGraph = lazy(() => import("@/pages/OperationalGraph"));
