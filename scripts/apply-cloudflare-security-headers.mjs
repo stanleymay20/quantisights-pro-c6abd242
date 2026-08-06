@@ -1,3 +1,5 @@
+import { STANDARD_CSP } from "../config/security-policy.mjs";
+
 const API_BASE = "https://api.cloudflare.com/client/v4";
 const HOSTNAME = "www.quantivis.io";
 const RULE_REF = "quantivis_enterprise_security_headers";
@@ -25,8 +27,7 @@ if (process.exitCode) {
   process.exit();
 }
 
-const contentSecurityPolicy =
-  "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://oauth.lovable.app https://*.posthog.com https://*.sentry.io https://browser.sentry-cdn.com; connect-src 'self' https://oauth.lovable.app https://*.supabase.co https://*.sentry.io https://*.posthog.com https://*.ingest.sentry.io wss://*.supabase.co; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; worker-src 'self' blob:; frame-src https://accounts.google.com https://oauth.lovable.app; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests";
+const contentSecurityPolicy = STANDARD_CSP;
 
 const managedHeaders = {
   "Content-Security-Policy": {

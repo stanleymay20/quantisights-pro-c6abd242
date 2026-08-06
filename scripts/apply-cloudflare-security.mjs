@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { STANDARD_CSP } from "../config/security-policy.mjs";
 
 const API_BASE = "https://api.cloudflare.com/client/v4";
 const HOSTNAME = "www.quantivis.io";
@@ -11,21 +12,7 @@ const UNSUPPORTED_RULESET_PUT_FIELDS = new Set(["id", "kind", "phase", "version"
 const OAUTH_BROKER_PATH_PREFIX = "/~oauth/";
 const OAUTH_CALLBACK_PATH = "/auth/callback";
 
-export const contentSecurityPolicy = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://oauth.lovable.app https://*.posthog.com https://*.sentry.io https://browser.sentry-cdn.com",
-  "connect-src 'self' https://oauth.lovable.app https://*.supabase.co https://*.sentry.io https://*.posthog.com https://*.ingest.sentry.io wss://*.supabase.co",
-  "img-src 'self' data: blob: https:",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com data:",
-  "worker-src 'self' blob:",
-  "frame-src https://accounts.google.com https://oauth.lovable.app",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-  "upgrade-insecure-requests",
-].join("; ");
+export const contentSecurityPolicy = STANDARD_CSP;
 
 export const permissionsPolicy = [
   "camera=()",

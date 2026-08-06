@@ -179,13 +179,14 @@ describe("TC-1 Enterprise Trust Center — data model", () => {
     expect(byKey.agent_gateway.version).toBe("ag-2.0.0");
   });
 
-  it("reports platform overview honestly — only version/environment are live values", () => {
+  it("reports immutable release metadata without claiming an unverified deployment", () => {
     const overview = getPlatformOverview();
-    expect(overview.version.length).toBeGreaterThan(0);
+    expect(overview.version).toBe("0.1.0-beta.1");
     expect(overview.environment.length).toBeGreaterThan(0);
-    expect(overview.buildTimestamp).toBeNull();
-    expect(overview.gitCommit).toBeNull();
-    expect(overview.deploymentStatus).toBe("NOT AVAILABLE");
+    expect(overview.buildTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(overview.gitCommit).toMatch(/^[a-f0-9]{40}$/);
+    expect(overview.migrationVersion).toBe("20260806044412");
+    expect(overview.deploymentStatus).toMatch(/DEPLOYMENT/);
   });
 
   it("supplies status, detail, and evidence for every evidence-integrity and governance entry", () => {
@@ -228,7 +229,7 @@ describe("TC-1 Enterprise Trust Center — components", () => {
     expect(within(matrix).getByTestId("version-row-evidence_pack")).toBeInTheDocument();
   });
 
-  it("renders the platform overview without fabricating a build timestamp or commit", () => {
+  it("renders the platform overview with immutable build provenance", () => {
     render(
       React.createElement(TrustCenterOverview, {
         overview: getPlatformOverview(),
@@ -237,9 +238,9 @@ describe("TC-1 Enterprise Trust Center — components", () => {
     );
 
     expect(screen.getByTestId("trust-center-overview")).toBeInTheDocument();
-    expect(screen.getByTestId("overview-value-build-timestamp")).toHaveTextContent("NOT AVAILABLE");
-    expect(screen.getByTestId("overview-value-git-commit")).toHaveTextContent("NOT AVAILABLE");
-    expect(screen.getByTestId("overview-value-deployment-status")).toHaveTextContent("NOT AVAILABLE");
+    expect(screen.getByTestId("overview-value-build-timestamp")).not.toHaveTextContent("NOT AVAILABLE");
+    expect(screen.getByTestId("overview-value-git-commit")).not.toHaveTextContent("NOT AVAILABLE");
+    expect(screen.getByTestId("overview-value-migration-version")).toHaveTextContent("20260806044412");
   });
 });
 

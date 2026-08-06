@@ -17,9 +17,16 @@ const failures = [];
 
 for (const path of files) {
   const content = readFileSync(resolve(root, path), "utf8");
+  if (content.includes("'unsafe-eval'")) failures.push(`${path}: CSP must not allow unsafe-eval`);
   for (const marker of requiredMarkers) {
     if (!content.includes(marker)) failures.push(`${path}: missing ${marker}`);
   }
+}
+
+for (const path of ["scripts/apply-cloudflare-security.mjs", "scripts/apply-cloudflare-security-headers.mjs"]) {
+  const content = readFileSync(resolve(root, path), "utf8");
+  if (content.includes("'unsafe-eval'")) failures.push(`${path}: CSP must not allow unsafe-eval`);
+  if (!content.includes("STANDARD_CSP")) failures.push(`${path}: must use the central CSP source`);
 }
 
 const index = readFileSync(resolve(root, "index.html"), "utf8");

@@ -136,6 +136,10 @@ export interface PlatformOverview {
   gitCommitNote: string;
   deploymentStatus: string;
   deploymentStatusNote: string;
+  deploymentId: string | null;
+  deploymentIdNote: string;
+  migrationVersion: string;
+  migrationVersionNote: string;
 }
 
 export interface TrustCenterData {

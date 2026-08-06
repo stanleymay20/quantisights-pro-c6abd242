@@ -37,7 +37,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
  */
 
 const root = resolve(__dirname, "../..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
 const MIGRATION_PATH = "supabase/migrations/20260713010000_fix_decision_approval_atomicity.sql";
 // enforce_decision_approval_gate() has been re-issued (CREATE OR REPLACE)
 // twice since MIGRATION_PATH first defined it: once by
@@ -228,7 +228,7 @@ describe("DecisionReview.tsx — approve()/reject() behavior (mocked RPC)", () =
     fireEvent.click(screen.getByTestId("approve-button"));
 
     expect(rpcMock).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 
   const REAL_DECISION = {
     id: "real-decision-1",

@@ -52,19 +52,27 @@ import {
  * unavailable rather than guessed.
  */
 export function getPlatformOverview(): PlatformOverview {
+  const release = __QUANTIVIS_RELEASE__;
+  const hasDeploymentEvidence = Boolean(release.deploymentId);
   return {
-    version: "0.0.0",
-    versionSource: "package.json (\"version\" field; not build-time injected)",
+    version: release.version,
+    versionSource: "package.json, injected into the immutable client build",
     environment: typeof import.meta !== "undefined" ? import.meta.env.MODE : "unknown",
     environmentSource: "import.meta.env.MODE (Vite build mode)",
-    buildTimestamp: null,
-    buildTimestampNote:
-      "No build-time timestamp injection exists in vite.config.ts. NOT AVAILABLE.",
-    gitCommit: null,
-    gitCommitNote: "No git commit is injected into the client bundle at build time. NOT AVAILABLE.",
-    deploymentStatus: "NOT AVAILABLE",
-    deploymentStatusNote:
-      "No deployment-status API is exposed to the client bundle. Deployment state is tracked by the hosting platform, not by this application.",
+    buildTimestamp: release.buildTimestamp,
+    buildTimestampNote: "UTC timestamp generated once when this client bundle was built",
+    gitCommit: release.gitCommit,
+    gitCommitNote: "Full immutable Git commit injected by the build pipeline",
+    deploymentStatus: hasDeploymentEvidence ? "DEPLOYMENT IDENTIFIED" : "BUILD IDENTIFIED; DEPLOYMENT NOT VERIFIED",
+    deploymentStatusNote: hasDeploymentEvidence
+      ? "The hosting platform supplied a deployment identifier; runtime health is reported separately"
+      : "This build has provenance, but no hosting-platform deployment identifier was supplied",
+    deploymentId: release.deploymentId,
+    deploymentIdNote: hasDeploymentEvidence
+      ? "Hosting-platform deployment identifier injected at build time"
+      : "No VERCEL_DEPLOYMENT_ID, CF_PAGES_COMMIT_SHA, or LOVABLE_DEPLOYMENT_ID was supplied",
+    migrationVersion: release.migrationVersion,
+    migrationVersionNote: "Latest repository migration included in this release baseline",
   };
 }
 

@@ -23,6 +23,13 @@ const SLO = {
   ERROR_RATE_CRITICAL_PCT: 15,
 };
 
+const RELEASE = {
+  app_version: Deno.env.get("QUANTIVIS_RELEASE_VERSION") ?? "0.1.0-beta.1",
+  edge_deployment_id: Deno.env.get("DENO_DEPLOYMENT_ID") ?? null,
+  region: Deno.env.get("SB_REGION") ?? null,
+  migration_version: "20260806044412",
+};
+
 interface HealthCheck {
   status: "healthy" | "degraded" | "unreachable";
   latency_ms?: number;
@@ -42,7 +49,6 @@ Deno.serve(async (req) => {
   const log = createLogger("health-check", req);
 
   if (req.method === "OPTIONS") {
-  if (req.method === "OPTIONS") {
     return corsPreflightResponse(req);
   }
 
@@ -50,7 +56,7 @@ Deno.serve(async (req) => {
   // Detailed metrics require the cron secret to prevent internal-info disclosure.
   if (!verifyCronSecret(req)) {
     return new Response(
-      JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }),
+      JSON.stringify({ status: "ok", timestamp: new Date().toISOString(), release: RELEASE }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-cache" } },
     );
   }
@@ -227,6 +233,7 @@ Deno.serve(async (req) => {
       version: "2.0.0",
       timestamp: new Date().toISOString(),
       uptime_ms: Date.now() - start,
+      release: RELEASE,
       checks,
       slo: {
         violations: sloViolations,

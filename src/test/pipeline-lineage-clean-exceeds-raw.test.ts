@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
 
 describe("Data Pipeline funnel (audit: 'Raw 1,465 rows -> Clean 7,317 rows', 'Analytical: 0' next to 'Complete')", () => {
   // In multi-metric import mode, one raw row maps to N metric rows (one per

@@ -50,7 +50,7 @@ export default function TrustCenterOverview({ overview, generatedAt }: TrustCent
           real source say so explicitly instead of guessing.
         </p>
       </CardHeader>
-      <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <OverviewField label="Version" value={overview.version} note={overview.versionSource} />
         <OverviewField label="Environment" value={overview.environment} note={overview.environmentSource} />
         <OverviewField
@@ -64,6 +64,8 @@ export default function TrustCenterOverview({ overview, generatedAt }: TrustCent
           value={overview.deploymentStatus}
           note={overview.deploymentStatusNote}
         />
+        <OverviewField label="Deployment ID" value={overview.deploymentId ?? "NOT AVAILABLE"} note={overview.deploymentIdNote} />
+        <OverviewField label="Migration version" value={overview.migrationVersion} note={overview.migrationVersionNote} />
       </CardContent>
     </Card>
   );

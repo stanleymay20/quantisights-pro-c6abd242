@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { slugifyMetric } from "../lib/data-upload-utils";
 
 const root = resolve(__dirname, "../..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
 
 // transform-metrics is a fully-built, correct-looking edge function that
 // duplicates DataUpload.tsx's client-side raw-to-metrics transform -- but

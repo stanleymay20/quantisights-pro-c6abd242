@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Upload, Sparkles, Loader2, FileText, Building2, ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import Papa from "papaparse";
+import { requestPublicAnalysis } from "@/lib/public-analysis";
 
 const DEMO_DATA = `Revenue Q1: €2.4M, Q2: €2.1M, Q3: €1.9M, Q4: €2.0M
 Customer Churn: 8.2% (up from 5.1% last year)
@@ -28,6 +29,9 @@ const FreeAnalysis = () => {
   const [analysis, setAnalysis] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,24 +65,17 @@ const FreeAnalysis = () => {
     setStep("analyzing");
     setAnalysis("");
     setIsStreaming(true);
+    const controller = new AbortController();
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = controller;
 
     try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/strategy-session`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({ metrics, companyContext }),
-        }
-      );
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: "Analysis failed" }));
-        throw new Error(err.error || "Analysis failed");
-      }
+      const resp = await requestPublicAnalysis({
+        url: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/strategy-session`,
+        publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        payload: { metrics, companyContext },
+        signal: controller.signal,
+      });
 
       if (!resp.body) throw new Error("No response stream");
 
@@ -114,10 +111,12 @@ const FreeAnalysis = () => {
           }
         }
       }
+      if (!fullText.trim()) throw new Error("The analysis service returned an empty result. Please try again.");
     } catch (err: unknown) {
       toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
       setStep("input");
     } finally {
+      if (activeRequestRef.current === controller) activeRequestRef.current = null;
       setIsStreaming(false);
     }
   };
@@ -235,6 +234,13 @@ const FreeAnalysis = () => {
                 <p className="text-muted-foreground text-sm">
                   Running diagnostic models, detecting anomalies, estimating hidden losses
                 </p>
+                <Button
+                  variant="outline"
+                  className="mt-6"
+                  onClick={() => activeRequestRef.current?.abort(new DOMException("Cancelled", "AbortError"))}
+                >
+                  Cancel analysis
+                </Button>
               </motion.div>
             )}
 
