@@ -34,6 +34,8 @@ const EvidencePackPage = () => {
   const [auditEntries, setAuditEntries] = useState<EvidencePackAuditEntry[]>([]);
   const [loading, setLoading] = useState(!isDemo);
   const [notFound, setNotFound] = useState(false);
+  const [pack, setPack] = useState<EvidencePackModel | null>(null);
+  const [packBuilding, setPackBuilding] = useState(false);
 
   useEffect(() => {
     if (isDemo || !decisionId || !currentOrgId) return;
@@ -80,9 +82,24 @@ const EvidencePackPage = () => {
     load();
   }, [decisionId, currentOrgId, isDemo]);
 
-  const pack: EvidencePackModel | null = decision
-    ? buildEvidencePack(decision, { auditEntries, isSimulation: isDemo || undefined })
-    : null;
+  useEffect(() => {
+    if (!decision) {
+      setPack(null);
+      return;
+    }
+    let cancelled = false;
+    setPackBuilding(true);
+    buildEvidencePack(decision, { auditEntries, isSimulation: isDemo || undefined })
+      .then((built) => {
+        if (!cancelled) setPack(built);
+      })
+      .finally(() => {
+        if (!cancelled) setPackBuilding(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [decision, auditEntries, isDemo]);
 
   return (
     <div className="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">
@@ -102,7 +119,7 @@ const EvidencePackPage = () => {
         </p>
       </div>
 
-      {loading ? (
+      {loading || packBuilding ? (
         <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Building Evidence Pack…

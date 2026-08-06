@@ -404,7 +404,7 @@ export function getEvidenceIntegrity(): EvidenceIntegrityEntry[] {
       label: "Deterministic hashing",
       status: "Implemented",
       detail:
-        "Evidence Pack's evidence_pack_hash is a canonical-JSON FNV-1a hash, verified deterministic across generation time and object key order by test.",
+        "Evidence Pack's evidence_pack_hash is a canonical-JSON SHA-256 digest (via Web Crypto), verified deterministic across generation time and object key order by test. This proves the pack is reproducible and unaltered given the same inputs -- it is not a cryptographic signature (see Signing below), since nothing binds the hash to a private key.",
       evidence: ["src/lib/evidence-pack.ts", "src/test/evidence-pack.test.ts"],
     },
     {

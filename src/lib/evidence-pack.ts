@@ -571,7 +571,7 @@ function buildDigitalSignaturePlaceholder(): EvidencePackSection {
     status: "not_applicable",
     title: "Digital Signature",
     summary:
-      "Digital signing is not yet implemented. This section is a placeholder for a future cryptographic signature over evidence_pack_hash.",
+      "Digital signing is not yet implemented. evidence_pack_hash is a real SHA-256 digest, independently reproducible by anyone holding this pack -- but nothing here is cryptographically signed with a private key, so tampering cannot be detected without a trusted, independently-held copy of the hash. This section is a placeholder for a future asymmetric signature over evidence_pack_hash once a signing key/KMS is provisioned.",
     source: "not_applicable",
     generated_from: [],
     data: { algorithm: null, signature: null, signed_by: null, signed_at: null },
@@ -579,8 +579,16 @@ function buildDigitalSignaturePlaceholder(): EvidencePackSection {
 }
 
 /**
- * Deterministic canonical-JSON FNV-1a hash, self-contained to keep this
- * presentation/export module fully decoupled from AG-3 persistence internals.
+ * Deterministic canonical-JSON SHA-256 hash via the standard Web Crypto API
+ * (available in browsers, Deno edge functions, and Node >=20 -- no extra
+ * dependency). Self-contained to keep this presentation/export module fully
+ * decoupled from AG-3 persistence internals.
+ *
+ * Previously used a 32-bit FNV-1a hash, which is fast but not
+ * collision-resistant and was never a credible tamper-evidence mechanism.
+ * SHA-256 is still not a *signature* (see buildDigitalSignaturePlaceholder) --
+ * it proves the pack is reproducible/unaltered given the same inputs, not
+ * who generated it.
  */
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -593,14 +601,11 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
-export function canonicalHash(value: unknown): string {
+export async function canonicalHash(value: unknown): Promise<string> {
   const input = JSON.stringify(canonicalize(value));
-  let hash = 2166136261;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `sha256-${hex}`;
 }
 
 /**
@@ -609,10 +614,10 @@ export function canonicalHash(value: unknown): string {
  * the same injected clock, this always returns byte-identical content and
  * an identical evidence_pack_hash.
  */
-export function buildEvidencePack(
+export async function buildEvidencePack(
   decision: EvidencePackDecisionInput,
   options: BuildEvidencePackOptions = {},
-): EvidencePack {
+): Promise<EvidencePack> {
   const now = options.now ?? (() => new Date().toISOString());
   const auditEntries = options.auditEntries ?? [];
   const isSimulation = options.isSimulation ?? decision.decision_origin === "demo";
@@ -649,15 +654,15 @@ export function buildEvidencePack(
     is_simulation: isSimulation,
     sections: sectionsWithoutHash,
   };
-  const evidence_pack_hash = canonicalHash(hashInput);
+  const evidence_pack_hash = await canonicalHash(hashInput);
 
   const hashes = section({
     status: "complete",
     title: "Hashes",
     summary: `Evidence pack hash: ${evidence_pack_hash}.`,
-    source: "computed from all Evidence Pack sections (canonical JSON, FNV-1a)",
+    source: "computed from all Evidence Pack sections (canonical JSON, SHA-256)",
     generated_from: Object.keys(sectionsWithoutHash),
-    data: { evidence_pack_hash, algorithm: "fnv1a-canonical-json" },
+    data: { evidence_pack_hash, algorithm: "sha256-canonical-json" },
   });
 
   const sections: EvidencePackSections = {

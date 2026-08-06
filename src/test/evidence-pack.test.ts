@@ -69,39 +69,39 @@ const AUDIT_ENTRIES: EvidencePackAuditEntry[] = [
 ];
 
 describe("EP-1 Enterprise Decision Evidence Pack", () => {
-  it("produces byte-identical output for identical inputs (deterministic)", () => {
+  it("produces byte-identical output for identical inputs (deterministic)", async () => {
     const decision = baseDecision();
-    const a = buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
-    const b = buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
+    const a = await buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
+    const b = await buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
 
     expect(evidencePackToJSON(a)).toBe(evidencePackToJSON(b));
   });
 
-  it("produces identical evidence_pack_hash for identical content", () => {
+  it("produces identical evidence_pack_hash for identical content", async () => {
     const decision = baseDecision();
-    const a = buildEvidencePack(decision, { now: FIXED_NOW });
-    const b = buildEvidencePack({ ...decision }, { now: () => "2026-08-01T00:00:00.000Z" });
+    const a = await buildEvidencePack(decision, { now: FIXED_NOW });
+    const b = await buildEvidencePack({ ...decision }, { now: () => "2026-08-01T00:00:00.000Z" });
 
     // Hash covers content, not generated_at, so it is stable across generation time.
     expect(a.evidence_pack_hash).toBe(b.evidence_pack_hash);
-    expect(a.evidence_pack_hash).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    expect(a.evidence_pack_hash).toMatch(/^sha256-[0-9a-f]{64}$/);
   });
 
-  it("changes the hash when decision content changes", () => {
-    const a = buildEvidencePack(baseDecision(), { now: FIXED_NOW });
-    const b = buildEvidencePack(baseDecision({ predicted_net_impact: 99000 }), { now: FIXED_NOW });
+  it("changes the hash when decision content changes", async () => {
+    const a = await buildEvidencePack(baseDecision(), { now: FIXED_NOW });
+    const b = await buildEvidencePack(baseDecision({ predicted_net_impact: 99000 }), { now: FIXED_NOW });
 
     expect(a.evidence_pack_hash).not.toBe(b.evidence_pack_hash);
   });
 
-  it("is independent of object key order (canonical hashing)", () => {
+  it("is independent of object key order (canonical hashing)", async () => {
     const value1 = { a: 1, b: { c: 2, d: 3 } };
     const value2 = { b: { d: 3, c: 2 }, a: 1 };
-    expect(canonicalHash(value1)).toBe(canonicalHash(value2));
+    expect(await canonicalHash(value1)).toBe(await canonicalHash(value2));
   });
 
-  it("includes all 20 required sections, each with status/title/summary/source/generated_from", () => {
-    const pack = buildEvidencePack(baseDecision(), { now: FIXED_NOW });
+  it("includes all 20 required sections, each with status/title/summary/source/generated_from", async () => {
+    const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW });
 
     expect(EVIDENCE_PACK_SECTION_KEYS).toHaveLength(20);
     for (const key of EVIDENCE_PACK_SECTION_KEYS) {
@@ -115,9 +115,9 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     }
   });
 
-  it("orders the decision timeline in the fixed lifecycle order regardless of decision data", () => {
-    const pendingPack = buildEvidencePack(baseDecision(), { now: FIXED_NOW });
-    const approvedPack = buildEvidencePack(
+  it("orders the decision timeline in the fixed lifecycle order regardless of decision data", async () => {
+    const pendingPack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW });
+    const approvedPack = await buildEvidencePack(
       baseDecision({ decision_status: "approved", decided_at: "2026-06-05T00:00:00.000Z" }),
       { now: FIXED_NOW },
     );
@@ -140,7 +140,7 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     }
   });
 
-  it("honestly reports missing evidence instead of fabricating it", () => {
+  it("honestly reports missing evidence instead of fabricating it", async () => {
     const decision = baseDecision({
       source_insight_summary: null,
       notes: null,
@@ -151,7 +151,7 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
       confidence_at_decision: null,
       raw_confidence: null,
     });
-    const pack = buildEvidencePack(decision, { now: FIXED_NOW });
+    const pack = await buildEvidencePack(decision, { now: FIXED_NOW });
 
     expect(pack.sections.business_context.status).toBe("unavailable");
     expect(pack.sections.confidence.status).toBe("unavailable");
@@ -167,13 +167,13 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(pack.sections.business_impact.generated_from).toEqual([]);
   });
 
-  it("builds a complete pack for an approved decision", () => {
+  it("builds a complete pack for an approved decision", async () => {
     const decision = baseDecision({
       decision_status: "approved",
       decided_at: "2026-06-05T00:00:00.000Z",
       decided_by: "user-1",
     });
-    const pack = buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
+    const pack = await buildEvidencePack(decision, { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
 
     expect(pack.sections.approval_information.status).toBe("complete");
     expect(pack.sections.approval_information.data.decision_status).toBe("approved");
@@ -183,13 +183,13 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(pack.is_simulation).toBe(false);
   });
 
-  it("builds a pack for a rejected decision without claiming approval", () => {
+  it("builds a pack for a rejected decision without claiming approval", async () => {
     const decision = baseDecision({
       decision_status: "rejected",
       decided_at: "2026-06-05T00:00:00.000Z",
       notes: "Rejected in executive review: evidence is stale.",
     });
-    const pack = buildEvidencePack(decision, { now: FIXED_NOW });
+    const pack = await buildEvidencePack(decision, { now: FIXED_NOW });
 
     expect(pack.sections.approval_information.status).toBe("complete");
     expect(pack.sections.approval_information.data.decision_status).toBe("rejected");
@@ -201,8 +201,8 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(approvedStep?.status).toBe("not_recorded");
   });
 
-  it("labels simulation/demo decisions clearly and never as persisted", () => {
-    const pack = buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
+  it("labels simulation/demo decisions clearly and never as persisted", async () => {
+    const pack = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
 
     expect(pack.is_simulation).toBe(true);
     expect(pack.sections.decision_summary.data.decision_origin).toBe("demo");
@@ -215,8 +215,8 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(page).toContain("never generates a pack from data that doesn't exist");
   });
 
-  it("exports deterministic JSON that round-trips", () => {
-    const pack = buildEvidencePack(baseDecision(), { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
+  it("exports deterministic JSON that round-trips", async () => {
+    const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, auditEntries: AUDIT_ENTRIES });
     const json = evidencePackToJSON(pack);
     const parsed = JSON.parse(json);
 
@@ -225,10 +225,10 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(evidencePackToJSON(JSON.parse(json))).toBe(json);
   });
 
-  it("generates a deterministic, self-contained printable HTML model", () => {
-    const pack = buildEvidencePack(baseDecision(), { now: FIXED_NOW });
+  it("generates a deterministic, self-contained printable HTML model", async () => {
+    const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW });
     const htmlA = evidencePackToHtml(pack);
-    const htmlB = evidencePackToHtml(buildEvidencePack(baseDecision(), { now: FIXED_NOW }));
+    const htmlB = evidencePackToHtml(await buildEvidencePack(baseDecision(), { now: FIXED_NOW }));
 
     expect(htmlA).toBe(htmlB);
     expect(htmlA).toContain("<!doctype html>");
@@ -238,8 +238,8 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
     expect(htmlA).toContain("Digital Signature");
   });
 
-  it("generates a structured, PDF-ready data model without producing a PDF", () => {
-    const pack = buildEvidencePack(baseDecision(), { now: FIXED_NOW });
+  it("generates a structured, PDF-ready data model without producing a PDF", async () => {
+    const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW });
     const model = evidencePackToPdfModel(pack);
 
     expect(model.decision_id).toBe(pack.decision_id);
