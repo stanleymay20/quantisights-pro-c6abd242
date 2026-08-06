@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
@@ -30,14 +30,22 @@ const Subprocessors = () => {
   const [rows, setRows] = useState<Sub[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.rpc("get_active_subprocessors");
-      setRows((data as any) ?? []);
-      setLoading(false);
-    })();
+  const loadRegistry = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const { data, error: registryError } = await supabase.rpc("get_active_subprocessors");
+    if (registryError) {
+      setRows([]);
+      setError("The verified registry could not be loaded. Vendor and DPA status must not be inferred from this unavailable response.");
+    } else {
+      setRows((data as Sub[]) ?? []);
+    }
+    setLoading(false);
   }, []);
+
+  useEffect(() => { void loadRegistry(); }, [loadRegistry]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -66,18 +74,18 @@ const Subprocessors = () => {
       <main className="flex-1 container mx-auto px-6 py-12 max-w-5xl">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Sub-processor Registry</h1>
         <p className="text-muted-foreground text-sm mb-1">
-          Live registry · {rows.length} active vendors · 30-day advance change notice
+          {loading ? "Loading verified registry" : error ? "Registry unavailable" : `${rows.length} active registry entries`} · 30-day advance change notice
         </p>
         <p className="text-muted-foreground text-sm mb-6">
           Vendors used by {CONTACT.companyLegal} to deliver the service. Each entry includes purpose, data categories,
-          retention, signed Art. 28 DPA status, and the transfer mechanism (SCCs where applicable).
+          retention, recorded Art. 28 DPA status, and the transfer mechanism (SCCs where applicable). Entries report registry evidence; they do not create or certify a contract.
         </p>
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <Badge variant="outline" className="border-green-500/30 text-green-500">EU-only: {counts.EU ?? 0}</Badge>
           <Badge variant="outline" className="border-yellow-500/30 text-yellow-500">EU/US (SCCs): {counts["EU/US"] ?? 0}</Badge>
           <Badge variant="outline" className="border-orange-500/30 text-orange-500">US (SCCs): {counts.US ?? 0}</Badge>
-          <Badge variant="outline">100% DPAs signed</Badge>
+          <Badge variant="outline">DPA status shown per vendor</Badge>
         </div>
 
         <div className="mb-4">
@@ -108,8 +116,17 @@ const Subprocessors = () => {
                 {loading && (
                   <tr><td colSpan={8} className="py-6 text-center text-muted-foreground">Loading…</td></tr>
                 )}
-                {!loading && filtered.length === 0 && (
-                  <tr><td colSpan={8} className="py-6 text-center text-muted-foreground">No matches.</td></tr>
+                {!loading && error && (
+                  <tr><td colSpan={8} className="py-6 px-4 text-center text-destructive">
+                    <p>{error}</p>
+                    <button type="button" onClick={() => void loadRegistry()} className="mt-3 rounded-md border border-border px-3 py-1.5 text-xs text-foreground">Retry</button>
+                  </td></tr>
+                )}
+                {!loading && !error && rows.length === 0 && (
+                  <tr><td colSpan={8} className="py-6 px-4 text-center text-muted-foreground">No active registry entries were returned. This does not imply that the service uses no vendors.</td></tr>
+                )}
+                {!loading && !error && rows.length > 0 && filtered.length === 0 && (
+                  <tr><td colSpan={8} className="py-6 text-center text-muted-foreground">No entries match this search.</td></tr>
                 )}
                 {filtered.map((sp) => (
                   <tr key={sp.id} className="border-b border-border/20 hover:bg-muted/20">

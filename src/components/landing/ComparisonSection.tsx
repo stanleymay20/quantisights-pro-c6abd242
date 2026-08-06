@@ -1,5 +1,6 @@
 import { forwardRef, Fragment } from "react";
 import { motion } from "framer-motion";
+import { COMMERCIAL_TERMS, formatEuro } from "@/lib/stripe-tiers";
 import { Check, X } from "lucide-react";
 
 const comparisons = [
@@ -44,7 +45,7 @@ const comparisons = [
     category: "Cost & Speed",
     rows: [
       { feature: "Time to first insight", quantivis: "5 min", mckinsey: "4–6 weeks", tableau: "Days", mosaic: "Hours" },
-      { feature: "Monthly cost", quantivis: "From €99", mckinsey: "€50K+/project", tableau: "€70/user", mosaic: "€800+" },
+      { feature: "Monthly cost", quantivis: `From ${formatEuro(COMMERCIAL_TERMS.entryMonthly)}`, mckinsey: "€50K+/project", tableau: "€70/user", mosaic: "€800+" },
       { feature: "No implementation required", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
       { feature: "Continuously learning system", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
     ],

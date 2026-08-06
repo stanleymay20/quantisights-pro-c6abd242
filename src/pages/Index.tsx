@@ -413,7 +413,7 @@ const Pricing = () => {
         <Eyebrow style={{ marginBottom: 24 }}>Pricing</Eyebrow>
         <div className="qv-grid-2" style={{ gap: 48, marginBottom: 16 }}>
           <h2 className="qv-heading">Straightforward pricing. No hidden costs.</h2>
-          <p style={{ fontSize: 15, color: SLATE, lineHeight: 1.75, margin: 0 }}>All plans include a 30-day pilot period. You get a working governance record, not a sandbox.</p>
+          <p style={{ fontSize: 15, color: SLATE, lineHeight: 1.75, margin: 0 }}>Eligible new subscribers can start with a 14-day trial. Guided enterprise pilots are scoped separately in writing.</p>
         </div>
         <p style={{ fontSize: 12, color: `${SLATE}`, margin: "0 0 32px", letterSpacing: "0.02em" }}>Final pricing confirmed during demo. All amounts exclude VAT.</p>
         <div className="qv-grid-3" style={{ background: `rgba(30,39,97,0.08)` }}>

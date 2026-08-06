@@ -668,7 +668,7 @@ const Security = () => {
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to see enterprise-grade security in action?</h2>
           <p className="text-muted-foreground mb-6">
-            Start your 14-day free trial. No credit card required. Full security from day one.
+            Eligible new subscribers can start a 14-day trial. Billing and renewal terms are shown before checkout confirmation.
           </p>
           <div className="flex items-center justify-center gap-4">
             <Link

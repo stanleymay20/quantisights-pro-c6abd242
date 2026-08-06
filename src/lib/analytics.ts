@@ -3,10 +3,12 @@
  * analytics.ts — PostHog product analytics
  *
  * Build-safe: compiles even when posthog-js is not installed.
- * Privacy-first: no PII, GDPR-compliant EU endpoint.
+ * Privacy-first: the SDK is not imported and no request is made before opt-in.
  * Activate by setting POSTHOG_KEY in Lovable → Environment Variables.
  * (Lovable exposes env vars without the VITE_ prefix)
  */
+
+import { hasAnalyticsConsent, PRIVACY_CONSENT_EVENT, type PrivacyConsentRecord } from "@/lib/privacy-consent";
 
 declare global {
   interface Window {
@@ -38,7 +40,7 @@ let initialized = false;
 let loaded = false;
 
 async function init() {
-  if (initialized || !POSTHOG_KEY || typeof window === "undefined") return;
+  if (initialized || !POSTHOG_KEY || typeof window === "undefined" || !hasAnalyticsConsent()) return;
   initialized = true;
   try {
     // Dynamic import with 'as any' suppresses TS2307 when posthog-js is absent
@@ -53,8 +55,8 @@ async function init() {
       respect_dnt: true,
       loaded(p: any) {
         loaded = true;
-        const consent = localStorage.getItem("quantivis_cookie_consent");
-        if (consent !== "accepted") p.opt_out_capturing();
+        if (hasAnalyticsConsent()) p.opt_in_capturing();
+        else p.opt_out_capturing();
       },
     });
     window.posthog = ph;
@@ -70,18 +72,28 @@ export const getPostHogStatus = () => ({
   host: POSTHOG_HOST,
   consent: typeof localStorage === "undefined"
     ? "unavailable"
-    : localStorage.getItem("quantivis_cookie_consent") ?? "not-set",
+    : hasAnalyticsConsent() ? "analytics" : "essential-only-or-not-set",
 });
 
-if (POSTHOG_KEY) void init();
+if (POSTHOG_KEY && hasAnalyticsConsent()) void init();
+
+if (typeof window !== "undefined") {
+  window.addEventListener(PRIVACY_CONSENT_EVENT, (event) => {
+    const consent = (event as CustomEvent<PrivacyConsentRecord>).detail;
+    if (consent.analytics) void init();
+    else disableAnalytics();
+  });
+}
 
 export const identifyUser = (userId: string, orgId: string, role: string) =>
-  window.posthog?.identify(userId, { org_id: orgId, role });
+  hasAnalyticsConsent() && window.posthog?.identify(userId, { org_id: orgId, role });
 
 export const track = (event: string, props?: Record<string, unknown>) =>
-  window.posthog?.capture(event, props);
+  hasAnalyticsConsent() && window.posthog?.capture(event, props);
 
 export const enableAnalytics = () => {
+  if (!hasAnalyticsConsent()) return;
+  void init();
   window.posthog?.opt_in_capturing();
   track("analytics_enabled");
 };

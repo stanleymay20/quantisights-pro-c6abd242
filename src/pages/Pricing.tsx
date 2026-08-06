@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import { motion } from "framer-motion";
 import { Check, Loader2, Crown, X, Minus } from "lucide-react";
-import { TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
+import { COMMERCIAL_TERMS, TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,7 +24,7 @@ const renderCellValue = (value: boolean | string) => {
 const Pricing = () => {
   useSeoHead({
     title: "Pricing — Quantivis Decision Governance Platform",
-    description: "Transparent pricing for Decision Governance. Starter €99/mo, Growth €499/mo, Enterprise custom. SOC 2 controls, EU AI Act-aligned audit trail, immutable decision ledger.",
+    description: "Transparent Decision Governance pricing: Essentials €499/mo, Governance €1,999/mo, and Enterprise custom. Trial eligibility and renewal terms are shown before checkout.",
     canonicalPath: "/pricing",
   });
   const { user } = useAuth();
@@ -203,7 +203,7 @@ const Pricing = () => {
                           ) : subscribed ? (
                             "Switch Plan"
                           ) : (
-                            "Start 14-Day Free Trial"
+                            `Start ${COMMERCIAL_TERMS.trialDays}-Day Trial`
                           )}
                         </button>
                         {isPopular && !subscribed && (
@@ -317,8 +317,8 @@ const Pricing = () => {
                 a: "A connector is a live integration with an enterprise data source — Stripe, Salesforce, HubSpot, SAP, NetSuite, Xero, Google Sheets, Snowflake, BigQuery, and others. Essentials includes 3 connectors. Governance unlocks all 15. CSV upload is available on every plan and does not count toward the connector limit.",
               },
               {
-                q: "What happens after the 14-day trial?",
-                a: "Your account stays active and you choose a plan. No automatic charges during the trial. We'll remind you 3 days before the trial ends.",
+                q: `What happens after the ${COMMERCIAL_TERMS.trialDays}-day trial?`,
+                a: `The trial is available to ${COMMERCIAL_TERMS.trialEligibility}. ${COMMERCIAL_TERMS.trialCheckoutDisclosure} Your checkout confirmation controls the renewal date and cancellation terms.`,
               },
               {
                 q: "Can I change plans at any time?",
@@ -359,14 +359,14 @@ const Pricing = () => {
         <div className="container mx-auto px-6 text-center max-w-2xl">
           <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to Start?</h2>
           <p className="text-muted-foreground mb-8">
-            14-day free trial · No credit card required · GDPR ready · Enterprise-grade security
+            {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility} · Terms shown before checkout
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button
               onClick={() => navigate("/register")}
               className="px-8 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
             >
-              Start Free Trial
+              Start Trial
             </button>
             <button
               onClick={() => navigate("/enterprise/contact")}

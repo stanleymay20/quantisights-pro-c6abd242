@@ -43,7 +43,7 @@ const MATRIX: MatrixRow[] = [
   // Scale & Cost
   { capability: "Time to first insight", category: "scale", quantivis: "Minutes", palantir: "Months", anaplan: "Weeks", aera: "Months", snowfire: "Days", tableau: "Days" },
   { capability: "Implementation cost", category: "scale", quantivis: "€0 setup", palantir: "$1M+", anaplan: "$200K+", aera: "$500K+", snowfire: "$25K+", tableau: "$50K+" },
-  { capability: "Annual cost (mid-market)", category: "scale", quantivis: "€2,400+", palantir: "$500K+", anaplan: "$100K+", aera: "$250K+", snowfire: "$30K+", tableau: "$15K+" },
+  { capability: "Annual cost (entry tier)", category: "scale", quantivis: "€5,988", palantir: "$500K+", anaplan: "$100K+", aera: "$250K+", snowfire: "$30K+", tableau: "$15K+" },
   { capability: "Self-serve onboarding", category: "scale", quantivis: true, palantir: false, anaplan: false, aera: false, snowfire: true, tableau: "Partial" },
   { capability: "Multi-tenant SaaS architecture", category: "scale", quantivis: true, palantir: "Hybrid", anaplan: true, aera: true, snowfire: true, tableau: true },
 

@@ -404,8 +404,8 @@ const SLIDES: SlideData[] = [
       sectionTitle(doc, "Business Model", 180);
 
       const tiers = [
-        { name: "Starter", price: "€99/mo", features: "1 org, 1 dataset, core dashboards,\nCSV uploads, 2 seats\n\nTeams testing decision intelligence" },
-        { name: "Growth", price: "€499/mo", features: "Unlimited datasets, AI advisory,\nforecasting, Monte Carlo, copilot,\ncalibration, board reports, 10 seats" },
+        { name: "Essentials", price: "€499/mo", features: "5 seats, 3 connectors, core decision ledger,\ngovernance documentation\n\nTeams operationalising decision governance" },
+        { name: "Governance", price: "€1,999/mo", features: "15 seats, enterprise connectors, AI advisory,\nforecasting, calibration and board reports" },
         { name: "Enterprise", price: "€18K–€72K/yr", features: "Unlimited everything, cognitive bias\ndetection, SSO/RBAC, audit logs,\nmulti-org, scenario war room" },
       ];
       const colW = 500;
@@ -482,7 +482,7 @@ const SLIDES: SlideData[] = [
         { f: "Board-defensible audit trail", vals: ["✓", "Partial", "✕", "✕"] },
         { f: "Cognitive bias detection", vals: ["✓", "✕", "✕", "✕"] },
         { f: "Time to first insight", vals: ["5 min", "Weeks", "Days", "Hours"] },
-        { f: "Monthly cost", vals: ["€99+", "€50K+", "€70/user", "€800+"] },
+        { f: "Monthly cost", vals: ["€499+", "€50K+", "€70/user", "€800+"] },
       ];
 
       rows.forEach((row, ri) => {

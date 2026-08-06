@@ -4,10 +4,12 @@ import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Cookie, X, Shield } from "lucide-react";
 import { Link } from "react-router-dom";
-
-const CONSENT_KEY = "quantivis_cookie_consent";
-
-type ConsentChoice = "accepted" | "essential_only";
+import {
+  PRIVACY_CONSENT_KEY,
+  readPrivacyConsent,
+  setPrivacyConsent,
+  type PrivacyConsentChoice,
+} from "@/lib/privacy-consent";
 
 const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
   const [visible, setVisible] = useState(false);
@@ -25,18 +27,18 @@ const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
       (typeof navigator !== "undefined" && (navigator as Navigator & { webdriver?: boolean }).webdriver) ||
       localStorage.getItem("quantivis_e2e_test") === "1";
     if (isAutomated) {
-      if (!localStorage.getItem(CONSENT_KEY)) {
-        localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice: "essential_only", timestamp: new Date().toISOString(), automated: true }));
+      if (!localStorage.getItem(PRIVACY_CONSENT_KEY)) {
+        setPrivacyConsent("essential_only");
       }
       setVisible(false);
       return;
     }
-    const stored = localStorage.getItem(CONSENT_KEY);
+    const stored = readPrivacyConsent();
     const isDemo = sessionStorage.getItem("quantivis_demo_mode") === "true";
     if (isDemo) {
-      // Always auto-accept in demo mode — never show the dialog
+      // Demo mode must never manufacture optional analytics consent.
       if (!stored) {
-        localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice: "accepted", timestamp: new Date().toISOString() }));
+        setPrivacyConsent("essential_only");
       }
       setVisible(false);
       return;
@@ -47,8 +49,8 @@ const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
     }
   }, [location.pathname]);
 
-  const handleChoice = (choice: ConsentChoice) => {
-    localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice, timestamp: new Date().toISOString() }));
+  const handleChoice = (choice: PrivacyConsentChoice) => {
+    setPrivacyConsent(choice);
     setExiting(true);
     setTimeout(() => setVisible(false), 300);
   };
@@ -75,13 +77,13 @@ const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
               className="text-xs text-muted-foreground leading-relaxed"
               dangerouslySetInnerHTML={{
                 __html: isGerman
-                  ? `Wir verwenden <strong>notwendige Cookies</strong> für Authentifizierung und Sicherheit. Optionale <strong>Präferenz-Cookies</strong> speichern Ihre Einstellungen. Wir verwenden keine Werbe- oder Tracking-Cookies. <a href="/cookies" class="text-primary hover:underline">Mehr erfahren</a>`
-                  : `We use <strong>essential cookies</strong> for authentication and security. Optional <strong>preference cookies</strong> remember your settings (theme, sidebar state). We never use advertising or tracking cookies. <a href="/cookies" class="text-primary hover:underline">Learn more</a>`,
+                  ? `Wir verwenden notwendige Speicherung für Authentifizierung und Sicherheit. Mit Ihrer Einwilligung verwenden wir <strong>PostHog EU</strong> für Produktanalysen. Keine Werbung oder Sitzungsaufzeichnung. <a href="/cookies" class="text-primary hover:underline">Mehr erfahren</a>`
+                  : `We use essential storage for authentication and security. With your consent, we use <strong>PostHog EU</strong> for product analytics. No advertising or session recording. <a href="/cookies" class="text-primary hover:underline">Learn more</a>`,
               }}
             />
             <div className="flex flex-wrap gap-2 mt-4">
-              <Button size="sm" onClick={() => handleChoice("accepted")} className="text-xs">
-                {isGerman ? "Alle akzeptieren" : "Accept All"}
+              <Button size="sm" onClick={() => handleChoice("analytics")} className="text-xs">
+                {isGerman ? "Analyse erlauben" : "Allow Analytics"}
               </Button>
               <Button size="sm" variant="outline" onClick={() => handleChoice("essential_only")} className="text-xs">
                 {isGerman ? "Nur notwendige" : "Essential Only"}
@@ -90,8 +92,8 @@ const CookieConsent = forwardRef<HTMLDivElement>((_, _ref) => {
             <p className="text-[10px] text-muted-foreground/50 mt-2 flex items-center gap-1">
               <Shield className="w-2.5 h-2.5" />
               {isGerman
-                ? "Kein Tracking durch Dritte · DSGVO-konform"
-                : "No third-party tracking · GDPR & CCPA compliant"}
+                ? "Jederzeit widerrufbar · keine Werbung"
+                : "Withdraw anytime · no advertising"}
             </p>
           </div>
           <button

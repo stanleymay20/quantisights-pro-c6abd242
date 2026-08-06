@@ -45,7 +45,7 @@ const COMPETITORS: CompetitorPage[] = [
       { feature: "Real-time alerts", quantivis: true, competitor: false },
       { feature: "Strategic frameworks", quantivis: true, competitor: true },
       { feature: "Human expertise", quantivis: "AI + Human", competitor: true },
-      { feature: "Cost per year", quantivis: "€2,400", competitor: "€200K+" },
+      { feature: "Cost per year", quantivis: "€5,988 entry tier", competitor: "€200K+" },
       { feature: "Time to first insight", quantivis: "Minutes", competitor: "Weeks" },
       { feature: "Scales with org", quantivis: true, competitor: false },
     ],

@@ -348,7 +348,7 @@ const chapters = [
     sections: [
       {
         heading: "Subscription Tiers",
-        content: `Quantivis offers three subscription tiers:\n\n**Starter (€99/month)**\n• 1 organization, 1 dataset, 2 seats\n• Core dashboards and CSV upload\n• Data quality scoring\n• Basic KPI tracking\n\n**Growth (€499/month)**\n• Unlimited datasets, 10 seats\n• AI advisory, forecasting, Monte Carlo simulations\n• Executive Copilot (100 queries/day)\n• Board report generation\n• Calibration engine, prescriptive advisory\n\n**Enterprise (€18K–€72K/year)**\n• Unlimited everything, unlimited seats\n• Cognitive bias detection, scenario war room\n• SSO/SAML, SCIM provisioning, custom RBAC\n• Dedicated support and SLA guarantees\n• Multi-org portfolio governance`
+        content: `Quantivis offers three subscription tiers:\n\n**Essentials (€499/month)**\n• 5 user seats and 3 data connectors\n• Core Decision Ledger and KPI analytics\n• Executive Copilot (20 queries/day)\n• Governance documentation and audit trail\n\n**Governance (€1,999/month)**\n• 15 user seats and enterprise connectors\n• Full Decision Ledger and calibration tracking\n• Unlimited Executive Copilot\n• Advanced simulation, forecasting and board reporting\n\n**Enterprise (custom pricing)**\n• Unlimited seats and multi-organisation management\n• SSO, RBAC and custom connector options\n• Dedicated support and contracted service terms\n\nThe checkout configuration is the source of truth for price, trial eligibility, billing interval and renewal terms.`
       },
       {
         heading: "Usage Metering",

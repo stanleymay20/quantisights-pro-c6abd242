@@ -102,6 +102,18 @@ export const TIERS = {
 
 export type TierKey = keyof typeof TIERS;
 
+export const COMMERCIAL_TERMS = {
+  trialDays: 14,
+  trialEligibility: "eligible new subscribers",
+  trialCheckoutDisclosure: "Billing and renewal terms are shown before checkout confirmation.",
+  entryMonthly: TIERS.starter.price,
+  entryAnnual: TIERS.starter.price * 12,
+  governanceMonthly: TIERS.growth.price,
+  governanceAnnual: TIERS.growth.price * 12,
+} as const;
+
+export const formatEuro = (amount: number) => `€${amount.toLocaleString("en-US")}`;
+
 export const getTierByProductId = (productId: string | null): TierKey | null => {
   if (!productId) return null;
   for (const [key, tier] of Object.entries(TIERS)) {

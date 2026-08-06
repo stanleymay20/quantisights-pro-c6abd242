@@ -37,7 +37,7 @@ const Demo = () => {
 
       localStorage.setItem("quantivis_welcome_completed", "true");
       localStorage.setItem("quantivis_tour_completed", "true");
-      localStorage.setItem("quantivis_cookie_consent", JSON.stringify({ choice: "accepted", timestamp: new Date().toISOString() }));
+      localStorage.setItem("quantivis_cookie_consent", JSON.stringify({ version: 1, choice: "essential_only", analytics: false, timestamp: new Date().toISOString() }));
 
       if (signal.aborted) return;
       setCurrentStep(1);

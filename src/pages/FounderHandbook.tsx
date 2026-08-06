@@ -333,8 +333,8 @@ Once a company has 2+ years of decisions in the ledger, that data is irreplaceab
 
 | Tier | Price | Target |
 |------|-------|--------|
-| **Starter** | €99/mo | Startups, small teams, thesis pilots |
-| **Growth** | €499/mo | Scale-ups, mid-market companies |
+| **Essentials** | €499/mo | Teams operationalising decision governance |
+| **Governance** | €1,999/mo | Mid-market operations and leadership teams |
 | **Enterprise** | €18K–€72K/yr | PE/VC firms, Fortune 500 |
 
 ## Revenue Drivers

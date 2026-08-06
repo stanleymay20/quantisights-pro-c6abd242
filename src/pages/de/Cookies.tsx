@@ -22,8 +22,8 @@ const CookiesDe = () => (
         <section>
           <h2 className="text-lg font-semibold mb-2">2. Eingesetzte Kategorien</h2>
           <p><strong>Notwendige Cookies:</strong> Authentifizierung, Sitzungs- und CSRF-Schutz. Ohne diese ist die Plattform nicht nutzbar (Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TTDSG).</p>
-          <p><strong>Präferenz-Cookies:</strong> Speichern Einstellungen (Theme, Sidebar-Zustand, gewählte Organisation). Einwilligung gemäß § 25 Abs. 1 TTDSG.</p>
-          <p>Wir setzen <strong>keine</strong> Werbe-, Marketing- oder Tracking-Cookies und keine Third-Party-Profiling-Pixel.</p>
+          <p><strong>Präferenz-Speicherung:</strong> Speichert Einstellungen (Theme, Sidebar-Zustand, gewählte Organisation).</p>
+          <p><strong>Optionale Produktanalyse:</strong> Nur nach Einwilligung verarbeitet PostHog EU pseudonyme Interaktionsereignisse. Autocapture und Sitzungsaufzeichnung sind deaktiviert. Wir setzen keine Werbe-Cookies oder Profile für verhaltensbasierte Werbung.</p>
         </section>
 
         <section>

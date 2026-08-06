@@ -1133,7 +1133,7 @@ A 200 response does NOT mean all records were inserted. Always check \`records_r
 ## Stripe-Powered Subscription System
 
 ### Tier Comparison
-| Feature | Starter (€99/mo) | Growth (€499/mo) | Enterprise (€18K–€72K/yr) |
+| Feature | Essentials (€499/mo) | Governance (€1,999/mo) | Enterprise (custom) |
 |---------|:-:|:-:|:-:|
 | Data Sources | 1 | Unlimited | Unlimited |
 | Datasets | 1 | Unlimited | Unlimited |

@@ -19,7 +19,7 @@ const Privacy = () => {
     </header>
     <main className="flex-1 container mx-auto px-6 py-16 max-w-3xl">
       <h1 className="text-3xl font-bold tracking-tight mb-2">Privacy Policy</h1>
-      <p className="text-muted-foreground text-sm mb-10">Last updated: February 25, 2026</p>
+      <p className="text-muted-foreground text-sm mb-10">Last updated: August 6, 2026</p>
 
       <div className="prose prose-sm prose-invert max-w-none space-y-6 text-foreground/90 text-sm leading-relaxed">
         <section>
@@ -50,7 +50,7 @@ const Privacy = () => {
         </section>
         <section>
           <h2 className="text-lg font-semibold mb-2">7. Cookies</h2>
-          <p>We use essential cookies for authentication and session management. We do not use advertising or third-party tracking cookies.</p>
+          <p>We use essential browser storage for authentication and session management. Optional PostHog EU product analytics is disabled until you opt in and can be withdrawn at any time from the <Link to="/cookies" className="text-primary hover:underline">Cookie Policy</Link>. We do not use advertising cookies or session recording.</p>
         </section>
         <section>
           <h2 className="text-lg font-semibold mb-2">8. Changes to This Policy</h2>

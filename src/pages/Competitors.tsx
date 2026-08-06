@@ -71,7 +71,7 @@ const GAPS = [
     icon: <Globe size={16} />, gap:"Mass-market accessibility",
     status:"Live",
     before:"Platform copy was executive/governance-first — risked reading as heavyweight like Cognos/SAS to mid-market buyers.",
-    after:"Homepage now leads with Article 13-first framing. \"<1 week time-to-value\" and €499/month Essentials tier above the fold. 90-day pilot with no SOC 2 required to begin — removes the enterprise procurement barrier.",
+    after:"Homepage now leads with Article 13-first framing and the €499/month Essentials tier above the fold. Eligible new subscribers can use the 14-day self-service trial; guided enterprise pilots are scoped separately.",
   },
   {
     icon: <TrendingUp size={16} />, gap:"Planning / forecasting surface",
@@ -367,7 +367,7 @@ export default function Competitors() {
             Ready to govern your AI decisions?
           </h2>
           <p style={{ fontSize:15, color:"rgba(255,255,255,0.5)", margin:"0 0 40px", lineHeight:1.75 }}>
-            90-day pilot. No SOC 2 required to begin. Live governance records in under a week. Start at €499/month.
+            14-day trial for eligible new subscribers. Guided enterprise pilots are scoped separately. Start at €499/month.
           </p>
           <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
             <a href="/login" style={{ background:ACCENT, color:"#fff", padding:"14px 32px", borderRadius:4, fontSize:15, fontWeight:700, textDecoration:"none" }}>Request Demo</a>

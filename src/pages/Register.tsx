@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Check, X } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import GoogleButton from "@/components/auth/GoogleButton";
+import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (p: string) => p.length >= 8 },
@@ -26,7 +27,10 @@ const Register = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const planParam = new URLSearchParams(location.search).get("plan");
-  const PLAN_LABELS: Record<string, string> = { starter: "Starter — €99/mo", growth: "Growth — €499/mo" };
+  const PLAN_LABELS: Record<string, string> = {
+    starter: `${TIERS.starter.name} — ${TIERS.starter.currency}${TIERS.starter.price}/mo`,
+    growth: `${TIERS.growth.name} — ${TIERS.growth.currency}${TIERS.growth.price.toLocaleString("en-US")}/mo`,
+  };
   const { toast } = useToast();
   const throttle = useAuthThrottle(3, 120_000);
 
@@ -104,7 +108,7 @@ const Register = () => {
   return (
     <AuthLayout
       title="Create your workspace"
-      subtitle="Start your 14-day enterprise trial. No credit card required."
+      subtitle={`Create your workspace, then review the ${COMMERCIAL_TERMS.trialDays}-day trial and renewal terms at checkout.`}
       ribbon={
         planParam && PLAN_LABELS[planParam] ? (
           <div className="mb-6 -mt-1 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/20 text-center">
@@ -115,7 +119,7 @@ const Register = () => {
               {PLAN_LABELS[planParam]}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              14-day free trial · Cancel anytime
+              {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility} · Terms shown at checkout
             </p>
           </div>
         ) : null
