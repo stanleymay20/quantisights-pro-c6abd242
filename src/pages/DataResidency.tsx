@@ -3,14 +3,15 @@ import logo from "@/assets/quantivis-logo.png";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Globe, ShieldCheck, MapPin, Info } from "lucide-react";
+import { CONFIGURED_REGION } from "@/lib/reliability-claims";
 
 /**
  * Data Residency & International Transfers.
  * Reads the configured hosting region from build-time env when present,
  * otherwise displays "configured at deployment" rather than hardcoding.
+ * Region source of truth lives in @/lib/reliability-claims so this page
+ * can never drift from the homepage or Security Questionnaire.
  */
-const CONFIGURED_REGION =
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_HOSTING_REGION) || null;
 
 const aiProviders = [
   {

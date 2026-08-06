@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight, CheckCircle, Shield, TrendingUp, AlertCircle, Globe } from "lucide-react";
 import heroVideoAsset from "@/assets/hero-video.mp4.asset.json";
 import { Eyebrow, MarketingCard, MarketingCTA, MarketingSection, TagBadge } from "@/components/design-system/marketing-primitives";
+import { REGION_DISCLOSURE_SHORT } from "@/lib/reliability-claims";
 
 // DS-1: page-local color constants now resolve from the design-system
 // CSS variables defined in src/index.css. Values are unchanged — this
@@ -351,7 +352,7 @@ const SecurityTrust = () => (
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {[
-              ["EU Data Residency", "All data processed and stored within the EU. Frankfurt region only."],
+              ["EU Data Residency", REGION_DISCLOSURE_SHORT],
               ["GDPR Compliant", "Full DPA available. Data processor agreements on request."],
               ["EU AI Act Ready", "Article 9, 13, and 14 documentation built into every workflow."],
               ["Encryption", "AES-256 at rest · TLS 1.3 in transit · Append-only audit logs."],

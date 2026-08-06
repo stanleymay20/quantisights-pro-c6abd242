@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import logo from "@/assets/quantivis-logo.png";
 import { CONTACT } from "@/lib/contact-config";
+import { BACKUP_SLA_TARGET } from "@/lib/reliability-claims";
 
 const SLA = () => {
   const lastUpdated = "March 2026";
@@ -186,10 +187,10 @@ const SLA = () => {
             <CardContent className="py-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[
-                  { label: "Recovery Point Objective (RPO)", value: "≤ 1 hour", desc: "Maximum data loss in worst-case scenario" },
-                  { label: "Recovery Time Objective (RTO)", value: "≤ 4 hours", desc: "Maximum time to restore full service" },
-                  { label: "Backup Frequency", value: "Continuous + Daily", desc: "Point-in-time recovery with daily full snapshots" },
-                  { label: "Backup Retention", value: "30 days", desc: "Full backups retained for 30 days minimum" },
+                  { label: "Recovery Point Objective (RPO)", value: `≤ ${BACKUP_SLA_TARGET.targetRPOHours} hour`, desc: "Maximum data loss in worst-case scenario" },
+                  { label: "Recovery Time Objective (RTO)", value: `≤ ${BACKUP_SLA_TARGET.targetRTOHours} hours`, desc: "Maximum time to restore full service" },
+                  { label: "Backup Frequency", value: BACKUP_SLA_TARGET.frequency, desc: "Point-in-time recovery with daily full snapshots" },
+                  { label: "Backup Retention", value: `${BACKUP_SLA_TARGET.retentionDays} days`, desc: `Full backups retained for ${BACKUP_SLA_TARGET.retentionDays} days minimum` },
                 ].map(({ label, value, desc }) => (
                   <div key={label} className="border border-border/30 rounded-lg p-3">
                     <div className="text-xs text-muted-foreground">{label}</div>
@@ -198,6 +199,10 @@ const SLA = () => {
                   </div>
                 ))}
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                {BACKUP_SLA_TARGET.note} Baseline backup posture for all other tiers is published at{" "}
+                <Link to="/security-questionnaire" className="text-primary hover:underline">/security-questionnaire</Link>.
+              </p>
 
               <div className="border-t border-border/30 pt-4">
                 <h3 className="text-sm font-semibold mb-2">Rollback Strategy</h3>
