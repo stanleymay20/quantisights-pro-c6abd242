@@ -28,7 +28,7 @@ Quantivis is a **Decision Intelligence Operating System** that replaces traditio
 - **Decision Governance Infrastructure** — reduces systematic overestimation in strategic judgment through automated calibration, audit trails, and epistemic confidence capping
 - **Board-Defensible Decisions** — every recommendation carries traceable evidence, sample sizes, variance scores, and classified output types (OBSERVED_FACT vs AI_RECOMMENDATION)
 - **Institutional Memory** — captures the full \`Decision → Assumptions → Outcome → Attribution\` lifecycle, building organizational learning over time
-- **Real-time Strategic Oversight** — not retrospective reporting; dashboards update within milliseconds of new data arriving (Growth+ tiers)
+- **Live Strategic Oversight** — not retrospective reporting; dashboards subscribe to live database changes rather than polling on a fixed schedule (Growth+ tiers). No independently measured end-to-end latency figure is published — see /trust for current observability status.
 - **Autonomous Intelligence Loop** — a 6-hour cron-driven orchestration pipeline replaces manual consulting cycles
 
 ### Architecture
@@ -37,7 +37,7 @@ Quantivis is a **Decision Intelligence Operating System** that replaces traditio
 | Frontend | React 18 + TypeScript + Tailwind CSS | Executive-grade UI with role-specific dashboards |
 | Backend | Lovable Cloud (PostgreSQL + Edge Functions) | Data persistence, auth, serverless compute |
 | AI Gateway | Lovable AI (Gemini 2.5, GPT-5 family) | Intelligence generation without API key management |
-| Real-time | PostgreSQL CDC + WebSocket | Sub-500ms metric streaming |
+| Real-time | Supabase Realtime (Postgres change feed over WebSocket) | Live metric/decision updates; no independently measured latency SLA — see /trust |
 | Auth | Email/Password + MFA (TOTP) + SSO/SAML | Enterprise authentication |
 | Billing | Stripe (Checkout + Customer Portal + Webhooks) | Subscription management |
 
@@ -64,7 +64,7 @@ Quantivis is a **probabilistic decision-support system**, not a fiduciary adviso
     content: `
 ## Three-Tier Data Lake Architecture
 
-Quantivis uses a tiered data architecture designed to support 100M+ metric rows across 1,000+ organizations without performance degradation.
+Quantivis uses a tiered data architecture **designed to target** 100M+ metric rows across 1,000+ organizations without performance degradation. This describes the architecture's design goal, not a benchmark independently verified against a live production workload at that volume — no load test at this scale exists in this repository as of 2026-08-06. See /trust for the current, evidence-cited capability and deployment status of each subsystem.
 
 ### Tier 1: Raw Layer (Immutable Audit)
 - **Table**: \`raw_records\` (JSONB)
@@ -99,7 +99,7 @@ For datasets exceeding 100K rows, analytics are processed asynchronously:
 4. Frontend polls job status and renders when complete
 
 ### Why Not Direct Aggregation?
-At scale (100M+ rows), real-time \`GROUP BY\` queries on the \`metrics\` table would timeout. The rollup architecture ensures dashboard load times remain under 200ms regardless of dataset size.
+At scale (100M+ rows), real-time \`GROUP BY\` queries on the \`metrics\` table would timeout. The rollup architecture is designed to keep dashboard load times under 200ms regardless of dataset size — this is the design rationale, not a measured result from a production dataset at that scale.
     `,
   },
   {
@@ -109,7 +109,9 @@ At scale (100M+ rows), real-time \`GROUP BY\` queries on the \`metrics\` table w
     content: `
 ## Data Ingestion Pipeline
 
-### Ingestion Channels (5 Production Paths)
+### Ingestion Channels (5 Implemented Paths)
+
+Each channel below is implemented and reachable in the live application. "Implemented" describes code that exists and is wired to a live route or edge function — it is not a claim of certified throughput or scale-tested reliability at production volume.
 
 | Channel | Auth | Max Records | Idempotent | Use Case |
 |---------|------|-------------|------------|----------|
@@ -122,12 +124,14 @@ At scale (100M+ rows), real-time \`GROUP BY\` queries on the \`metrics\` table w
 ### Warehouse Connectors
 | Connector | Capabilities | Status |
 |-----------|-------------|--------|
-| PostgreSQL | Test, Discover Schema, Full Sync | Production |
-| Snowflake | Test, Discover Schema, Full Sync | Production |
-| BigQuery | Test, Discover Schema, Full Sync | Production |
-| Amazon Redshift | Test, Discover Schema, Full Sync | Production |
+| PostgreSQL | Test, Discover Schema, Full Sync | Implemented |
+| Snowflake | Test, Discover Schema, Full Sync | Implemented |
+| BigQuery | Test, Discover Schema, Full Sync | Implemented |
+| Amazon Redshift | Test, Discover Schema, Full Sync | Implemented |
 | MySQL | Test, Connect | Beta |
 | SQL Server | Test, Connect | Beta |
+
+"Implemented" means the connector's code path exists, is wired to a live edge function, and has been read-verified against source — it is not an independent load-test or scale certification. "Beta" means the connector is functional but has known gaps or less production usage than the Implemented tier.
 
 ### Validation Rules (All Channels)
 Every record passes through the same validation pipeline:
@@ -905,13 +909,13 @@ When SSO is active, MFA is handled by the Identity Provider, not by Quantivis. T
 ## Realtime Metric Streaming
 
 ### Overview
-Dashboards auto-update within milliseconds of new data arriving — no manual refresh required. This is powered by PostgreSQL Change Data Capture (CDC) over WebSocket.
+Dashboards subscribe to live database changes over WebSocket — no manual refresh required. No independently measured end-to-end latency figure is published for this path; see /trust for current observability status.
 
 ### Data Modes
 | Mode | Mechanism | Tier | Latency |
 |------|-----------|------|---------|
 | Batch | CSV upload, connector sync, webhook POST | All tiers | On-demand |
-| Realtime | PostgreSQL LISTEN/NOTIFY via WebSocket | Growth & Enterprise | < 500ms |
+| Realtime | Supabase Realtime (Postgres change feed) via WebSocket | Growth & Enterprise | Not independently measured |
 
 ### How It Works
 1. Data arrives via any ingestion channel
