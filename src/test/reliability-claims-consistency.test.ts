@@ -22,17 +22,20 @@ describe("residency and backup/DR source of truth", () => {
     expect(read("src/pages/DataResidency.tsx")).toContain("@/lib/reliability-claims");
   });
 
-  it("keeps the enterprise SLA target strictly tighter than the default baseline", () => {
-    expect(BACKUP_SLA_TARGET.targetRPOHours).toBeLessThan(BACKUP_BASELINE.targetRPOHours);
-    expect(BACKUP_SLA_TARGET.retentionDays).toBeGreaterThan(BACKUP_BASELINE.retentionDays);
-    expect(BACKUP_BASELINE.commitment).toBe("best effort");
-    expect(BACKUP_SLA_TARGET.commitment).toBe("contractual");
+  it("keeps unverified production backup facts unknown", () => {
+    expect(BACKUP_BASELINE.frequency).toBeNull();
+    expect(BACKUP_BASELINE.retentionDays).toBeNull();
+    expect(BACKUP_BASELINE.targetRPOHours).toBeNull();
+    expect(BACKUP_BASELINE.targetRTOHours).toBeNull();
+    expect(BACKUP_BASELINE.commitment).toBe("unverified");
+    expect(BACKUP_SLA_TARGET.commitment).toBe("proposed");
   });
 
   it("does not present the baseline backup posture as an unconditional contractual guarantee", () => {
     const questionnaire = read("src/pages/SecurityQuestionnaire.tsx");
-    expect(questionnaire).not.toMatch(/retained for 30 days/i);
-    expect(questionnaire).not.toMatch(/RPO[:\s]*1 hour/i);
+    expect(questionnaire).toContain("Not independently verified");
+    expect(questionnaire).not.toMatch(/retained \d+ days/i);
+    expect(questionnaire).not.toMatch(/target RPO \d+/i);
   });
 
   it("qualifies the SLA backup target as contract-dependent rather than a baseline default", () => {

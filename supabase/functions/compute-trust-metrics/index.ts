@@ -28,59 +28,68 @@ Deno.serve(async (req) => {
   const now = new Date();
   const provenance: Record<string, MetricProvenance> = {};
 
-  // Helper to safely run counts; failures don't crash the run.
-  const safeCount = async (table: string, filter?: (q: any) => any): Promise<number> => {
+  // Query failures and empty evidence sets remain unknown. They must never be
+  // converted into a favorable control value.
+  const safeCount = async (table: string, filter?: (q: any) => any): Promise<number | null> => {
     try {
       let q = svc.from(table).select("*", { count: "exact", head: true });
       if (filter) q = filter(q);
-      const { count } = await q;
-      return count ?? 0;
-    } catch { return 0; }
+      const { count, error } = await q;
+      if (error) return null;
+      return count ?? null;
+    } catch { return null; }
   };
+  const displayPct = (value: number | null) => value === null ? "unknown" : `${value}%`;
+  const displayValue = (value: number | null) => value === null ? "unknown" : String(value);
+  const thresholdStatus = (value: number | null, met: number, partial: number) =>
+    value === null ? "missing" : value >= met ? "met" : value >= partial ? "partial" : "missing";
 
-  // 1. RLS coverage — Supabase enforces on all public tables we own; computed as policy-presence ratio
-  const [{ count: decisionTotal }, { count: decisionsWithEvidence }] = await Promise.all([
+  // 1. RLS coverage - requires privileged production catalog evidence.
+  const [decisionTotalResult, decisionsWithEvidenceResult] = await Promise.all([
     svc.from("decision_ledger").select("*", { count: "exact", head: true }),
     svc.from("decision_ledger").select("*", { count: "exact", head: true }).not("evidence_sources", "is", null),
   ]);
-  const rls_coverage_pct = 100; // Enforced architecturally; verified by linter
+  const decisionTotal = decisionTotalResult.error ? null : decisionTotalResult.count;
+  const decisionsWithEvidence = decisionsWithEvidenceResult.error ? null : decisionsWithEvidenceResult.count;
+  const rls_coverage_pct = null;
   provenance.rls_coverage_pct = {
     source_tables: ["pg_policies", "pg_tables"],
-    method: "Architectural invariant verified by Supabase linter on every deploy",
-    sample_size: 0, scanned_at: now.toISOString(), confidence: "high",
-    notes: "All public-schema tables ship with RLS + explicit GRANTs per project standard.",
+    method: "Not computed by this Edge Function; requires a privileged catalog scan of every exposed table and policy",
+    sample_size: 0, scanned_at: now.toISOString(), confidence: "low",
+    notes: "Unknown until a production catalog scan is captured. Source-code policy presence is not production evidence.",
   };
 
   // 2. Audit coverage — fraction of mutating action types that hit audit_log in last 30d
-  const auditRows = await safeCount("audit_log");
-  const audit_coverage_pct = auditRows > 0 ? 100 : 0;
+  const auditRows = await safeCount("audit_log", (q) => q.gte("created_at", new Date(now.getTime() - 30 * 86400000).toISOString()));
+  const audit_coverage_pct = null;
   provenance.audit_coverage_pct = {
-    source_tables: ["audit_log"], method: "Presence of write-once audit entries in last 30 days",
-    sample_size: auditRows, scanned_at: now.toISOString(),
-    confidence: auditRows > 100 ? "high" : auditRows > 0 ? "medium" : "low",
+    source_tables: ["audit_log"], method: "Coverage requires comparison of auditable mutation classes with observed audit event classes; row presence alone is insufficient",
+    sample_size: auditRows ?? 0, scanned_at: now.toISOString(), confidence: "low",
+    notes: "Unknown until the mutation-to-audit contract is enumerated and measured.",
   };
 
   // 3. Explainability coverage — decisions with evidence_sources / total
-  const explainability_coverage_pct = (decisionTotal ?? 0) > 0
-    ? Math.round(((decisionsWithEvidence ?? 0) / (decisionTotal ?? 1)) * 1000) / 10
-    : 100;
+  const explainability_coverage_pct = decisionTotal !== null && decisionsWithEvidence !== null && decisionTotal > 0
+    ? Math.round((decisionsWithEvidence / decisionTotal) * 1000) / 10
+    : null;
   provenance.explainability_coverage_pct = {
     source_tables: ["decision_ledger"],
     method: "decisions WHERE evidence_sources IS NOT NULL ÷ total decisions",
     sample_size: decisionTotal ?? 0, scanned_at: now.toISOString(),
-    confidence: (decisionTotal ?? 0) >= 30 ? "high" : (decisionTotal ?? 0) >= 8 ? "medium" : "low",
+    confidence: decisionTotal !== null && decisionTotal >= 30 ? "high" : decisionTotal !== null && decisionTotal >= 8 ? "medium" : "low",
+    notes: decisionTotal === 0 ? "No decisions in the evidence set; coverage is unknown, not 100%." : undefined,
   };
 
   // 4. Intervention traceability — interventions with learning row / resolved
   const resolvedInterventions = await safeCount("execution_interventions", (q) => q.eq("resolved", true));
   const learningRows = await safeCount("intervention_learning");
-  const intervention_traceability_pct = resolvedInterventions > 0
-    ? Math.min(100, Math.round((learningRows / resolvedInterventions) * 1000) / 10) : 100;
+  const intervention_traceability_pct = resolvedInterventions !== null && learningRows !== null && resolvedInterventions > 0
+    ? Math.min(100, Math.round((learningRows / resolvedInterventions) * 1000) / 10) : null;
   provenance.intervention_traceability_pct = {
     source_tables: ["execution_interventions", "intervention_learning"],
     method: "intervention_learning rows ÷ resolved interventions (trigger-driven writeback)",
-    sample_size: resolvedInterventions, scanned_at: now.toISOString(),
-    confidence: resolvedInterventions >= 10 ? "high" : "medium",
+    sample_size: resolvedInterventions ?? 0, scanned_at: now.toISOString(),
+    confidence: resolvedInterventions !== null && resolvedInterventions >= 10 ? "high" : "low",
   };
 
   // 5. Failed auth 24h
@@ -90,21 +99,26 @@ Deno.serve(async (req) => {
   );
   provenance.failed_auth_24h = {
     source_tables: ["auth_events"], method: "COUNT WHERE event_type='auth_failure' AND created_at > now()-24h",
-    sample_size: failed_auth_24h, scanned_at: now.toISOString(), confidence: "high",
+    sample_size: failed_auth_24h ?? 0, scanned_at: now.toISOString(),
+    confidence: failed_auth_24h === null ? "low" : "high",
+    notes: failed_auth_24h === null ? "Auth-event query failed or table was unavailable; count is unknown." : undefined,
   };
 
   // 6. Retention compliance — datasets within freshness policy
-  let retention_compliance_pct = 100;
+  let retention_compliance_pct: number | null = null;
+  let retentionSample = 0;
   try {
-    const { data: ds } = await svc.from("datasets").select("is_stale").eq("status", "active");
-    if (ds && ds.length > 0) {
+    const { data: ds, error: dsError } = await svc.from("datasets").select("is_stale").eq("status", "active");
+    if (!dsError && ds && ds.length > 0) {
+      retentionSample = ds.length;
       const fresh = ds.filter((d: any) => !d.is_stale).length;
       retention_compliance_pct = Math.round((fresh / ds.length) * 1000) / 10;
     }
   } catch { /* keep default */ }
   provenance.retention_compliance_pct = {
     source_tables: ["datasets"], method: "active datasets where is_stale=false ÷ active datasets",
-    sample_size: 0, scanned_at: now.toISOString(), confidence: "high",
+    sample_size: retentionSample, scanned_at: now.toISOString(), confidence: retentionSample > 0 ? "high" : "low",
+    notes: retentionSample === 0 ? "No active datasets or the evidence query failed; compliance is unknown." : undefined,
   };
 
   // 7. Unresolved critical incidents
@@ -114,7 +128,9 @@ Deno.serve(async (req) => {
   );
   provenance.unresolved_critical_incidents = {
     source_tables: ["execution_interventions"], method: "severity='critical' AND resolved=false",
-    sample_size: unresolved_critical_incidents, scanned_at: now.toISOString(), confidence: "high",
+    sample_size: unresolved_critical_incidents ?? 0, scanned_at: now.toISOString(),
+    confidence: unresolved_critical_incidents === null ? "low" : "high",
+    notes: unresolved_critical_incidents === null ? "Intervention query failed or table was unavailable; count is unknown." : undefined,
   };
 
   // 8. Connector health % — nothing ever writes to connector_health_snapshots
@@ -128,7 +144,7 @@ Deno.serve(async (req) => {
   // other AICIS surfaces sync fine) never shows up as unhealthy here.
   // Fold in per-surface circuit-breaker state from aicis_sync_surface_status
   // too, same signal Bridge Health and Pipeline Observability already use.
-  let connector_health_pct = 100;
+  let connector_health_pct: number | null = null;
   let connectorSample = 0;
   try {
     const nowMs = Date.now();
@@ -139,7 +155,7 @@ Deno.serve(async (req) => {
     const eds = edsRes.data ?? [];
     const aicisSurfaces = aicisRes.data ?? [];
     connectorSample = eds.length + aicisSurfaces.length;
-    if (connectorSample > 0) {
+    if (!edsRes.error && !aicisRes.error && connectorSample > 0) {
       const healthyEds = eds.filter((r: any) => !r.last_error).length;
       const healthyAicis = aicisSurfaces.filter((s: any) =>
         !((s.circuit_breaker_until && new Date(s.circuit_breaker_until).getTime() > nowMs) || (s.consecutive_failures ?? 0) >= 3)
@@ -150,15 +166,16 @@ Deno.serve(async (req) => {
   provenance.connector_health_pct = {
     source_tables: ["external_data_sources", "aicis_sync_surface_status"],
     method: "(sources WHERE last_error IS NULL) + (AICIS surfaces with closed circuit breaker) ÷ total",
-    sample_size: connectorSample, scanned_at: now.toISOString(), confidence: connectorSample > 0 ? "high" : "low",
+    sample_size: connectorSample, scanned_at: now.toISOString(), confidence: connector_health_pct !== null ? "high" : "low",
+    notes: connector_health_pct === null ? "No connector evidence or an evidence query failed; health is unknown." : undefined,
   };
 
   // 9. DQ confidence avg — from iq_dimension_scores
-  let dq_confidence_avg = 0;
+  let dq_confidence_avg: number | null = null;
   let dqSample = 0;
   try {
-    const { data: iq } = await svc.from("iq_dimension_scores").select("score");
-    if (iq && iq.length > 0) {
+    const { data: iq, error: iqError } = await svc.from("iq_dimension_scores").select("score");
+    if (!iqError && iq && iq.length > 0) {
       dqSample = iq.length;
       dq_confidence_avg = Math.round(
         (iq.reduce((s: number, r: any) => s + Number(r.score || 0), 0) / iq.length) * 10,
@@ -169,23 +186,32 @@ Deno.serve(async (req) => {
     source_tables: ["iq_dimension_scores"], method: "AVG(score) across all 7 IQ dimensions",
     sample_size: dqSample, scanned_at: now.toISOString(),
     confidence: dqSample > 30 ? "high" : dqSample > 0 ? "medium" : "low",
+    notes: dqSample === 0 ? "No data-quality scores or the evidence query failed; score is unknown." : undefined,
   };
 
   // 10. Drift monitor coverage — orgs with fairness_drift_snapshots / total orgs
-  let drift_monitor_coverage_pct = 0;
+  let drift_monitor_coverage_pct: number | null = null;
+  let driftSample = 0;
   try {
-    const [{ count: orgs }, { data: driftOrgs }] = await Promise.all([
+    const [orgResult, driftResult] = await Promise.all([
       svc.from("organizations").select("*", { count: "exact", head: true }),
       svc.from("fairness_drift_snapshots").select("organization_id"),
     ]);
+    const orgs = orgResult.error ? null : orgResult.count;
+    const driftOrgs = driftResult.error ? null : driftResult.data;
     const unique = new Set((driftOrgs ?? []).map((r: any) => r.organization_id)).size;
-    drift_monitor_coverage_pct = (orgs ?? 0) > 0
-      ? Math.round((unique / (orgs ?? 1)) * 1000) / 10 : 0;
+    driftSample = driftOrgs?.length ?? 0;
+    if (!driftOrgs || orgs === null || orgs === 0) {
+      drift_monitor_coverage_pct = null;
+    } else {
+      drift_monitor_coverage_pct = Math.round((unique / orgs) * 1000) / 10;
+    }
   } catch { /* default */ }
   provenance.drift_monitor_coverage_pct = {
     source_tables: ["fairness_drift_snapshots", "organizations"],
     method: "DISTINCT orgs with drift snapshots ÷ total orgs",
-    sample_size: 0, scanned_at: now.toISOString(), confidence: "medium",
+    sample_size: driftSample, scanned_at: now.toISOString(), confidence: drift_monitor_coverage_pct === null ? "low" : "medium",
+    notes: drift_monitor_coverage_pct === null ? "No organizations or the evidence query failed; coverage is unknown." : undefined,
   };
 
   const snapshot = {
@@ -263,8 +289,8 @@ Deno.serve(async (req) => {
     },
     {
       category: "GDPR", control_key: "gdpr_retention_compliance",
-      control_label: `Retention compliance ≥ 90% (currently ${retention_compliance_pct}%)`,
-      status: retention_compliance_pct >= 90 ? "met" : retention_compliance_pct >= 70 ? "partial" : "missing",
+      control_label: `Retention compliance >= 90% (currently ${displayPct(retention_compliance_pct)})`,
+      status: thresholdStatus(retention_compliance_pct, 90, 70),
       evidence_ref: "/data-retention",
       evidence_payload: { value: retention_compliance_pct },
     },
@@ -280,15 +306,15 @@ Deno.serve(async (req) => {
     },
     {
       category: "EU AI Act", control_key: "aia_explainability",
-      control_label: `Explainability coverage ≥ 95% (currently ${explainability_coverage_pct}%)`,
-      status: explainability_coverage_pct >= 95 ? "met" : explainability_coverage_pct >= 70 ? "partial" : "missing",
+      control_label: `Explainability coverage >= 95% (currently ${displayPct(explainability_coverage_pct)})`,
+      status: thresholdStatus(explainability_coverage_pct, 95, 70),
       evidence_ref: "/decision-accuracy",
       evidence_payload: { value: explainability_coverage_pct },
     },
     {
       category: "Security", control_key: "sec_rls_full",
-      control_label: `RLS coverage 100% (currently ${rls_coverage_pct}%)`,
-      status: rls_coverage_pct >= 100 ? "met" : "partial",
+      control_label: `RLS coverage 100% (currently ${displayPct(rls_coverage_pct)})`,
+      status: thresholdStatus(rls_coverage_pct, 100, 1),
       evidence_ref: "/security-overview",
     },
     {
@@ -306,21 +332,21 @@ Deno.serve(async (req) => {
     {
       category: "Auditability", control_key: "audit_immutable_log",
       control_label: "Immutable audit log (DENY UPDATE/DELETE)",
-      status: audit_coverage_pct > 0 ? "met" : "partial",
+      status: audit_coverage_pct === null ? "missing" : audit_coverage_pct > 0 ? "met" : "partial",
       evidence_ref: "/auditability",
       evidence_payload: { audit_rows: auditRows },
     },
     {
       category: "Auditability", control_key: "audit_intervention_traceability",
-      control_label: `Intervention traceability ≥ 95% (currently ${intervention_traceability_pct}%)`,
-      status: intervention_traceability_pct >= 95 ? "met" : intervention_traceability_pct >= 70 ? "partial" : "missing",
+      control_label: `Intervention traceability >= 95% (currently ${displayPct(intervention_traceability_pct)})`,
+      status: thresholdStatus(intervention_traceability_pct, 95, 70),
       evidence_ref: "/interventions",
       evidence_payload: { value: intervention_traceability_pct },
     },
     {
       category: "Data Governance", control_key: "dg_dq_avg",
-      control_label: `Data quality score avg ≥ 70 (currently ${dq_confidence_avg})`,
-      status: dq_confidence_avg >= 70 ? "met" : dq_confidence_avg > 0 ? "partial" : "missing",
+      control_label: `Data quality score avg >= 70 (currently ${displayValue(dq_confidence_avg)})`,
+      status: thresholdStatus(dq_confidence_avg, 70, 1),
       evidence_ref: "/data-catalog",
       evidence_payload: { value: dq_confidence_avg, sample: dqSample },
     },
@@ -331,8 +357,8 @@ Deno.serve(async (req) => {
     },
     {
       category: "AI Governance", control_key: "aig_drift_monitoring",
-      control_label: `Drift monitoring coverage ≥ 50% (currently ${drift_monitor_coverage_pct}%)`,
-      status: drift_monitor_coverage_pct >= 50 ? "met" : drift_monitor_coverage_pct > 0 ? "partial" : "missing",
+      control_label: `Drift monitoring coverage >= 50% (currently ${displayPct(drift_monitor_coverage_pct)})`,
+      status: thresholdStatus(drift_monitor_coverage_pct, 50, 1),
       evidence_ref: "/fairness",
       evidence_payload: { value: drift_monitor_coverage_pct },
     },

@@ -30,12 +30,12 @@ export const REGION_DISCLOSURE_LONG = CONFIGURED_REGION
  * add-on) is independently verified as active.
  */
 export const BACKUP_BASELINE = {
-  frequency: "Daily, encrypted",
-  retentionDays: 7,
-  targetRPOHours: 24,
-  targetRTOHours: 4,
-  commitment: "best effort" as const,
-  note: "Applies by default to every tier. This is the baseline until a tighter, contractual SLA target (see /sla) is incorporated into a signed Order Form.",
+  frequency: null,
+  retentionDays: null,
+  targetRPOHours: null,
+  targetRTOHours: null,
+  commitment: "unverified" as const,
+  disclosure: "The live project's backup frequency, retention, restore-test result, RPO, and RTO have not been independently verified. Obtain current evidence from Quantivis before relying on a recovery objective.",
 };
 
 /**
@@ -49,6 +49,6 @@ export const BACKUP_SLA_TARGET = {
   retentionDays: 30,
   targetRPOHours: 1,
   targetRTOHours: 4,
-  commitment: "contractual" as const,
-  note: "Enterprise-tier commitment, active only once incorporated into a signed Order Form. Until then, the baseline in the Security Questionnaire (/security-questionnaire) applies.",
+  commitment: "proposed" as const,
+  note: "Illustrative enterprise objectives only. They are not evidence of the deployed backup configuration or a Quantivis commitment unless expressly incorporated into a signed Order Form after technical validation.",
 };

@@ -32,8 +32,8 @@ const SLA = () => {
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-2">Service Level Agreement</h1>
           <p className="text-sm text-muted-foreground">Last updated: {lastUpdated}</p>
           <p className="text-muted-foreground mt-3">
-            This SLA defines the operational guarantees, incident response commitments, and disaster recovery
-            procedures for the Quantivis Decision Governance Platform.
+            This page describes proposed service objectives. It is not an operational guarantee unless the
+            applicable objective is incorporated into a signed customer Order Form.
           </p>
         </div>
 
@@ -200,7 +200,7 @@ const SLA = () => {
                 ))}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                {BACKUP_SLA_TARGET.note} Baseline backup posture for all other tiers is published at{" "}
+                {BACKUP_SLA_TARGET.note} The current evidence status is published at{" "}
                 <Link to="/security-questionnaire" className="text-primary hover:underline">/security-questionnaire</Link>.
               </p>
 
@@ -209,15 +209,15 @@ const SLA = () => {
                 <ul className="text-sm text-muted-foreground space-y-2">
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />
-                    <span><strong>Database rollback:</strong> Point-in-time recovery to any second within RPO window</span>
+                    <span><strong>Database rollback:</strong> Point-in-time recovery is available only when enabled and verified for the deployed project</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />
-                    <span><strong>Application rollback:</strong> Instant revert to previous deployment via immutable builds</span>
+                    <span><strong>Application rollback:</strong> Previous builds may be redeployed; recovery time has not been independently measured</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />
-                    <span><strong>Edge function rollback:</strong> Previous function versions retained and deployable within minutes</span>
+                    <span><strong>Edge function rollback:</strong> Redeployment procedure exists; version retention and recovery time require production evidence</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />

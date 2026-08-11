@@ -35,7 +35,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
       { id: "DP-2", question: "Is customer data isolated between tenants?", answer: "Yes. Multi-tenant isolation is enforced at the database layer via Row-Level Security (RLS) policies on 100% of tables. Every query is scoped to organization_id. No cross-organization data access is architecturally possible." },
       { id: "DP-3", question: "Do you process data in compliance with GDPR?", answer: "Yes. We offer a Data Processing Agreement (DPA), support Subject Access Requests (SAR) via automated data export, and implement GDPR-compliant account deletion that purges data across 25+ tables. Our subprocessor list is publicly disclosed." },
       { id: "DP-4", question: "Where is customer data stored geographically?", answer: REGION_DISCLOSURE_LONG },
-      { id: "DP-5", question: "What is your data retention and deletion policy?", answer: `Configurable freshness policies are available per dataset. Account deletion triggers atomic purge across 25+ tables and removes the user from the authentication system. Database backups are encrypted and retained for ${BACKUP_BASELINE.retentionDays} days on a rolling basis (${BACKUP_BASELINE.commitment}; see /sla for the contractual enterprise target); deleted data may persist in backups until natural expiry.` },
+      { id: "DP-5", question: "What is your data retention and deletion policy?", answer: `Configurable freshness policies are available per dataset. Account deletion removes application data and the user from the authentication system. Backup persistence and natural-expiry timing depend on the deployed backup configuration. ${BACKUP_BASELINE.disclosure}` },
       { id: "DP-6", question: "Is customer data used to train AI/ML models?", answer: "No. Customer data is not used to train, fine-tune, or improve Quantivis models. AI features use third-party inference APIs (Google Gemini) in stateless, per-request mode — no data is retained by the provider after processing. Third-party processing is disclosed in the Subprocessor list." },
     ],
   },
@@ -56,7 +56,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
       { id: "IN-1", question: "Where is your application hosted?", answer: "Quantivis is hosted on a managed cloud platform (AWS-backed infrastructure, Supabase). Database services run on managed PostgreSQL with SOC 2 Type II and ISO 27001 certified data centers, automated encrypted backups, and point-in-time recovery." },
       { id: "IN-2", question: "Are secrets and API keys managed securely?", answer: "Yes. All secrets (API keys, service role keys, webhook secrets) are stored in encrypted vault storage and injected as environment variables. Service role keys are not exposed to client-side code. The client bundle only contains the publishable anon key." },
       { id: "IN-3", question: "What DDoS and network-level protections are in place?", answer: "DDoS protection and network-level firewalling are provided by the infrastructure layer. Edge functions include code-level rate limiting for sensitive operations." },
-      { id: "IN-4", question: "How are backups managed?", answer: `Automated encrypted backups are provided by the managed database service: ${BACKUP_BASELINE.frequency.toLowerCase()}, retained ${BACKUP_BASELINE.retentionDays} days on a rolling basis, target RPO ${BACKUP_BASELINE.targetRPOHours}h / target RTO ${BACKUP_BASELINE.targetRTOHours}h (${BACKUP_BASELINE.commitment}). A tighter, contractual backup commitment is available to eligible enterprise customers — see /sla.` },
+      { id: "IN-4", question: "How are backups managed?", answer: BACKUP_BASELINE.disclosure },
     ],
   },
   {
@@ -75,7 +75,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
     items: [
       { id: "IR-1", question: "Do you have a documented incident response process?", answer: "Yes. Our incident response process includes: (1) detection and containment, (2) forensic investigation, (3) customer notification within 72 hours where required by applicable law, and (4) post-incident review with remediation." },
       { id: "IR-2", question: "How are customers notified in the event of a breach?", answer: "We notify affected customers without undue delay where required by applicable law. Under GDPR Article 33, this means within 72 hours of confirmed detection. Notification includes the nature of the breach, data affected, and remediation steps taken." },
-      { id: "IR-3", question: "What is your disaster recovery strategy?", answer: `${BACKUP_BASELINE.frequency} backups with ${BACKUP_BASELINE.retentionDays}-day rolling retention. Target RPO: ${BACKUP_BASELINE.targetRPOHours} hours (${BACKUP_BASELINE.commitment}). Target RTO: ${BACKUP_BASELINE.targetRTOHours} hours (${BACKUP_BASELINE.commitment}) — may vary during major incidents. Infrastructure runs on managed services with built-in redundancy. Application logic is stateless and can be redeployed immediately. A tighter contractual DR commitment for eligible enterprise customers is documented at /sla.` },
+      { id: "IR-3", question: "What is your disaster recovery strategy?", answer: `Application builds can be redeployed, but database recovery capability must be demonstrated separately. ${BACKUP_BASELINE.disclosure} Proposed enterprise objectives are shown at /sla and become commitments only in a signed Order Form.` },
     ],
   },
   {
@@ -176,10 +176,10 @@ const SecurityQuestionnaire = () => {
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Backups & Recovery</h3>
             <ul className="space-y-1.5 text-sm">
-              <li className="flex justify-between"><span className="text-muted-foreground">Backup frequency</span><span className="font-medium">{BACKUP_BASELINE.frequency}</span></li>
-              <li className="flex justify-between"><span className="text-muted-foreground">Retention</span><span className="font-medium">{BACKUP_BASELINE.retentionDays} days rolling</span></li>
-              <li className="flex justify-between"><span className="text-muted-foreground">Target RPO</span><span className="font-medium">{BACKUP_BASELINE.targetRPOHours} hours ({BACKUP_BASELINE.commitment})</span></li>
-              <li className="flex justify-between"><span className="text-muted-foreground">Target RTO</span><span className="font-medium">{BACKUP_BASELINE.targetRTOHours} hours ({BACKUP_BASELINE.commitment})</span></li>
+              <li className="flex justify-between"><span className="text-muted-foreground">Backup frequency</span><span className="font-medium">Not independently verified</span></li>
+              <li className="flex justify-between"><span className="text-muted-foreground">Retention</span><span className="font-medium">Not independently verified</span></li>
+              <li className="flex justify-between"><span className="text-muted-foreground">Target RPO</span><span className="font-medium">No verified baseline</span></li>
+              <li className="flex justify-between"><span className="text-muted-foreground">Target RTO</span><span className="font-medium">No verified baseline</span></li>
             </ul>
           </div>
           <div>

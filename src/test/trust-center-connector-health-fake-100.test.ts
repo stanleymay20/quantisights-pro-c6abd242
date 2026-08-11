@@ -31,4 +31,37 @@ describe("Trust Center connector_health_pct (audit: '100%' not reflecting AICIS 
   it("also factors in AICIS per-surface circuit-breaker state, per the round-3 fix", () => {
     expect(source).toContain('source_tables: ["external_data_sources", "aicis_sync_surface_status"]');
   });
+
+  it("does not convert missing connector evidence into a favorable 100% health score", () => {
+    expect(source).toContain("let connector_health_pct: number | null = null;");
+    expect(source).toContain("connector_health_pct === null ? \"No connector evidence or an evidence query failed; health is unknown.\"");
+    expect(source).not.toContain("let connector_health_pct = 100");
+    expect(source).not.toContain("connector_health_pct = 100");
+  });
+});
+
+describe("compute-trust-metrics fail-closed evidence handling", () => {
+  const source = read("supabase/functions/compute-trust-metrics/index.ts");
+
+  it("keeps privileged or unmeasured coverage unknown instead of fabricating pass rates", () => {
+    expect(source).toContain("const rls_coverage_pct = null;");
+    expect(source).toContain("const audit_coverage_pct = null;");
+    expect(source).toContain("Source-code policy presence is not production evidence.");
+    expect(source).toContain("Coverage requires comparison of auditable mutation classes");
+  });
+
+  it("renders unknown metric labels and missing statuses for nullable control evidence", () => {
+    expect(source).toContain('const displayPct = (value: number | null) => value === null ? "unknown"');
+    expect(source).toContain('value === null ? "missing"');
+    expect(source).toContain("status: thresholdStatus(retention_compliance_pct, 90, 70)");
+    expect(source).toContain("status: thresholdStatus(explainability_coverage_pct, 95, 70)");
+    expect(source).toContain("status: thresholdStatus(drift_monitor_coverage_pct, 50, 1)");
+    expect(source).not.toContain("currently ${retention_compliance_pct}%");
+    expect(source).not.toContain("currently ${drift_monitor_coverage_pct}%");
+  });
+
+  it("shows nullable live Trust Center metrics as explicit unknowns", () => {
+    const component = read("src/components/security/LiveTrustMetrics.tsx");
+    expect(component).toContain('? "Unknown"');
+  });
 });

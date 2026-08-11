@@ -1,16 +1,13 @@
 -- =============================================================================
 -- Schedule the daily trust-metrics evidence scan.
 -- =============================================================================
--- compute-trust-metrics (supabase/functions/compute-trust-metrics) computes a
--- real, provenance-cited snapshot of RLS/audit/explainability/retention/
--- connector-health/data-quality/drift coverage and writes it to
--- trust_metrics_snapshots (see migration 20260526192943). The function itself
--- has always been correct and honest about missing evidence -- but nothing
--- ever scheduled it, so trust_metrics_snapshots stayed empty and the live
--- Trust Center correctly, but unhelpfully, fell back to "No trust snapshot
--- yet" / zero values indefinitely. This was misread externally as fabricated
--- or permanently-zero metrics; the real cause was a missing pg_cron entry,
--- not a computation bug.
+-- compute-trust-metrics (supabase/functions/compute-trust-metrics) writes a
+-- provenance-cited snapshot to trust_metrics_snapshots (see migration
+-- 20260526192943). The live project also lacked a scheduler, so the table
+-- stayed empty and the Trust Center fell back to "No trust snapshot yet" / zero
+-- values indefinitely. The function has since been tightened so absent or
+-- failed evidence queries remain unknown instead of becoming favorable
+-- defaults.
 --
 -- Follows the same net.http_post + x-cron-secret pattern as the other
 -- scheduled jobs (see migration 20260426061858).

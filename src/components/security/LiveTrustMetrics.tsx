@@ -96,7 +96,7 @@ const LiveTrustMetrics = () => {
             const prov = snap.provenance?.[m.key as string];
             const display =
               value === null || value === undefined
-                ? "—"
+                ? "Unknown"
                 : typeof value === "number" ? `${value}${m.suffix ?? ""}` : String(value);
             return (
               <Popover key={m.key as string}>

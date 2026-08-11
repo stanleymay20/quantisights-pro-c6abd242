@@ -1,20 +1,24 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migrationsDir = resolve(__dirname, "../../supabase/migrations");
+const root = resolve(__dirname, "../..");
+const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 describe("compute-trust-metrics is actually scheduled", () => {
-  // The edge function was always correct and honest about missing evidence,
-  // but nothing ever called it -- trust_metrics_snapshots stayed empty
-  // forever and the live Trust Center showed "No trust snapshot yet" / zero
-  // values indefinitely. Root cause was a missing pg_cron entry, not a
-  // computation bug. This test guards against that gap re-appearing.
+  // Nothing called the Edge Function, so trust_metrics_snapshots stayed empty.
+  // This test guards the scheduler and its cron-secret authentication path.
   it("has a pg_cron schedule invoking the compute-trust-metrics edge function", () => {
-    const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql"));
-    const combined = files.map((f) => readFileSync(resolve(migrationsDir, f), "utf8")).join("\n");
-    expect(combined).toContain("cron.schedule(\n  'compute-trust-metrics-daily'");
-    expect(combined).toContain("functions/v1/compute-trust-metrics");
-    expect(combined).toContain("x-cron-secret");
+    const migration = readFileSync(resolve(migrationsDir, "20260806083000_schedule_compute_trust_metrics.sql"), "utf8");
+    expect(migration).toMatch(/SELECT\s+cron\.schedule\(\s*'compute-trust-metrics-daily'/);
+    expect(migration).toContain("functions/v1/compute-trust-metrics");
+    expect(migration).toContain("'x-cron-secret', COALESCE(public.get_ingest_cron_secret(), '')");
+  });
+
+  it("requires the Edge Function cron secret before computing metrics", () => {
+    const source = read("supabase/functions/compute-trust-metrics/index.ts");
+    expect(source).toContain('import { verifyCronSecret, cronSecretUnauthorized } from "../_shared/cron-secret.ts";');
+    expect(source).toContain("if (!verifyCronSecret(req)) return cronSecretUnauthorized(corsHeaders);");
   });
 });
