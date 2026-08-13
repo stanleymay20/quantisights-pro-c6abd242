@@ -43,7 +43,7 @@ export interface ResolvedEntity {
 }
 
 const norm = (s: string): string =>
-  s.toLowerCase().trim().replace(/[\s\-\/\.]+/g, "_");
+  s.toLowerCase().trim().replace(/[\s/.-]+/g, "_");
 
 function isIdHeader(header: string): boolean {
   const n = norm(header);

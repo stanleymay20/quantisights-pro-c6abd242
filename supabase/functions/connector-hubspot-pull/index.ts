@@ -33,7 +33,7 @@ import { logConnectorEvent } from "../_shared/warehouse-config.ts";
 
 const GATEWAY = "https://connector-gateway.lovable.dev/hubspot";
 const VENDOR = "hubspot";
-const SOURCE: "hubspot" = "hubspot";
+const SOURCE = "hubspot" as const;
 
 type Mode = "historical_backfill" | "incremental_sync";
 

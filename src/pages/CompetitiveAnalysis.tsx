@@ -51,7 +51,7 @@ const MATRIX: MatrixRow[] = [
   { capability: "Boardroom-ready briefs (auto)", category: "experience", quantivis: true, palantir: false, anaplan: false, aera: false, snowfire: false, tableau: false },
   { capability: "Executive AI Copilot (Ask)", category: "experience", quantivis: true, palantir: "Partial", anaplan: false, aera: "Partial", snowfire: true, tableau: "Partial" },
   { capability: "Closed-loop SUDAL framework", category: "experience", quantivis: true, palantir: false, anaplan: false, aera: "Partial", snowfire: false, tableau: false },
-  { capability: "Auto-generated PPTX/PDF reports", category: "experience", quantivis: true, palantir: false, anaplan: false, aera: false, snowfire: "Partial", tableau: "Partial" },
+  { capability: "Auto-generated PPTX/PDF reports", category: "experience", quantivis: "Planned", palantir: false, anaplan: false, aera: false, snowfire: "Partial", tableau: "Partial" },
 ];
 
 const CATEGORY_META: Record<MatrixRow["category"], { label: string; icon: typeof Trophy; tone: string }> = {

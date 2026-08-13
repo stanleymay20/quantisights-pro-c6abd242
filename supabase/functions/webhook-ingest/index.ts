@@ -302,7 +302,7 @@ serve(async (req) => {
       const segmentField = fieldMap.segment || "segment";
 
       // Extract and normalize date
-      let date = normalizeDateInput(rec[dateField]);
+      const date = normalizeDateInput(rec[dateField]);
       if (!date || !isValidISODate(date)) {
         validationErrors.push({
           index: i,

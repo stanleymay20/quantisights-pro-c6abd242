@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Treemap, ResponsiveContainer, Tooltip } from "recharts";
 import { LayoutGrid } from "lucide-react";
 import { MetricRow } from "@/hooks/useMetrics";
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface TreemapChartProps {
   metrics: MetricRow[];
 }

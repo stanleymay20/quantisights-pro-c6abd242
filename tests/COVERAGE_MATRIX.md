@@ -81,7 +81,7 @@ Last updated alongside plan v4.
 | Executive report render | PW | `e2e/reports.spec.ts` | `/reports` loads |
 | Board report render | PW | `e2e/reports.spec.ts` | `/board-report` loads |
 | PDF export | PW | `e2e/reports.spec.ts` | download captured, magic bytes `%PDF` |
-| PPTX export | PW | `e2e/reports.spec.ts` | download captured, magic bytes `PK\x03\x04` |
+| PPTX export | Not deployed | — | Disabled until a security-reviewed implementation and download-integrity test exist |
 | Export failure handling | PW | `e2e/reports.spec.ts` | toggles `?force_error=1` mock → toast, no crash |
 | Real `data-export` mass run | EXC | — | name-blocked; would email and consume storage |
 

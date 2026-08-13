@@ -121,7 +121,7 @@ export interface KpiMatch {
 }
 
 const normalize = (s: string): string =>
-  s.toLowerCase().trim().replace(/[\s\-\/\.]+/g, "_").replace(/[^\w%]/g, "");
+  s.toLowerCase().trim().replace(/[\s/.-]+/g, "_").replace(/[^\w%]/g, "");
 
 /** Levenshtein distance, bounded for performance. */
 function levenshtein(a: string, b: string): number {

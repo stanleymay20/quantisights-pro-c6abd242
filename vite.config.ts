@@ -20,7 +20,7 @@ const releaseMetadata = {
   gitCommit,
   buildTimestamp,
   deploymentId,
-  migrationVersion: "20260806044412",
+  migrationVersion: "20260813124440",
 };
 
 // https://vitejs.dev/config/
@@ -40,11 +40,11 @@ export default defineConfig(({ mode }) => ({
     alias: [
       {
         find: "@/lib/data-upload-utils",
-        replacement: path.resolve(__dirname, "./src/lib/data-upload-utils-safe.ts"),
+        replacement: path.resolve(import.meta.dirname, "./src/lib/data-upload-utils-safe.ts"),
       },
       {
         find: "@",
-        replacement: path.resolve(__dirname, "./src"),
+        replacement: path.resolve(import.meta.dirname, "./src"),
       },
     ],
   },

@@ -162,7 +162,7 @@ const chapters = [
       },
       {
         heading: "Board Report Generation",
-        content: `One-click generation of board-ready reports including:\n\n• **Executive Summary** — AI-generated narrative of organizational performance\n• **Risk Attribution** — Which decisions contributed to current risk posture\n• **Governance Actions** — Audit trail of key decisions and their rationale\n• **Trend Intelligence** — Multi-period analysis with statistical significance\n• **Simulation Results** — Monte Carlo outcomes for strategic initiatives\n• **Conflict Detection** — Flagged decisions that may conflict with stated mission/values\n\nReports are generated as downloadable documents (PDF, PPTX) and stored securely in the reports storage bucket.`
+        content: `One-click generation of board-ready report content including:\n\n• **Executive Summary** — AI-generated narrative of organizational performance\n• **Risk Attribution** — Which decisions contributed to current risk posture\n• **Governance Actions** — Audit trail of key decisions and their rationale\n• **Trend Intelligence** — Multi-period analysis with statistical significance\n• **Simulation Results** — Monte Carlo outcomes for strategic initiatives\n• **Conflict Detection** — Flagged decisions that may conflict with stated mission/values\n\nPrintable HTML and JSON evidence exports are currently available. PDF and PPTX generation remain planned capabilities and are not deployed.`
       }
     ]
   },
@@ -320,7 +320,7 @@ const chapters = [
       },
       {
         heading: "Export Capabilities",
-        content: `Data and reports can be exported in multiple formats:\n\n• **PDF** — Board reports and governance documentation\n• **PPTX** — Strategy Pack presentations with executive formatting\n• **CSV** — Raw data exports with column selection\n• **JSON** — Programmatic data access for downstream systems\n\nAll exports are logged in the audit trail with the exporting user, timestamp, and scope of data included.`
+        content: `Data and evidence can be exported in currently supported formats:\n\n• **Printable HTML** — Human-readable evidence and board review\n• **CSV** — Raw data exports where provided by the relevant workspace\n• **JSON** — Programmatic evidence export for downstream systems\n\nPDF and PPTX generation are planned but not deployed. Export auditability depends on the specific export path and must be verified before reliance.`
       }
     ]
   },

@@ -187,7 +187,7 @@ describe("enterprise readiness foundation", () => {
     expect(routes).toContain('path: "/integrations"');
     expect(routes).toContain('{ path: "/copilot", element: <CopilotOverview />, layout: "public" }');
 
-    const compareRoute = routes.match(/\{ path: "\/compare", element: <Compare \/>\, layout: "(?<layout>[^"]+)" \}/);
+    const compareRoute = routes.match(/\{ path: "\/compare", element: <Compare \/>, layout: "(?<layout>[^"]+)" \}/);
     expect(compareRoute).not.toBeNull();
     expect(compareRoute?.groups?.layout).toBe("none");
     expect(compareRoute?.groups?.layout).not.toBe("full");
@@ -257,7 +257,8 @@ describe("enterprise readiness foundation", () => {
   it("documents deployment secrets, hosting headers, and dependency risk", () => {
     const deployment = read("docs/DEPLOYMENT_SECRETS.md");
     expect(deployment).toContain("SUPABASE_ACCESS_TOKEN");
-    expect(deployment).toContain("SUPABASE_PROJECT_REF");
+    expect(deployment).toContain("SUPABASE_DB_PASSWORD");
+    expect(deployment).toContain("non-sensitive project reference is pinned");
     expect(deployment).toContain("itpwpnwzzitkelffttyx");
 
     const hosting = read("docs/HOSTING_SECURITY_HEADERS.md");

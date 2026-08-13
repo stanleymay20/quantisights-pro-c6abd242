@@ -136,7 +136,7 @@ function _kMeansRun(stdData: number[][], rawData: number[][], k: number, maxIter
   }
 
   // Lloyd's iterations
-  let assignments = new Array(n).fill(0);
+  const assignments = new Array(n).fill(0);
   let iterations = 0;
 
   for (let iter = 0; iter < maxIter; iter++) {

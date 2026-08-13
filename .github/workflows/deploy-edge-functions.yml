@@ -1,7 +1,7 @@
-name: Deploy Supabase Edge Functions
+name: Deploy Supabase
 
-# Deploys all edge functions under supabase/functions/ to the linked Supabase
-# project on every push to main that touches a function or this workflow.
+# Applies database migrations and then deploys all Edge Functions to the linked
+# Supabase project on every relevant push to main.
 #
 # Why this exists:
 #   Lovable's auto-deploy reliably triggers for edge-function files edited
@@ -14,9 +14,11 @@ name: Deploy Supabase Edge Functions
 # Required GitHub Actions secrets (Repo Settings -> Secrets and variables -> Actions):
 #   - SUPABASE_ACCESS_TOKEN   Personal access token from
 #                             https://supabase.com/dashboard/account/tokens
-#   - SUPABASE_PROJECT_REF    The project ref: itpwpnwzzitkelffttyx
+#   - SUPABASE_DB_PASSWORD    Project database password used by db push
 #
 # Notes:
+#   - Database migrations are applied before functions so code never depends on
+#     a schema version that has not reached production.
 #   - This deploys ALL functions every run. It is simpler and safer than
 #     diff-based selective deploys, and the Supabase CLI is fast enough
 #     (~1-2 minutes for ~120 functions). If you later want changed-only
@@ -32,6 +34,8 @@ on:
     branches: [main]
     paths:
       - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
       - ".github/workflows/deploy-edge-functions.yml"
   workflow_dispatch: {}
 
@@ -43,17 +47,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: itpwpnwzzitkelffttyx
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1
         with:
-          version: latest
+          version: 2.58.5
 
       - name: Verify required secrets
         run: |
@@ -61,10 +68,19 @@ jobs:
             echo "::error::SUPABASE_ACCESS_TOKEN is not set"
             exit 1
           fi
-          if [ -z "$SUPABASE_PROJECT_REF" ]; then
-            echo "::error::SUPABASE_PROJECT_REF is not set"
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::error::SUPABASE_DB_PASSWORD is not set"
             exit 1
           fi
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Apply database migrations
+        run: supabase db push --linked --include-all --password "$SUPABASE_DB_PASSWORD" --yes
+
+      - name: Verify migration state
+        run: supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
 
       - name: Deploy all edge functions
         run: |

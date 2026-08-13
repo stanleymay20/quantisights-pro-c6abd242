@@ -561,7 +561,7 @@ export function runFullAnalysis(
     const s = stdDev(vals);
 
     // Use ensemble detection for multi-method consensus
-    let ensembleModule: typeof import("./statistical-anomaly-detection") | null = null;
+    const ensembleModule: typeof import("./statistical-anomaly-detection") | null = null;
     try {
       // Dynamic import not available synchronously, use basic z-score + IQR combination
       const anomalies = detectAnomalies(vals, 2, dates);

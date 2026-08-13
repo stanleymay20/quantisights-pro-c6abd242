@@ -1,22 +1,23 @@
 # Dependency advisory risk
 
-`npm audit` reported three advisories on June 25, 2026.
+The August 13, 2026 remediation upgraded the affected toolchain and removed an
+unpatchable dormant export dependency. `npm audit --audit-level=moderate` now
+reports zero vulnerabilities.
 
 ## Vite and esbuild
 
-The direct Vite advisory and transitive esbuild advisory primarily affect the
-development server. The automated fix requires Vite 8, which is a semver-major
-upgrade and is outside the supported peer range of the current
-`lovable-tagger` dependency (`>=5 <8`).
+Resolved by upgrading to Vite 8, Vitest 4, the compatible Vite React plugin,
+and `lovable-tagger` 1.3.3. The full unit suite and production build pass on the
+upgraded toolchain. The development server must still never be exposed to an
+untrusted network.
 
-No safe in-range upgrade currently resolves these advisories. Mitigations:
+## PowerPoint export parser
 
-- Never expose the Vite development server to an untrusted network.
-- Bind local development to loopback unless remote access is explicitly
-  required and protected.
-- Build production assets in CI and serve only the static output.
-- Re-evaluate Vite 8 after `lovable-tagger` declares compatibility and run the
-  full browser and build suite before upgrading.
+The dormant `pptxgenjs` export path depended on an image parser with no patched
+release. Because the exporter was not wired into the product, the dependency
+and unused implementation were removed. Product copy now describes PPTX export
+as planned rather than deployed. Reintroduction requires a patched dependency,
+download-integrity tests, and a security review.
 
 ## xlsx
 

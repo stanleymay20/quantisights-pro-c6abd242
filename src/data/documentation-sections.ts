@@ -1791,9 +1791,9 @@ Arabic (\`ar\`) is fully supported with right-to-left text direction. The layout
     title: "PowerPoint Export",
     icon: Presentation,
     content: `
-## Executive PowerPoint Export
+## PowerPoint Export Status
 
-Quantivis generates **board-ready PowerPoint presentations** (.pptx) with professional formatting, branded slide masters, and automated content population.
+PowerPoint export is **not currently available**. The dormant client-side implementation was removed because its image parser has no patched upstream release for denial-of-service vulnerabilities. The design details below are retained as future requirements, not as evidence of a deployed capability.
 
 ### Slide Structure
 Every exported deck includes:
@@ -1815,15 +1815,14 @@ When organization branding is configured:
 
 ### Technical Details
 - Format: Office Open XML (.pptx) — compatible with PowerPoint, Keynote, Google Slides
-- Library: \`pptxgenjs\` (zero server-side dependencies)
-- Generation: Client-side (no data leaves the browser)
+- Implementation: Pending a security-reviewed replacement
+- Generation: Not deployed
 - File naming: \`{report-title}-{date}.pptx\`
 
 ### Usage
 \`\`\`tsx
-import { exportToPowerPoint } from "@/lib/pptx-export";
-
-await exportToPowerPoint({
+// Illustrative future API only — no production implementation is deployed.
+await futurePowerPointExporter({
   companyName: "Acme Corp",
   reportTitle: "Q1 Board Intelligence Report",
   date: "2026-03-08",

@@ -37,7 +37,7 @@ import {
 } from "../_shared/sap-odata.ts";
 
 const VENDOR = "sap";
-const SOURCE: "sap" = "sap";
+const SOURCE = "sap" as const;
 
 const DEFAULT_GOV: SapGovernance = {
   allowed_services: ["API_BUSINESS_PARTNER", "API_SALES_ORDER_SRV", "API_MATERIAL_DOCUMENT_SRV", "API_PRODUCT_SRV"],
@@ -103,7 +103,7 @@ serve(async (req) => {
         const { url_path, top } = assertOdataQuerySafe(ep.service, ep, gov);
 
         // Incremental: append cursor filter
-        let effective: SapEntityPull = { ...ep, top };
+        const effective: SapEntityPull = { ...ep, top };
         if (mode === "incremental_sync" && ep.cursor_field) {
           const { data: ck } = await svc.from("connector_sync_checkpoints")
             .select("cursor_value, high_watermark")
@@ -124,10 +124,10 @@ serve(async (req) => {
         // Paginate
         let skipToken: string | undefined;
         let pages = 0;
-        let entitiesAccum: any[] = [];
-        let eventsAccum: any[] = [];
-        let metricsAccum: any[] = [];
-        let relsAccum: any[] = [];
+        const entitiesAccum: any[] = [];
+        const eventsAccum: any[] = [];
+        const metricsAccum: any[] = [];
+        const relsAccum: any[] = [];
         let maxCursor: string | undefined;
 
         do {

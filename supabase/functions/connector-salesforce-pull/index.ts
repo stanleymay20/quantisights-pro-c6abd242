@@ -37,7 +37,7 @@ import { assertSoqlSafe, type SoqlGovernance } from "../_shared/soql-guard.ts";
 
 const API_VERSION = "v60.0";
 const VENDOR = "salesforce";
-const SOURCE: "salesforce" = "salesforce";
+const SOURCE = "salesforce" as const;
 
 type Mode = "historical_backfill" | "incremental_sync";
 

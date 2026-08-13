@@ -6,6 +6,7 @@ import { useAuthThrottle } from "@/hooks/useAuthThrottle";
 import { useAuthEvents } from "@/hooks/useAuthEvents";
 import { supabase } from "@/integrations/supabase/client";
 import { trackLogin, identifyUser } from "@/lib/analytics";
+import { safeHttpsUrl, safeInternalNavigation } from "@/lib/safe-navigation";
 import MFAChallenge from "@/components/auth/MFAChallenge";
 import AuthLayout from "@/components/auth/AuthLayout";
 import GoogleButton from "@/components/auth/GoogleButton";
@@ -27,8 +28,9 @@ const Login = () => {
   const rawRedirect = searchParams.get("redirect") || "/dashboard";
   // Never redirect back to public/auth pages after login
   const BLOCKED = ["/", "/login", "/register", "/verify-email", "/forgot-password", "/reset-password"];
-  const isBlocked = BLOCKED.includes(rawRedirect) || !rawRedirect.startsWith("/") || rawRedirect.startsWith("//");
-  const redirectTo = isBlocked ? "/dashboard" : rawRedirect;
+  const candidateRedirect = safeInternalNavigation(rawRedirect, "/dashboard");
+  const redirectPathname = new URL(candidateRedirect, window.location.origin).pathname;
+  const redirectTo = BLOCKED.includes(redirectPathname) ? "/dashboard" : candidateRedirect;
   const { toast } = useToast();
   const throttle = useAuthThrottle(5, 60_000);
 
@@ -47,7 +49,7 @@ const Login = () => {
       const { data } = await supabase.rpc("resolve_sso_for_email", { _email: emailValue });
       if (data && Array.isArray(data) && data.length > 0) {
         const ssoConfig = data[0];
-        setSsoRedirect(ssoConfig.idp_sso_url);
+        setSsoRedirect(safeHttpsUrl(ssoConfig.idp_sso_url));
         setSsoEnforced(ssoConfig.enforce_sso);
       } else {
         setSsoRedirect(null);
@@ -64,9 +66,8 @@ const Login = () => {
   };
 
   const handleSSOLogin = () => {
-    if (ssoRedirect) {
-      window.location.href = ssoRedirect;
-    }
+    const destination = safeHttpsUrl(ssoRedirect);
+    if (destination) window.location.assign(destination);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

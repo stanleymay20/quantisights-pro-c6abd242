@@ -15,6 +15,7 @@ import {
   Shield, Key, FileText, Lock, Info, Copy, CheckCircle2, AlertTriangle,
 } from "lucide-react";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
+import { safeHttpsUrl } from "@/lib/safe-navigation";
 
 // Schema-gap: sso_configs table exists in DB but is not in the auto-generated types.
 // Define a local interface until schema generation catches up.
@@ -94,13 +95,22 @@ const SSOConfig = () => {
 
   const handleSave = async () => {
     if (!currentOrgId) return;
+    const validatedSsoUrl = idpSsoUrl ? safeHttpsUrl(idpSsoUrl) : null;
+    if (idpSsoUrl && !validatedSsoUrl) {
+      toast({
+        title: "Invalid SSO URL",
+        description: "Enter an HTTPS URL without credentials, backslashes, spaces, or control characters.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
         organization_id: currentOrgId,
         provider_type: "saml",
         idp_entity_id: idpEntityId || null,
-        idp_sso_url: idpSsoUrl || null,
+        idp_sso_url: validatedSsoUrl,
         idp_certificate: idpCertificate || null,
         idp_metadata_url: idpMetadataUrl || null,
         attribute_mapping: attributeMapping,

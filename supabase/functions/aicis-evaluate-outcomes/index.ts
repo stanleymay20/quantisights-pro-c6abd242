@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
   }
 
   let total_evaluated = 0;
-  let total_skipped = 0;
+  const total_skipped = 0;
   let total_errors = 0;
   const per_org: Array<{ org_id: string; evaluated: number; skipped: number; errors: number }> = [];
 

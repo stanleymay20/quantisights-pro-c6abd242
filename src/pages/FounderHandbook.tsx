@@ -213,7 +213,7 @@ Every threshold, weight, and multiplier is configurable via environment variable
 - Executive summary + risk attribution
 - Trend intelligence + simulation results
 - Governance actions tracking
-- Export to PowerPoint (.pptx)
+- PowerPoint export (.pptx) is planned but not currently available
 
 ## AI Copilot (/ask)
 **"Ask Quantivis anything about your data"**

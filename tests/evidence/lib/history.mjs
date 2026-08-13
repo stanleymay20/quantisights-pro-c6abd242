@@ -4,7 +4,7 @@
 // - atomic write (temp file + rename)
 // - corrupt file quarantined, never silently discarded
 // - dedupe by (release, commit, environment, run_id)
-
+        // eslint-disable-next-line no-empty
 import {
   existsSync,
   readFileSync,

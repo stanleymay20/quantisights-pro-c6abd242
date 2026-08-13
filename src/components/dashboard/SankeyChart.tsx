@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Sankey, Tooltip, ResponsiveContainer, Layer, Rectangle } from "recharts";
 import { GitBranch } from "lucide-react";
 import { MetricRow } from "@/hooks/useMetrics";
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface SankeyChartProps {
   metrics: MetricRow[];
 }

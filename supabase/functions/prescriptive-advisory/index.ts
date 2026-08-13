@@ -157,7 +157,7 @@ serve(async (req) => {
 
     // ── RAG: Retrieve similar past decisions and outcomes ──
     let ragContextBlock = "";
-    let ragMetadata: { similar_count: number; avg_similarity: number; historical_success_rate: number | null; confidence_adjustment: number } = {
+    const ragMetadata: { similar_count: number; avg_similarity: number; historical_success_rate: number | null; confidence_adjustment: number } = {
       similar_count: 0, avg_similarity: 0, historical_success_rate: null, confidence_adjustment: 0,
     };
     try {

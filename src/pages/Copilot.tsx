@@ -27,7 +27,7 @@ import { getVerifiedAuth } from "@/lib/auth-helpers";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { generateAnswer } from "@/lib/copilot-answer-engine";
 import type { DecisionSummary } from "@/lib/copilot-answer-engine";
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface SuggestedPrompt {
   label: string;
   icon: React.ElementType;

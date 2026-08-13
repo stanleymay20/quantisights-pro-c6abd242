@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const WARNING_BEFORE_MS = 2 * 60 * 1000; // show warning 2 minutes before logout
 const ACTIVITY_EVENTS = ["mousemove", "keydown", "click", "touchstart", "scroll"] as const;

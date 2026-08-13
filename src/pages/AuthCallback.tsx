@@ -1,17 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { safeInternalNavigation } from "@/lib/safe-navigation";
 import logo from "@/assets/quantivis-logo.png";
-
-const safeNext = (value: string | null) => {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/onboarding";
-  return value;
-};
 
 const consumeStoredNext = () => {
   const value = sessionStorage.getItem("quantivis_oauth_next");
   sessionStorage.removeItem("quantivis_oauth_next");
-  return safeNext(value);
+  return safeInternalNavigation(value, "/onboarding");
 };
 
 const readOAuthParam = (url: URL, key: string) => {
@@ -33,7 +29,9 @@ const AuthCallback = () => {
     let cancelled = false;
     let settled = false;
 
-    const next = searchParams.get("next") ? safeNext(searchParams.get("next")) : consumeStoredNext();
+    const next = searchParams.get("next")
+      ? safeInternalNavigation(searchParams.get("next"), "/onboarding")
+      : consumeStoredNext();
 
     const finish = (ok: boolean) => {
       if (settled || cancelled) return;
