@@ -81,6 +81,21 @@ describe("release provenance and CSP release gates", () => {
     expect(existsSync(resolve(root, "docs/PILOT_OPERATIONS.md"))).toBe(true);
   });
 
+  it("keeps staging isolated from production without exposing backend secrets", () => {
+    const staging = read(".env.staging.example");
+    const mcp = read(".mcp.json");
+    const production = read("supabase/config.toml");
+    const ignore = read(".gitignore");
+
+    expect(staging).toContain("cmnihsbdbpubznlkmjbc");
+    expect(staging).not.toMatch(/SUPABASE_(?:SECRET|SERVICE_ROLE)/);
+    expect(mcp).toContain("project_ref=cmnihsbdbpubznlkmjbc");
+    expect(mcp).toContain("read_only=true");
+    expect(production).toContain('project_id = "itpwpnwzzitkelffttyx"');
+    expect(ignore).toContain(".env.*");
+    expect(existsSync(resolve(root, "docs/STAGING_SUPABASE.md"))).toBe(true);
+  });
+
   it("injects semantic version, commit, timestamp, deployment ID and migration version", () => {
     const vite = read("vite.config.ts");
     for (const marker of ["packageVersion", "gitCommit", "buildTimestamp", "deploymentId", "migrationVersion"]) {

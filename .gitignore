@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env*.example
+supabase/functions/.env*
+!supabase/functions/.env.example
 .worktrees/
 
 # Editor directories and files
