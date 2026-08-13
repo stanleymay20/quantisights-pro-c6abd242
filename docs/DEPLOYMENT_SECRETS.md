@@ -1,32 +1,57 @@
 # Supabase deployment credentials
 
-The `Deploy Supabase` GitHub Action requires two repository secrets. It applies
-database migrations before deploying Edge Functions so schema and code cannot
-silently diverge.
+Quantivis uses separate GitHub Environments for staging and production. Never
+store a database password as a repository-wide secret: environment scoping
+prevents a staging workflow from receiving production credentials.
 
-Add the values in GitHub:
+## GitHub Environment setup
 
-1. Open the repository.
-2. Go to **Settings -> Secrets and variables -> Actions**.
-3. Select **New repository secret**.
-4. Add each required value:
+Create two environments under **Settings -> Environments**:
+
+| Environment | Project | Deployment rule |
+| --- | --- | --- |
+| `staging` | `cmnihsbdbpubznlkmjbc` | May deploy automatically from `main` |
+| `production` | `itpwpnwzzitkelffttyx` | Require a reviewer before deployment |
+
+Add these secrets separately inside each environment:
 
 | Secret | Value source |
 | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Supabase Dashboard -> account menu -> Access Tokens. Create a deployment token and copy it once. |
-| `SUPABASE_DB_PASSWORD` | Supabase Dashboard -> Project Settings -> Database. Use the production database password, rotating it first if its custody is uncertain. |
+| `SUPABASE_ACCESS_TOKEN` | Supabase Dashboard -> account menu -> Access Tokens. Use a dedicated deployment token. |
+| `SUPABASE_DB_PASSWORD` | Supabase Dashboard -> the matching project -> Database settings. |
 
 Do not commit, print, or paste either credential into source files, issues, or
-workflow logs. The non-sensitive project reference is pinned in the workflow.
+workflow logs. The non-sensitive project references are pinned independently in
+their workflows.
 
-## Redeploy
+For each target, the non-sensitive project reference is pinned in its workflow;
+credentials alone cannot redirect a job to a different project.
 
-After both secrets exist:
+## Staging deployment
 
-1. Open **Actions -> Deploy Supabase**.
-2. Start a manual workflow dispatch for the current `main` commit.
-3. Confirm `Apply database migrations` and `Verify migration state` succeed.
-4. Confirm the function deploy step reports no failed functions.
+`Deploy Supabase Staging` runs for Supabase changes pushed to `main` and can
+also be started manually. It previews migrations, applies them, deploys every
+Edge Function, and lists the hosted functions as verification.
+
+The staging database must have a Vault value named `project_url` containing
+`https://cmnihsbdbpubznlkmjbc.supabase.co`. Scheduled functions read this value
+instead of embedding a production URL.
+
+## Production promotion
+
+`Deploy Supabase Production` is manual and protected by the `production`
+environment. After staging acceptance:
+
+1. Open **Actions -> Deploy Supabase Production**.
+2. Select the exact tested `main` commit.
+3. Enter `itpwpnwzzitkelffttyx` in the confirmation field.
+4. Approve the protected-environment deployment.
+5. Confirm migration preview, migration application, function deployment, and
+   final function listing all succeed.
+
+Before the first production promotion, create the production `project_url`
+Vault value with the matching production URL. The trust-metrics migration fails
+closed when that value is missing or malformed.
 
 ## Verify
 
@@ -44,5 +69,5 @@ The response must not be `NOT_FOUND`. A successful response contains
 `next_expected_run_at`, `severity`, and `evidence_source`.
 
 Deployment success proves that the endpoint and schema exist. It does not prove
-that scheduled jobs have run; verify the returned timestamps and production
+that scheduled jobs have run; verify the returned timestamps and
 `trust_metrics_snapshots` rows separately.

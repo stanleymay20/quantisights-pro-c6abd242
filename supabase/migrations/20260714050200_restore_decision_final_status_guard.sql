@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION public.enforce_decision_approval_gate()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $fn$
 DECLARE
   unsatisfied_stages INT;

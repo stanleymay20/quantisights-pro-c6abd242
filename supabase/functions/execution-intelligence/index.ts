@@ -16,7 +16,7 @@
  *   - Run logging
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
+import { requireCronOrOrgMember } from "../_shared/cron-or-user.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { isValidUUID, isValidString } from "../_shared/input-validation.ts";
 import { applyRateLimit } from "../_shared/rate-guard.ts";
@@ -71,10 +71,6 @@ Deno.serve(async (req) => {
   const startTs = Date.now();
 
   // ─── Authentication ───
-  const auth = await authenticateRequest(req);
-  if (auth.response) return auth.response;
-  const userId = auth.userId;
-
   // ─── Parse & Validate ───
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
@@ -87,8 +83,12 @@ Deno.serve(async (req) => {
   const actionName = action as string;
 
   // ─── Org Membership ───
-  const isMember = await verifyOrgMembership(userId, orgId);
-  if (!isMember) return json({ error: "Not a member" }, 403);
+  const auth = await requireCronOrOrgMember(req, orgId);
+  if ("response" in auth) return auth.response;
+  if (auth.via === "cron" && !["compute_scores", "predict_risks"].includes(actionName)) {
+    return json({ error: "Cron action not permitted" }, 403);
+  }
+  const userId = auth.userId ?? "";
 
   // ─── Resolve Action Handler ───
   const isMutation = actionName in MUTATION_ACTIONS;

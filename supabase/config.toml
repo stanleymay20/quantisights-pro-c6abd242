@@ -59,6 +59,8 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = false
   [functions.executive-orchestration]
     verify_jwt = false
+  [functions.execution-intelligence]
+    verify_jwt = false
   [functions.explain-ai]
     verify_jwt = false
   [functions.fetch-market-signals]
@@ -76,6 +78,12 @@ project_id = "itpwpnwzzitkelffttyx"
   [functions.monte-carlo-sim]
     verify_jwt = false
   [functions.morning-brief]
+    verify_jwt = false
+  [functions.connector-scheduler]
+    verify_jwt = false
+  [functions.compute-trust-metrics]
+    verify_jwt = false
+  [functions.ingest-external-signals]
     verify_jwt = false
   [functions.nlq-query]
     verify_jwt = false

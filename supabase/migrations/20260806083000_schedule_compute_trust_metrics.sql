@@ -9,9 +9,24 @@
 -- failed evidence queries remain unknown instead of becoming favorable
 -- defaults.
 --
--- Follows the same net.http_post + x-cron-secret pattern as the other
--- scheduled jobs (see migration 20260426061858).
+-- Follows Supabase's documented Vault + net.http_post pattern. Each hosted
+-- project must define its own `project_url` Vault value, preventing staging
+-- schedules from ever calling the production project by accident.
 -- =============================================================================
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM vault.decrypted_secrets
+    WHERE name = 'project_url'
+      AND decrypted_secret ~ '^https://[a-z0-9-]+\.supabase\.co/?$'
+  ) THEN
+    RAISE EXCEPTION
+      'Vault secret project_url is missing or invalid; refusing to create a cross-environment cron schedule';
+  END IF;
+END
+$$;
 
 DO $$
 BEGIN
@@ -25,7 +40,12 @@ SELECT cron.schedule(
   '0 5 * * *',
   $cron$
   SELECT net.http_post(
-    url := 'https://itpwpnwzzitkelffttyx.supabase.co/functions/v1/compute-trust-metrics',
+    url := rtrim(
+      (SELECT decrypted_secret
+       FROM vault.decrypted_secrets
+       WHERE name = 'project_url'),
+      '/'
+    ) || '/functions/v1/compute-trust-metrics',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-secret', COALESCE(public.get_ingest_cron_secret(), '')

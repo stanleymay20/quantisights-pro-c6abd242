@@ -84,10 +84,36 @@ a valid pilot rehearsal environment:
 - Staging has no deployed Edge Functions, while the repository contains 122.
 - Staging's last recorded migration is
   `20260719140000_harden_decision_workflow_integrity`. That migration is absent
-  from the repository, while four repository migrations are newer than it.
+  from the original repository history and labels itself a review-only proposal
+  despite being recorded as applied. A no-op quarantine marker now preserves
+  the hosted version without promoting that proposal. Eighty same-name
+  migrations were also normalized to the canonical hosted timestamps, and the
+  superseded `20260713010000` proposal was removed from the deployable migration
+  directory.
 - Auth still uses `http://localhost:3000` as the Site URL, has no redirect URL
   allowlist, and has no actual test users.
 - Scheduled backups are unavailable on the current free staging project.
+
+Repository remediation completed after this snapshot:
+
+- Staging and production now have separate GitHub Environment workflows.
+  Staging deploys first; production is manual, confirmation-gated, and intended
+  for reviewer protection.
+- The staging Vault now contains the verified `project_url` value
+  `https://cmnihsbdbpubznlkmjbc.supabase.co`.
+- The trust-metrics cron migration reads `project_url` from Vault and fails
+  closed instead of embedding the production project URL.
+- A forward-only cron repair migration removes every known historical schedule
+  containing the production URL or production anon token, recreates the jobs
+  with the environment-local Vault URL and cron secret, and limits scheduled
+  execution-intelligence calls to `compute_scores` and `predict_risks`.
+
+The remaining deployment blockers are external configuration: the `staging`
+GitHub Environment still needs its deployment token and database password,
+staging needs an actual hosted frontend URL before Auth can use an exact pilot
+redirect, synthetic users must be created for authenticated acceptance tests,
+and backup evidence requires a paid backup-capable plan or another documented
+recovery mechanism.
 
 Do not treat this snapshot as current after any deployment. Repeat the queries,
 rerun the Security Advisor, and replace this dated evidence after staging is

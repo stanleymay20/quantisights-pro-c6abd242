@@ -1,0 +1,11 @@
+-- Migration-history quarantine marker.
+--
+-- Staging recorded this version through an out-of-band dashboard operation,
+-- even though its own SQL labels itself a review-only proposal that must not
+-- be promoted automatically. Keeping this no-op marker makes the repository
+-- history agree with the hosted migration ledger without replaying an
+-- unapproved proposal in production or in a fresh environment.
+--
+-- Any approved decision-workflow hardening must be introduced as a new,
+-- reviewed migration with its own version and verification evidence.
+

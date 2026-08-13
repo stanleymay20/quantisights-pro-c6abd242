@@ -25,7 +25,11 @@ RETURNS TABLE (
   ip_allowlist            text[],
   sso_enforced            boolean
 )
-LANGUAGE sql SECURITY DEFINER STABLE AS $$
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = pg_catalog, public
+AS $$
   SELECT
     o.require_mfa,
     o.session_timeout_minutes,
@@ -39,4 +43,5 @@ LANGUAGE sql SECURITY DEFINER STABLE AS $$
   LIMIT 1;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.get_my_org_security_settings TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.get_my_org_security_settings() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_my_org_security_settings() TO authenticated;

@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
  * execution-plan creation, and evaluability-gated outcome-tracking
  * creation into one SECURITY DEFINER Postgres function
  * (public.approve_decision / public.reject_decision — see
- * supabase/migrations/20260713010000_fix_decision_approval_atomicity.sql),
+ * supabase/proposals/20260713010000_fix_decision_approval_atomicity.sql),
  * so a single Postgres transaction either commits every write or none of
  * them.
  *
@@ -38,7 +38,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
-const MIGRATION_PATH = "supabase/migrations/20260713010000_fix_decision_approval_atomicity.sql";
+const MIGRATION_PATH = "supabase/proposals/20260713010000_fix_decision_approval_atomicity.sql";
 // enforce_decision_approval_gate() has been re-issued (CREATE OR REPLACE)
 // twice since MIGRATION_PATH first defined it: once by
 // 20260713101123_c24694df-...sql (added the executed/executable checks,

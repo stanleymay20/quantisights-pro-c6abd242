@@ -1,12 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
+import { requireCronOrOrgMember } from "../_shared/cron-or-user.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return corsPreflightResponse(req);// Auth guard: verify caller identity
+  if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
-  const auth = await authenticateRequest(req);
-  if (auth.response) return auth.response;
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -17,22 +15,15 @@ serve(async (req) => {
     const orgId = body.organization_id;
     const triggerType = body.trigger_type || "manual";
 
-    // Verify org membership if specific org requested
-    if (orgId) {
-      const isMember = await verifyOrgMembership(auth.userId, orgId);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: "Forbidden: not a member of this organization" }), {
-          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
-
     // SECURITY: organization_id is always required — no all-orgs path
     if (!orgId) {
       return new Response(JSON.stringify({ error: "organization_id is required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const auth = await requireCronOrOrgMember(req, orgId);
+    if ("response" in auth) return auth.response;
+
     const orgIds: string[] = [orgId];
 
     const results: any[] = [];

@@ -23,7 +23,11 @@ CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_updated
 
 -- Auto-delete records older than 1 day (cleanup)
 CREATE OR REPLACE FUNCTION public.cleanup_auth_rate_limits()
-RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
   DELETE FROM public.auth_rate_limits
   WHERE updated_at < now() - interval '1 day';
 $$;
@@ -33,7 +37,11 @@ CREATE OR REPLACE FUNCTION public.increment_rate_limit(
   _key            text,
   _window_seconds integer DEFAULT 60
 )
-RETURNS integer LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 DECLARE
   _now bigint := extract(epoch from now())::bigint;
   _new_attempts integer;
@@ -60,6 +68,7 @@ END;
 $$;
 
 -- Grant execute to service role only
-REVOKE EXECUTE ON FUNCTION public.increment_rate_limit FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.increment_rate_limit(text, integer) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.cleanup_auth_rate_limits() FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.increment_rate_limit TO service_role;
 GRANT  EXECUTE ON FUNCTION public.cleanup_auth_rate_limits TO service_role;
