@@ -6,9 +6,30 @@ import { readFileSync } from "node:fs";
 import { componentTagger } from "lovable-tagger";
 
 const packageVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version as string;
-const gitCommit = process.env.GITHUB_SHA
-  ?? process.env.CF_PAGES_COMMIT_SHA
-  ?? execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+const resolveGitCommit = () => {
+  const deploymentCommit = [
+    process.env.GITHUB_SHA,
+    process.env.CF_PAGES_COMMIT_SHA,
+    process.env.VERCEL_GIT_COMMIT_SHA,
+    process.env.COMMIT_REF,
+  ].find((value) => value?.trim());
+
+  if (deploymentCommit) return deploymentCommit.trim();
+
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: import.meta.dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || "unknown";
+  } catch {
+    // Preview sandboxes and source archives may not contain Git metadata.
+    return "unknown";
+  }
+};
+
+const gitCommit = resolveGitCommit();
 const buildTimestamp = process.env.QUANTIVIS_BUILD_TIMESTAMP ?? new Date().toISOString();
 const deploymentId = process.env.VERCEL_DEPLOYMENT_ID
   ?? process.env.CF_PAGES_COMMIT_SHA
