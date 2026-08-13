@@ -68,3 +68,27 @@ key bypasses RLS and belongs only in a secured backend environment.
 Never copy staging users, secrets, or synthetic records into production. A green
 staging run is promotion evidence, but it is not proof that production deployed
 successfully.
+
+## Audit snapshot: 2026-08-13
+
+The authenticated staging audit found that the project is healthy but is not yet
+a valid pilot rehearsal environment:
+
+- All 206 `public` tables have RLS enabled and at least one policy.
+- No RLS policy references user-editable `user_metadata` authorization claims.
+- The Security Advisor reports 0 errors and 27 warnings. Twelve warnings came
+  from inherited anonymous execution of `SECURITY DEFINER` functions; migration
+  `20260813153935_harden_public_function_execute.sql` remediates that repository
+  defect. The `metric_latest` warning is stale: its live write policy is scoped
+  with `is_org_member(auth.uid(), organization_id)`, not `true`.
+- Staging has no deployed Edge Functions, while the repository contains 122.
+- Staging's last recorded migration is
+  `20260719140000_harden_decision_workflow_integrity`. That migration is absent
+  from the repository, while four repository migrations are newer than it.
+- Auth still uses `http://localhost:3000` as the Site URL, has no redirect URL
+  allowlist, and has no actual test users.
+- Scheduled backups are unavailable on the current free staging project.
+
+Do not treat this snapshot as current after any deployment. Repeat the queries,
+rerun the Security Advisor, and replace this dated evidence after staging is
+reconciled.
