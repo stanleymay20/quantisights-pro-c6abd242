@@ -32,7 +32,7 @@ const chapters = [
       },
       {
         heading: "Backend & Data Layer",
-        content: `The backend runs entirely on **Lovable Cloud**, providing:\n\n• **PostgreSQL** database with Row Level Security (RLS) on 100% of tables\n• **Edge Functions** (Deno runtime) for serverless compute — AI inference, simulations, report generation\n• **Realtime subscriptions** for live data updates across collaborative sessions\n• **Object Storage** for secure dataset and report file management\n• **Authentication** with email/password, SSO (SAML/OIDC), MFA, and Passkeys\n\nThe architecture is designed for **zero-trust multi-tenancy** — every query, every function call, every data access path is scoped to the authenticated user's organization and workspace.`
+        content: `The backend runs entirely on **Lovable Cloud**, providing:\n\n• **PostgreSQL** database with Row Level Security (RLS) policies on tenant-scoped data surfaces\n• **Edge Functions** (Deno runtime) for serverless compute — AI inference, simulations, report generation\n• **Realtime subscriptions** for live data updates across collaborative sessions\n• **Object Storage** for secure dataset and report file management\n• **Authentication** with email/password, SSO (SAML/OIDC), MFA, and Passkeys\n\nThe architecture is designed for **zero-trust multi-tenancy** — repository controls scope tenant data access to the authenticated user's organization and workspace. Production coverage must be revalidated against the deployed schema, policies, and function logs for each release.`
       },
       {
         heading: "The Context Hierarchy",
@@ -366,7 +366,7 @@ const chapters = [
     sections: [
       {
         heading: "Current Security Posture",
-        content: `As of the latest audit, the platform meets the following security standards:\n\n✅ RLS enabled on 100% of tables\n✅ Multi-tenant isolation with SECURITY DEFINER functions\n✅ Immutable audit trail (write-once, no update/delete)\n✅ MFA and Passkey support with replay protection\n✅ SSO (SAML/OIDC) with domain-based auto-detection\n✅ SCIM 2.0 for automated user lifecycle management\n✅ Rate limiting on public endpoints\n✅ PII redaction in AI pipelines\n✅ Encrypted storage for datasets and reports\n✅ Webhook signature validation\n✅ Active Data Contract enforcement on all analytical functions\n\nEnterprise-grade security controls are fully implemented. All technical foundations for formal compliance certifications are in place.`
+        content: `As of the latest repository audit, the platform includes the following security controls:\n\n✅ Tenant-scoped RLS policy coverage for customer data surfaces\n✅ Multi-tenant isolation helpers with hardened SECURITY DEFINER patterns\n✅ Audit trail protections that avoid application-level update/delete paths\n✅ MFA and Passkey support with replay protection\n✅ SSO (SAML/OIDC) with domain-based auto-detection\n✅ SCIM 2.0 code paths for automated user lifecycle management\n✅ Rate limiting on public endpoints\n✅ PII redaction in AI pipelines\n✅ Encrypted storage integration for datasets and reports\n✅ Webhook signature validation\n✅ Active Data Contract enforcement on analytical functions\n\nThese are code-level and configuration-level controls, not external certification claims. Production readiness must be verified with current deployment evidence, Supabase policy/function evidence, and signed compliance artifacts before any GA or certification statement is made.`
       },
       {
         heading: "Pilot Customer Requirements",

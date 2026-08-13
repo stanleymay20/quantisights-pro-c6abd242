@@ -31,6 +31,13 @@ describe("safe navigation boundaries", () => {
     expect(safeHttpsUrl("https://user:pass@idp.example.com/saml")).toBeNull();
     expect(safeHttpsUrl("https://idp.example.com/\\evil")).toBeNull();
   });
+
+  it("only enforces SSO when the resolver returns a validated HTTPS destination", () => {
+    const login = read("src/pages/Login.tsx");
+    expect(login).toContain("const destination = safeHttpsUrl(ssoConfig.idp_sso_url);");
+    expect(login).toContain("setSsoEnforced(Boolean(destination && ssoConfig.enforce_sso));");
+    expect(login).not.toContain("setSsoEnforced(ssoConfig.enforce_sso);");
+  });
 });
 
 describe("SSO database hardening", () => {

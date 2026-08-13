@@ -49,8 +49,9 @@ const Login = () => {
       const { data } = await supabase.rpc("resolve_sso_for_email", { _email: emailValue });
       if (data && Array.isArray(data) && data.length > 0) {
         const ssoConfig = data[0];
-        setSsoRedirect(safeHttpsUrl(ssoConfig.idp_sso_url));
-        setSsoEnforced(ssoConfig.enforce_sso);
+        const destination = safeHttpsUrl(ssoConfig.idp_sso_url);
+        setSsoRedirect(destination);
+        setSsoEnforced(Boolean(destination && ssoConfig.enforce_sso));
       } else {
         setSsoRedirect(null);
         setSsoEnforced(false);

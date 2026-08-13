@@ -97,8 +97,48 @@ describe("release provenance and CSP release gates", () => {
       "vercel.json",
       "scripts/apply-cloudflare-security.mjs",
       "scripts/apply-cloudflare-security-headers.mjs",
+      "docs/CLOUDFLARE_ENTERPRISE_SECURITY.md",
+      "docs/HOSTING_SECURITY_HEADERS.md",
     ]) {
       expect(read(path), path).not.toContain("'unsafe-eval'");
+    }
+  });
+});
+
+describe("public readiness claims fail closed", () => {
+  const publicClaimSources = [
+    "src/pages/Ebook.tsx",
+    "src/pages/Security.tsx",
+    "src/pages/SecurityQuestionnaire.tsx",
+    "src/pages/Pitch.tsx",
+    "src/pages/DPIA.tsx",
+    "src/pages/Privacy.tsx",
+    "src/pages/TOMs.tsx",
+    "src/pages/ProcurementPack.tsx",
+    "src/lib/pitch-deck-pdf.ts",
+    "src/lib/scenario-template.ts",
+    "src/i18n/de-runtime.json",
+  ];
+
+  it("does not publish unverifiable RLS, SOC 2, backup, or GA-pilot claims as fact", () => {
+    const forbidden = [
+      "RLS on 100% of tables",
+      "Row Level Security (RLS) on 100% of tables",
+      "Row-Level Security (RLS) policies on 100% of tables",
+      "No cross-organization data access is architecturally possible",
+      "Every required capability is fully implemented and live",
+      "Enterprise-grade security controls are fully implemented",
+      "Full platform live — ready for enterprise pilot deployment",
+      "SOC 2 compliant infrastructure",
+      "SOC 2 Type II certified infrastructure",
+      "SOC 2 and ISO 27001 certified data centers",
+    ];
+
+    for (const path of publicClaimSources) {
+      const source = read(path);
+      for (const claim of forbidden) {
+        expect(source, `${path} must not contain: ${claim}`).not.toContain(claim);
+      }
     }
   });
 });

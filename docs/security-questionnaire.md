@@ -15,16 +15,16 @@
 
 ### Q: How is authorization managed?
 **A:** Role-Based Access Control (RBAC) with 6 roles: owner, admin, analyst, executive, steward, viewer. Permissions are enforced at three layers:
-1. **Database:** Row Level Security (RLS) on 100% of data tables
+1. **Database:** Row Level Security (RLS) on tenant data surfaces, verified per deployed schema
 2. **Edge Functions:** `is_org_member` and `exec_require_elevated_role` RPCs
 3. **Client:** `PermissionGate` component for UI-level enforcement
 
 **Evidence:** `has_permission` RPC, `organization_members` table, `role_permissions` table
 
 ### Q: Is multi-tenancy enforced at the database level?
-**A:** Yes. Every data table includes an `organization_id` column with RLS policies that restrict access to authenticated users who are members of the organization. Cross-tenant data access is architecturally impossible through the application layer.
+**A:** Tenant isolation is designed around `organization_id` scoping and RLS policies that restrict access to authenticated organization members. Current assurance must be verified from the deployed schema, active policies, and cross-tenant access tests for the specific pilot tenant.
 
-**Evidence:** RLS policies on all public tables verified via security scanner
+**Evidence:** RLS policies and cross-tenant regression tests from the current deployed environment
 
 ---
 

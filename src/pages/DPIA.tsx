@@ -9,7 +9,7 @@ type Risk = { name: string; likelihood: 1 | 2 | 3 | 4 | 5; severity: 1 | 2 | 3 |
 
 const risks: Risk[] = [
   { name: "Re-identification of pseudonymised data", likelihood: 2, severity: 4, mitigation: "PII redaction layer before LLM, organization_id scoping, AES-256 at rest" },
-  { name: "Unauthorised access to customer data", likelihood: 2, severity: 5, mitigation: "RLS on 100% of tables, RBAC, MFA, WebAuthn, audit-log DENY UPDATE/DELETE" },
+  { name: "Unauthorised access to customer data", likelihood: 2, severity: 5, mitigation: "Tenant-scoped RLS policies, RBAC, MFA, WebAuthn, audit-log DENY UPDATE/DELETE" },
   { name: "Model bias / disparate impact", likelihood: 3, severity: 3, mitigation: "/fairness drift snapshots, confidence cap 0.85, human approval required" },
   { name: "Vendor lock-in / sub-processor change", likelihood: 2, severity: 2, mitigation: "30-day advance notice, right to object, export endpoints, /subprocessors registry" },
   { name: "Cross-border transfer breach (Chapter V)", likelihood: 2, severity: 4, mitigation: "SCCs (EU 2021/914 Modules 2/3), TIA, supplementary measures, EU-resident primary storage" },

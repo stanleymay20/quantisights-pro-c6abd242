@@ -88,7 +88,7 @@ const HeroSection = forwardRef<HTMLElement>((_, ref) => {
             >
               <span>✓ No credit card</span>
               <span>✓ 5 min setup</span>
-              <span>✓ SOC 2 compliant</span>
+              <span>✓ SOC 2-aligned controls</span>
               <span>✓ GDPR ready</span>
             </motion.div>
           </motion.div>

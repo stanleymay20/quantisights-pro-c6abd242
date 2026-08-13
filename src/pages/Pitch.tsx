@@ -22,7 +22,7 @@ const CAPABILITIES = [
   { icon: Target, title: "Decision Fitness Assessment", desc: "7-dimension diagnostic scoring Strategic Clarity, Analytical Acumen, Leadership Style & more" },
   { icon: Shield, title: "Evidence Contract", desc: "Every recommendation graded A–F with traceability, assumptions, and risk-if-wrong" },
   { icon: Zap, title: "Free Strategy Diagnosis", desc: "Instant McKinsey-level business analysis — no signup required, instant value delivery" },
-  { icon: Lock, title: "Enterprise Security", desc: "RLS on 100% of tables, immutable audit trails, PII redaction, GDPR-ready" },
+  { icon: Lock, title: "Enterprise Security", desc: "Tenant-scoped RLS policies, audit trail controls, PII redaction, GDPR-oriented workflows" },
   { icon: Users, title: "Calibration Engine", desc: "Learns from outcomes to correct systematic overconfidence with DROI quantification" },
 ];
 
@@ -32,7 +32,7 @@ const DIFFERENTIATORS = [
   "DROI & TCI Calculators quantify both the return on better decisions AND the cost of inaction",
   "Free Strategy Session delivers instant McKinsey-level diagnosis — no signup required",
   "Decision Velocity Curve identifies optimal speed-accuracy tradeoff with Paralysis Index",
-  "Enterprise-grade security: RLS on 100% of tables, immutable audit trails, PII redaction",
+  "Enterprise-grade security posture: tenant-scoped RLS policies, audit trail controls, PII redaction",
 ];
 
 const TRACTION = [

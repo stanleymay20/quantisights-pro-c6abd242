@@ -381,8 +381,8 @@ const SLIDES: SlideData[] = [
       });
 
       const highlights = [
-        "Full platform live — ready for enterprise pilot deployment",
-        "Enterprise-grade security: RLS on 100% of tables, RBAC, SSO, workspace isolation",
+        "Platform live for controlled enterprise pilot validation",
+        "Enterprise security posture: tenant-scoped RLS policies, RBAC, SSO, workspace isolation",
         "Paid pilot model (€5K–€15K) validates demand before full deployment",
         "15-month seeded demo environment with real decision simulations",
         "Multi-tenant architecture with 50+ backend functions",

@@ -19,7 +19,7 @@ const measures: Measure[] = [
     controls: [
       "AES-256 encryption at rest on all storage volumes (AWS KMS).",
       "TLS 1.2+ enforced on all client and inter-service connections; HSTS preload.",
-      "Row-Level Security on 100% of public-schema tables, scoped by organization_id.",
+      "Row-Level Security on tenant data surfaces, scoped by organization_id.",
       "PII redaction layer applied before any LLM call unless raw text is explicitly enabled.",
       "Role-based access control (Owner / Admin / Member / Viewer) with least-privilege defaults.",
     ],
@@ -40,7 +40,7 @@ const measures: Measure[] = [
     title: "Availability & Resilience",
     artRef: "Art. 32 (1) (b) & (c)",
     controls: [
-      "Automated daily backups with point-in-time recovery (7-day window, configurable).",
+      "Backup and point-in-time recovery behavior verified from the active vendor environment.",
       "Multi-AZ database replication within the EU processing region.",
       "Three-state circuit breaker on external connector calls; exponential backoff with jitter.",
       "Disaster recovery runbook with documented RTO (4h) and RPO (1h) targets.",

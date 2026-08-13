@@ -77,7 +77,7 @@ export function computeScenarioReadiness(usage: ScenarioCapabilityUsage[]): Scen
     return {
       readiness: "Ready for Pilot",
       blocking: [],
-      rationale: "Every required capability is fully implemented and live.",
+      rationale: "Every required capability is implemented in the Trust Center capability matrix. Production readiness still depends on current deployment and tenant evidence.",
     };
   }
 

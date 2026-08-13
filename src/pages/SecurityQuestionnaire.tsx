@@ -32,7 +32,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
     icon: Lock,
     items: [
       { id: "DP-1", question: "How is data encrypted at rest and in transit?", answer: "All data is encrypted at rest using AES-256 via the managed PostgreSQL service. All data in transit is encrypted using TLS 1.2 minimum (TLS 1.3 where supported). No unencrypted channels are permitted." },
-      { id: "DP-2", question: "Is customer data isolated between tenants?", answer: "Yes. Multi-tenant isolation is enforced at the database layer via Row-Level Security (RLS) policies on 100% of tables. Every query is scoped to organization_id. No cross-organization data access is architecturally possible." },
+      { id: "DP-2", question: "Is customer data isolated between tenants?", answer: "Tenant isolation is designed around database Row-Level Security (RLS), organization/workspace scoping, and security-definer access helpers. Current production assurance must be verified from the deployed schema, active policies, and cross-tenant access tests for the specific pilot tenant." },
       { id: "DP-3", question: "Do you process data in compliance with GDPR?", answer: "Yes. We offer a Data Processing Agreement (DPA), support Subject Access Requests (SAR) via automated data export, and implement GDPR-compliant account deletion that purges data across 25+ tables. Our subprocessor list is publicly disclosed." },
       { id: "DP-4", question: "Where is customer data stored geographically?", answer: REGION_DISCLOSURE_LONG },
       { id: "DP-5", question: "What is your data retention and deletion policy?", answer: `Configurable freshness policies are available per dataset. Account deletion removes application data and the user from the authentication system. Backup persistence and natural-expiry timing depend on the deployed backup configuration. ${BACKUP_BASELINE.disclosure}` },
@@ -53,7 +53,7 @@ const SECTIONS: { title: string; icon: React.ElementType; items: QAItem[] }[] = 
     title: "Infrastructure & Network Security",
     icon: Server,
     items: [
-      { id: "IN-1", question: "Where is your application hosted?", answer: "Quantivis is hosted on a managed cloud platform (AWS-backed infrastructure, Supabase). Database services run on managed PostgreSQL with SOC 2 Type II and ISO 27001 certified data centers, automated encrypted backups, and point-in-time recovery." },
+      { id: "IN-1", question: "Where is your application hosted?", answer: `Quantivis is hosted on a managed cloud platform backed by Supabase and edge/CDN infrastructure. Provider certifications, backup behavior, and recovery guarantees must be evidenced from the current vendor account and contract package for the deployed environment. ${BACKUP_BASELINE.disclosure}` },
       { id: "IN-2", question: "Are secrets and API keys managed securely?", answer: "Yes. All secrets (API keys, service role keys, webhook secrets) are stored in encrypted vault storage and injected as environment variables. Service role keys are not exposed to client-side code. The client bundle only contains the publishable anon key." },
       { id: "IN-3", question: "What DDoS and network-level protections are in place?", answer: "DDoS protection and network-level firewalling are provided by the infrastructure layer. Edge functions include code-level rate limiting for sensitive operations." },
       { id: "IN-4", question: "How are backups managed?", answer: BACKUP_BASELINE.disclosure },

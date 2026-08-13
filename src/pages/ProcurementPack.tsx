@@ -131,7 +131,7 @@ const ProcurementPack = () => {
 
           <h3 className="font-semibold mt-4">2.3 Availability &amp; Resilience</h3>
           <BulletList items={[
-            "Automated daily backups, 7-day point-in-time recovery.",
+            "Backup and recovery behavior documented from the active vendor environment.",
             "Multi-AZ replication within EU processing region.",
             "Three-state circuit breaker on external connector calls.",
             "RTO 4h / RPO 1h targets documented in runbook.",

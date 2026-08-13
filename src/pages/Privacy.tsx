@@ -34,7 +34,7 @@ const Privacy = () => {
         </section>
         <section>
           <h2 className="text-lg font-semibold mb-2">3. Data Security</h2>
-          <p>We employ industry-standard encryption (TLS 1.3 in transit, AES-256 at rest), row-level security policies, and role-based access control. All data is hosted in SOC 2 compliant infrastructure.</p>
+          <p>We employ transport encryption, managed at-rest encryption, row-level security policies, and role-based access control. Provider certifications and deployed-environment controls are available through the current vendor evidence package.</p>
         </section>
         <section>
           <h2 className="text-lg font-semibold mb-2">4. Data Sharing</h2>

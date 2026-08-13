@@ -39,8 +39,8 @@ Our security model is built on four foundational principles:
 Hosting & Encryption:
   • All data encrypted at rest using AES-256
   • All data encrypted in transit using TLS 1.3
-  • Hosted on SOC 2 Type II and ISO 27001 certified infrastructure
-  • Automated encrypted backups with point-in-time recovery
+  • Hosted on managed cloud infrastructure with provider evidence available for review
+  • Backup and recovery behavior must be verified from the active vendor environment
   • DDoS protection and network-level firewalling
   • Infrastructure hosted in EU-compliant data centers
 
@@ -199,7 +199,7 @@ const downloadWhitepaper = () => {
 const HERO_STATS = [
   { value: "AES-256", label: "Encryption at Rest" },
   { value: "TLS 1.3", label: "Encryption in Transit" },
-  { value: "100%", label: "Tables with RLS" },
+  { value: "Scoped", label: "Tenant Data RLS" },
   { value: "MFA", label: "Configurable AAL2 Authentication" },
 ];
 
@@ -207,10 +207,10 @@ const PILLARS = [
   {
     icon: Server,
     title: "Infrastructure Security",
-    description: "Enterprise-grade hosting on SOC 2 Type II certified infrastructure, automated backups, and network isolation.",
+    description: "Managed cloud hosting with network isolation and provider evidence available for review.",
     items: [
       "All data encrypted at rest (AES-256) and in transit (TLS 1.3)",
-      "Automated encrypted backups with point-in-time recovery",
+      "Backup and recovery behavior verified from the active vendor environment",
       "Environment variables and secrets stored in encrypted vaults",
       "Service role keys not exposed to client-side code",
       "DDoS protection and network-level firewalling",
@@ -235,9 +235,9 @@ const PILLARS = [
     title: "Multi-Tenant Data Isolation",
     description: "Complete organizational data separation enforced at the database layer — not the application layer.",
     items: [
-      "Row-Level Security (RLS) policies on every table without exception",
-      "All queries scoped to organization_id at the database level",
-      "No cross-organization data access is architecturally possible",
+      "Row-Level Security (RLS) policies on tenant data surfaces",
+      "Tenant data access scoped by organization/workspace identifiers",
+      "Cross-organization access must be regression-tested against the deployed schema",
       "Organization membership verified on every API request",
       "Edge functions validate JWT + org membership before processing",
       "Strategic tables restricted to leadership roles (Owner/Admin/Executive)",
@@ -310,7 +310,7 @@ const PROOF_ITEMS = [
 
 const SECURITY_FAQ = [
   { q: "Is Quantivis SOC 2 certified?", a: "Our infrastructure provider holds SOC 2 Type II certification. Quantivis has aligned its application-level controls to SOC 2 standards — including RLS enforcement, immutable audit logging, MFA, and encrypted secrets management. A formal SOC 2 Type II audit for Quantivis as an entity is planned." },
-  { q: "Where is my data stored?", a: "All data is stored in managed PostgreSQL databases hosted in SOC 2 and ISO 27001 certified data centers. Encryption at rest uses AES-256. Backups are automated and encrypted." },
+  { q: "Where is my data stored?", a: "Application data is stored in managed PostgreSQL databases. Encryption, backup behavior, recovery windows, and provider certifications must be verified from the current vendor account and contract package for the deployed environment." },
   { q: "Can Quantivis employees access my data?", a: "No. All data access is scoped by organization_id at the database layer via Row-Level Security. Administrative access to infrastructure is limited to a small team with MFA and audit logging." },
   { q: "How do you handle a security breach?", a: "We follow GDPR Article 33 requirements: affected customers are notified within 72 hours where required by applicable law. Our incident response process includes containment, forensic investigation, customer communication, and post-incident review." },
   { q: "What happens when I delete my account?", a: "A secure Edge Function performs atomic deletion or anonymization across 25+ tables (metrics, advisories, audit logs, decisions, copilot sessions, etc.) and purges your record from the authentication system." },
