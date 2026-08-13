@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -74,6 +74,13 @@ describe("public analysis server and UI readiness contract", () => {
 });
 
 describe("release provenance and CSP release gates", () => {
+  it("keeps dependency installation portable outside the Lovable environment", () => {
+    const lockfile = read("package-lock.json");
+    expect(lockfile).not.toContain("lovable-core-prod/sandbox-npm-cache");
+    expect(existsSync(resolve(root, "bun.lock"))).toBe(false);
+    expect(existsSync(resolve(root, "docs/PILOT_OPERATIONS.md"))).toBe(true);
+  });
+
   it("injects semantic version, commit, timestamp, deployment ID and migration version", () => {
     const vite = read("vite.config.ts");
     for (const marker of ["packageVersion", "gitCommit", "buildTimestamp", "deploymentId", "migrationVersion"]) {
