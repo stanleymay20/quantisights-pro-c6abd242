@@ -3,8 +3,55 @@ import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { createLogger } from "../_shared/logger.ts";
 import { cronGuard } from "../_shared/cron-guard.ts";
 import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
+import {
+  normalizeExpectedOutcomeDirection,
+  outcomeSucceededForDirection,
+  signedExpectedChange,
+} from "../_shared/outcome-direction.ts";
 
 const RUN_INTERVAL_MS = 60 * 60 * 1000; // outcome evaluation cadence
+
+function classifyOutcome(
+  observedChange: number,
+  expectedDirection: "increase" | "decrease" | "stable",
+  expectedChange: unknown,
+): { status: string; accuracyScore: number | null } {
+  const succeeded = outcomeSucceededForDirection(observedChange, expectedDirection, 1) === true;
+  const expectedMagnitude = Number(expectedChange);
+  const hasExpectedMagnitude = expectedChange !== null && expectedChange !== undefined && Number.isFinite(expectedMagnitude);
+
+  let status = "no_effect";
+  if (succeeded) {
+    if (hasExpectedMagnitude && expectedDirection !== "stable") {
+      const observedMagnitude = Math.abs(observedChange);
+      const targetMagnitude = Math.abs(expectedMagnitude);
+      if (targetMagnitude === 0 || observedMagnitude >= targetMagnitude * 0.8) status = "success";
+      else if (observedMagnitude >= targetMagnitude * 0.3) status = "partial_success";
+    } else {
+      status = "success";
+    }
+  } else {
+    const materiallyOpposite =
+      (expectedDirection === "increase" && observedChange < -5) ||
+      (expectedDirection === "decrease" && observedChange > 5) ||
+      (expectedDirection === "stable" && Math.abs(observedChange) > 5);
+    if (materiallyOpposite) status = "negative_outcome";
+  }
+
+  let accuracyScore: number | null = null;
+  if (hasExpectedMagnitude) {
+    const expectedSignedChange = expectedDirection === "stable"
+      ? 0
+      : signedExpectedChange(expectedMagnitude, expectedDirection);
+    if (expectedSignedChange !== null) {
+      accuracyScore = Math.max(0, Math.min(100,
+        100 - Math.abs(observedChange - expectedSignedChange) * 2
+      ));
+    }
+  }
+
+  return { status, accuracyScore };
+}
 
 Deno.serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -18,11 +65,10 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     const body = await req.json();
-    const { action, organization_id, dataset_id, decision_id, outcome_id } = body;
+    const { action, organization_id, dataset_id, decision_id } = body;
 
     // ── CRON: evaluate_all processes all orgs — protected by advisory lock ──
     if (action === "evaluate_all" && body.cron === true) {
-      // Advisory lock — prevent overlapping cron runs
       const guard = await cronGuard("evaluate-outcomes");
       if (!guard.acquired) return guard.earlyResponse(corsHeaders);
 
@@ -30,11 +76,6 @@ Deno.serve(async (req) => {
       const { data: orgs } = await supabase.from("organizations").select("id");
       let totalEvaluated = 0;
 
-      // Bound the org loop to the invocation's wall-clock budget, and
-      // rotate the starting point each tick so a sustained overload
-      // doesn't permanently starve whichever orgs sort last -- safe
-      // since a pending outcome stays pending until it's actually
-      // evaluated, so a skipped org is simply retried next tick.
       const cronStartedAt = Date.now();
       const deadline = makeDeadline(cronStartedAt);
       const rotatedOrgs = rotateForFairness(orgs || [], cronStartedAt, RUN_INTERVAL_MS);
@@ -52,8 +93,6 @@ Deno.serve(async (req) => {
         if (!pending?.length) continue;
 
         const now = new Date();
-
-        // Collect all dataset_ids and metric types to batch-fetch metrics
         const metricQueries = new Map<string, { datasetId: string; metricType: string; outcomes: typeof pending }>();
         const immediateUpdates: Array<{ id: string; update: Record<string, unknown> }> = [];
 
@@ -63,7 +102,6 @@ Deno.serve(async (req) => {
           const windowEnd = new Date(decidedAt.getTime() + outcome.evaluation_window_days * 86400000);
           if (now < windowEnd) continue;
 
-          // If no dataset_id, try to find the most recent active dataset for this org
           let effectiveDatasetId = outcome.dataset_id;
           if (!effectiveDatasetId) {
             const { data: latestDataset } = await supabase
@@ -77,10 +115,10 @@ Deno.serve(async (req) => {
 
             if (latestDataset?.id) {
               effectiveDatasetId = latestDataset.id;
-              // Also update the outcome record with the resolved dataset_id
               await supabase.from("decision_outcomes")
                 .update({ dataset_id: effectiveDatasetId })
-                .eq("id", outcome.id);
+                .eq("id", outcome.id)
+                .eq("organization_id", org.id);
             } else {
               immediateUpdates.push({
                 id: outcome.id,
@@ -95,9 +133,7 @@ Deno.serve(async (req) => {
             }
           }
 
-          // Use effectiveDatasetId from here on
           outcome.dataset_id = effectiveDatasetId;
-
           const key = `${outcome.dataset_id}:${outcome.expected_metric}`;
           if (!metricQueries.has(key)) {
             metricQueries.set(key, { datasetId: outcome.dataset_id, metricType: outcome.expected_metric, outcomes: [] });
@@ -105,14 +141,14 @@ Deno.serve(async (req) => {
           metricQueries.get(key)!.outcomes.push(outcome);
         }
 
-        // Apply immediate updates (not_evaluable)
         for (const item of immediateUpdates) {
-          await supabase.from("decision_outcomes").update(item.update).eq("id", item.id);
+          await supabase.from("decision_outcomes")
+            .update(item.update)
+            .eq("id", item.id)
+            .eq("organization_id", org.id);
         }
 
-        // Batch-fetch metrics per (dataset_id, metric_type) — eliminates N+1
         for (const [, { datasetId, metricType, outcomes: groupOutcomes }] of metricQueries) {
-          // Find earliest and latest date range across all outcomes in this group
           let earliestBefore = new Date();
           let latestAfter = new Date(0);
           for (const outcome of groupOutcomes) {
@@ -123,7 +159,6 @@ Deno.serve(async (req) => {
             if (windowEnd > latestAfter) latestAfter = windowEnd;
           }
 
-          // Single query for all metrics in this group's date range
           const { data: allMetrics } = await supabase
             .from("metrics").select("value, date")
             .eq("organization_id", org.id)
@@ -140,13 +175,12 @@ Deno.serve(async (req) => {
                 outcome_status: "not_evaluable",
                 evaluation_date: now.toISOString(),
                 notes: `Insufficient ${metricType} data for evaluation period.`,
-              }).eq("id", outcome.id);
+              }).eq("id", outcome.id).eq("organization_id", org.id);
               totalEvaluated++;
             }
             continue;
           }
 
-          // Process each outcome using the pre-fetched metrics
           for (const outcome of groupOutcomes) {
             const decidedAt = new Date((outcome as any).decision_ledger?.decided_at);
             const windowEnd = new Date(decidedAt.getTime() + outcome.evaluation_window_days * 86400000);
@@ -163,7 +197,7 @@ Deno.serve(async (req) => {
                 outcome_status: "not_evaluable",
                 evaluation_date: now.toISOString(),
                 notes: `Insufficient ${metricType} data for evaluation period.`,
-              }).eq("id", outcome.id);
+              }).eq("id", outcome.id).eq("organization_id", org.id);
               totalEvaluated++;
               continue;
             }
@@ -171,44 +205,30 @@ Deno.serve(async (req) => {
             const avgBefore = beforeMetrics.reduce((s: number, m: any) => s + Number(m.value), 0) / beforeMetrics.length;
             const avgAfter = afterMetrics.reduce((s: number, m: any) => s + Number(m.value), 0) / afterMetrics.length;
             const observedChange = avgBefore !== 0 ? ((avgAfter - avgBefore) / Math.abs(avgBefore)) * 100 : 0;
-
-            let outcomeStatus = "no_effect";
-            const expectedDir = outcome.expected_direction;
-            const directionMatch = (expectedDir === "increase" && observedChange > 1) ||
-                                    (expectedDir === "decrease" && observedChange < -1);
-            if (directionMatch) {
-              if (outcome.expected_change !== null) {
-                const observedMagnitude = Math.abs(observedChange);
-                if (observedMagnitude >= Math.abs(Number(outcome.expected_change)) * 0.8) outcomeStatus = "success";
-                else if (observedMagnitude >= Math.abs(Number(outcome.expected_change)) * 0.3) outcomeStatus = "partial_success";
-              } else {
-                outcomeStatus = "success";
-              }
-            } else if ((expectedDir === "increase" && observedChange < -5) || (expectedDir === "decrease" && observedChange > 5)) {
-              outcomeStatus = "negative_outcome";
-            }
-
-            let accuracyScore: number | null = null;
-            if (outcome.expected_change !== null && Number(outcome.expected_change) !== 0) {
-              accuracyScore = Math.max(0, Math.min(100, 100 - Math.abs(observedChange - Number(outcome.expected_change)) * 2));
-            }
+            const expectedDir = normalizeExpectedOutcomeDirection(outcome.expected_direction, outcome.expected_metric);
+            const { status: outcomeStatus, accuracyScore } = classifyOutcome(
+              observedChange,
+              expectedDir,
+              outcome.expected_change,
+            );
 
             await supabase.from("decision_outcomes").update({
+              expected_direction: expectedDir,
               observed_metric: outcome.expected_metric,
               observed_value_before: avgBefore,
               observed_value_after: avgAfter,
               outcome_status: outcomeStatus,
               evaluation_date: now.toISOString(),
               accuracy_score: accuracyScore,
-              notes: `Observed ${observedChange.toFixed(2)}% change. Before avg: ${avgBefore.toFixed(2)}, After avg: ${avgAfter.toFixed(2)}.`,
-            }).eq("id", outcome.id);
+              notes: `Observed ${observedChange.toFixed(2)}% change (expected: ${expectedDir} ${outcome.expected_change ?? "any"}%). Before avg: ${avgBefore.toFixed(2)}, After avg: ${avgAfter.toFixed(2)}.`,
+            }).eq("id", outcome.id).eq("organization_id", org.id);
 
             await supabase.from("decision_ledger").update({
               actual_value: avgAfter,
               outcome_delta: observedChange,
               outcome_measured_at: now.toISOString(),
               prediction_accuracy_score: accuracyScore,
-            }).eq("id", outcome.decision_id);
+            }).eq("id", outcome.decision_id).eq("organization_id", org.id);
 
             totalEvaluated++;
           }
@@ -245,7 +265,6 @@ Deno.serve(async (req) => {
     }
     log.setOrg(organization_id);
 
-    // Verify org membership
     const { data: isMember } = await supabase.rpc("is_org_member", {
       _user_id: userId,
       _org_id: organization_id,
@@ -262,7 +281,6 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ error: "decision_id and expected_metric required" }), { status: 400, headers: corsHeaders });
       }
 
-      // Validate dataset belongs to org if provided
       if (dataset_id) {
         const { data: dsCheck } = await supabase
           .from("datasets")
@@ -277,20 +295,20 @@ Deno.serve(async (req) => {
         }
       }
 
+      const expectedDirection = normalizeExpectedOutcomeDirection(body.expected_direction, body.expected_metric);
       const { data, error } = await supabase.from("decision_outcomes").insert({
         decision_id,
         organization_id,
-        dataset_id: dataset_id || null,
+        dataset_id: dataset_id ?? null,
         expected_metric: body.expected_metric,
-        expected_direction: body.expected_direction || "increase",
-        expected_change: body.expected_change || null,
-        evaluation_window_days: body.evaluation_window_days || 30,
+        expected_direction: expectedDirection,
+        expected_change: body.expected_change ?? null,
+        evaluation_window_days: body.evaluation_window_days ?? 30,
         outcome_status: "pending",
       }).select().single();
 
       if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
 
-      // Audit trail
       await supabase.from("audit_log").insert({
         organization_id,
         actor_id: userId,
@@ -298,7 +316,12 @@ Deno.serve(async (req) => {
         action_type: "outcome_scheduled",
         resource_type: "decision_outcome",
         resource_id: data.id,
-        payload: { decision_id, expected_metric: body.expected_metric, dataset_id: dataset_id || null },
+        payload: {
+          decision_id,
+          expected_metric: body.expected_metric,
+          expected_direction: expectedDirection,
+          dataset_id: dataset_id ?? null,
+        },
       });
 
       return new Response(JSON.stringify({ success: true, outcome: data }), {
@@ -319,25 +342,23 @@ Deno.serve(async (req) => {
       const now = new Date();
       const evaluated: unknown[] = [];
 
-      for (const outcome of (pending || [])) {
+      for (const outcome of pending || []) {
         const decidedAt = new Date((outcome as any).decision_ledger?.decided_at);
         if (isNaN(decidedAt.getTime())) continue;
 
         const windowEnd = new Date(decidedAt.getTime() + outcome.evaluation_window_days * 86400000);
-        if (now < windowEnd) continue; // Not yet in evaluation window
+        if (now < windowEnd) continue;
 
-        // Can we evaluate? Need dataset_id and metric data
         if (!outcome.dataset_id) {
           await supabase.from("decision_outcomes").update({
             outcome_status: "not_evaluable",
             evaluation_date: now.toISOString(),
             notes: "No dataset_id linked — cannot measure outcome.",
-          }).eq("id", outcome.id);
+          }).eq("id", outcome.id).eq("organization_id", organization_id);
           evaluated.push({ id: outcome.id, status: "not_evaluable" });
           continue;
         }
 
-        // Validate dataset still belongs to org
         const { data: dsCheck } = await supabase
           .from("datasets")
           .select("id")
@@ -350,12 +371,11 @@ Deno.serve(async (req) => {
             outcome_status: "not_evaluable",
             evaluation_date: now.toISOString(),
             notes: "Dataset no longer accessible for this organization.",
-          }).eq("id", outcome.id);
+          }).eq("id", outcome.id).eq("organization_id", organization_id);
           evaluated.push({ id: outcome.id, status: "not_evaluable" });
           continue;
         }
 
-        // Get metric values BEFORE decision
         const beforeStart = new Date(decidedAt.getTime() - 30 * 86400000);
         const { data: beforeMetrics } = await supabase
           .from("metrics")
@@ -368,7 +388,6 @@ Deno.serve(async (req) => {
           .order("date", { ascending: false })
           .limit(50);
 
-        // Get metric values AFTER evaluation window
         const { data: afterMetrics } = await supabase
           .from("metrics")
           .select("value")
@@ -385,48 +404,23 @@ Deno.serve(async (req) => {
             outcome_status: "not_evaluable",
             evaluation_date: now.toISOString(),
             notes: `Insufficient ${outcome.expected_metric} data for evaluation period.`,
-          }).eq("id", outcome.id);
+          }).eq("id", outcome.id).eq("organization_id", organization_id);
           evaluated.push({ id: outcome.id, status: "not_evaluable" });
           continue;
         }
 
-        // Compute averages
         const avgBefore = beforeMetrics.reduce((s: number, m: any) => s + Number(m.value), 0) / beforeMetrics.length;
         const avgAfter = afterMetrics.reduce((s: number, m: any) => s + Number(m.value), 0) / afterMetrics.length;
         const observedChange = avgBefore !== 0 ? ((avgAfter - avgBefore) / Math.abs(avgBefore)) * 100 : 0;
-
-        // Determine outcome status
-        let outcomeStatus = "no_effect";
-        const expectedDir = outcome.expected_direction;
-        const directionMatch = (expectedDir === "increase" && observedChange > 1) ||
-                               (expectedDir === "decrease" && observedChange < -1);
-
-        if (directionMatch) {
-          if (outcome.expected_change !== null) {
-            const expectedMagnitude = Math.abs(Number(outcome.expected_change));
-            const observedMagnitude = Math.abs(observedChange);
-            if (observedMagnitude >= expectedMagnitude * 0.8) {
-              outcomeStatus = "success";
-            } else if (observedMagnitude >= expectedMagnitude * 0.3) {
-              outcomeStatus = "partial_success";
-            }
-          } else {
-            outcomeStatus = "success";
-          }
-        } else if ((expectedDir === "increase" && observedChange < -5) ||
-                   (expectedDir === "decrease" && observedChange > 5)) {
-          outcomeStatus = "negative_outcome";
-        }
-
-        // Accuracy score: how close was the prediction?
-        let accuracyScore: number | null = null;
-        if (outcome.expected_change !== null && Number(outcome.expected_change) !== 0) {
-          accuracyScore = Math.max(0, Math.min(100,
-            100 - Math.abs(observedChange - Number(outcome.expected_change)) * 2
-          ));
-        }
+        const expectedDir = normalizeExpectedOutcomeDirection(outcome.expected_direction, outcome.expected_metric);
+        const { status: outcomeStatus, accuracyScore } = classifyOutcome(
+          observedChange,
+          expectedDir,
+          outcome.expected_change,
+        );
 
         await supabase.from("decision_outcomes").update({
+          expected_direction: expectedDir,
           observed_metric: outcome.expected_metric,
           observed_value_before: avgBefore,
           observed_value_after: avgAfter,
@@ -434,20 +428,18 @@ Deno.serve(async (req) => {
           evaluation_date: now.toISOString(),
           accuracy_score: accuracyScore,
           notes: `Observed ${observedChange.toFixed(2)}% change (expected: ${expectedDir} ${outcome.expected_change ?? "any"}%). Before avg: ${avgBefore.toFixed(2)}, After avg: ${avgAfter.toFixed(2)}.`,
-        }).eq("id", outcome.id);
+        }).eq("id", outcome.id).eq("organization_id", organization_id);
 
-        // Also update the decision_ledger with outcome data
         await supabase.from("decision_ledger").update({
           actual_value: avgAfter,
           outcome_delta: observedChange,
           outcome_measured_at: now.toISOString(),
           prediction_accuracy_score: accuracyScore,
-        }).eq("id", outcome.decision_id);
+        }).eq("id", outcome.decision_id).eq("organization_id", organization_id);
 
         evaluated.push({ id: outcome.id, status: outcomeStatus, accuracy: accuracyScore });
       }
 
-      // Audit trail for batch evaluation
       if (evaluated.length > 0) {
         await supabase.from("audit_log").insert({
           organization_id,
@@ -483,11 +475,10 @@ Deno.serve(async (req) => {
         ? scored.reduce((s: number, o: any) => s + Number(o.accuracy_score), 0) / scored.length
         : null;
 
-      // Per-metric breakdown
-      const byMetric = new Map<string, { total: number; success: number; avgAccuracy: number; scores: number[] }>();
+      const byMetric = new Map<string, { total: number; success: number; scores: number[] }>();
       evaluable.forEach((o: any) => {
         const key = o.expected_metric;
-        const entry = byMetric.get(key) || { total: 0, success: 0, avgAccuracy: 0, scores: [] };
+        const entry = byMetric.get(key) || { total: 0, success: 0, scores: [] };
         entry.total++;
         if (o.outcome_status === "success" || o.outcome_status === "partial_success") entry.success++;
         if (o.accuracy_score !== null) entry.scores.push(Number(o.accuracy_score));
@@ -501,7 +492,6 @@ Deno.serve(async (req) => {
         avgAccuracy: data.scores.length > 0 ? data.scores.reduce((s, v) => s + v, 0) / data.scores.length : null,
       })).sort((a, b) => b.total - a.total);
 
-      // Confidence calibration: compare predicted confidence vs actual success rate
       const { data: decisions } = await supabase
         .from("decision_ledger")
         .select("id, confidence_at_decision, prediction_accuracy_score")
@@ -516,20 +506,19 @@ Deno.serve(async (req) => {
         calibrationGap = avgConf - avgAcc;
       }
 
-      // Generate learning insights
       const learnings: string[] = [];
       metricBreakdown.forEach(mb => {
         if (mb.total >= 3) {
           learnings.push(
-            `${mb.metric} recommendations have produced positive outcomes in ${mb.successRate.toFixed(0)}% of cases (n=${mb.total}).`
+            `${mb.metric} recommendations achieved their intended direction in ${mb.successRate.toFixed(0)}% of cases (n=${mb.total}).`
           );
         }
       });
       if (calibrationGap !== null && Math.abs(calibrationGap) > 5) {
         learnings.push(
           calibrationGap > 0
-            ? `System is overconfident by ${calibrationGap.toFixed(1)} points — recommendations carry more certainty than outcomes justify.`
-            : `System is underconfident by ${Math.abs(calibrationGap).toFixed(1)} points — outcomes are better than predicted.`
+            ? `System is overconfident by ${calibrationGap.toFixed(1)} points — recommendations carry more certainty than forecast accuracy justifies.`
+            : `System is underconfident by ${Math.abs(calibrationGap).toFixed(1)} points — forecast accuracy is better than stated confidence.`
         );
       }
 
@@ -570,7 +559,7 @@ Deno.serve(async (req) => {
         metric_type: metricType,
         similar_decisions: total,
         reliability_index: reliability,
-        note: total < 3 ? "Insufficient historical data for reliability estimation." : `Based on ${total} similar past decisions.`,
+        note: total < 3 ? "Insufficient historical data for reliability estimation." : `Based on ${total} direction-aware past decisions.`,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -579,7 +568,6 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("evaluate-outcomes error:", err);
-    // If guard was acquired in a cron path but threw, the catch in the cron block handles it
     return new Response(JSON.stringify({ error: (err as Error).message }), {
       status: 500, headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
     });
