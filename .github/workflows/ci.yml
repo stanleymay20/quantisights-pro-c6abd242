@@ -52,6 +52,7 @@ jobs:
           deno check supabase/functions/api-ingest/index.ts
           deno check supabase/functions/connector-rest-sync/index.ts
           deno check supabase/functions/connector-salesforce-discover/index.ts
+          deno check supabase/functions/connector-salesforce-pull/index.ts
 
       - name: Test
         run: npm test -- --run
