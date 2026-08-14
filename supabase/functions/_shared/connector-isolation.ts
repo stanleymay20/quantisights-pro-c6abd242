@@ -115,8 +115,8 @@ function parseCircuitState(value: unknown): CircuitState | null {
     retry_budget_per_hour: retryBudget,
     retries_used_window: retriesUsed,
     window_started_at: windowStartedAt,
-    next_probe_at: nextProbeAt,
-    last_error: lastError,
+    next_probe_at: typeof nextProbeAt === "string" ? nextProbeAt : null,
+    last_error: typeof lastError === "string" ? lastError : null,
   };
 }
 
