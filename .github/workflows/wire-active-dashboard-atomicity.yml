@@ -1,0 +1,102 @@
+name: Wire Active Dashboard Atomicity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/wire-active-dashboard-atomicity.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wire-active-dashboard-atomicity
+  cancel-in-progress: false
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Replace legacy approval path
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/components/dashboard/DecisionQueue.tsx")
+          text = path.read_text()
+
+          old_import = 'import { onDecisionApproved, onDecisionDismissed } from "@/lib/decision-lifecycle";'
+          new_import = '\n'.join([
+              'import { onDecisionDismissed } from "@/lib/decision-lifecycle";',
+              'import { createAndApproveQueueDecision, type QueueApprovalSourceType } from "@/lib/decision-queue-approval";',
+          ])
+          if old_import not in text:
+              raise SystemExit("Legacy lifecycle import not found; refusing non-deterministic patch")
+          text = text.replace(old_import, new_import, 1)
+
+          start_marker = "  // Stage 2: After responsibility acknowledgment, persist\n  const executeApprove = useCallback"
+          end_marker = "  // Stage 1: Open dismiss reason dialog"
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("Active approval block markers not found")
+
+          new_block = '''  // Stage 2: After responsibility acknowledgment, persist atomically on the server.
+  const executeApprove = useCallback(async (decision: EnrichedDecision) => {
+    setActingOn(decision.id);
+    try {
+      const sourceType: QueueApprovalSourceType =
+        decision.type === "advisory" ? "advisory" :
+        decision.type === "signal" ? "signal" :
+        null;
+
+      await createAndApproveQueueDecision({
+        organizationId,
+        recommendedAction: decision.recommendation.recommendedAction,
+        confidence: decision.cappedConfidence ?? decision.confidence ?? 50,
+        rawConfidence: decision.rawConfidence ?? decision.confidence ?? null,
+        cappedConfidence: decision.cappedConfidence ?? decision.confidence ?? null,
+        confidenceCapReason: decision.confidenceCapReason ?? null,
+        decisionContextId: activeContextId ?? null,
+        notes: `Owner: ${decision.recommendation.suggestedOwner} | Due: ${decision.costOfDelayResult.recommendedActionWindowDays}d | Metrics: ${decision.recommendation.successMetrics.join(", ")}`,
+        datasetId: decision.sourceDatasetId ?? datasetId ?? null,
+        expectedMetric: decision.recommendation.successMetrics?.[0] ?? null,
+        evaluationWindowDays: decision.costOfDelayResult.recommendedActionWindowDays || 30,
+        suggestedOwner: decision.recommendation.suggestedOwner ?? null,
+        sourceType,
+        sourceId: sourceType ? (decision.sourceId ?? null) : null,
+      });
+
+      setDecisions(prev => prev.filter(d => d.id !== decision.id));
+      setConfirmation({ decisionTitle: decision.title, action: "approved" });
+    } catch (err) {
+      console.error("[DecisionQueue] Approve failed:", err);
+      toast({ title: "Action failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } finally {
+      setActingOn(null);
+    }
+  }, [organizationId, toast, activeContextId, setDecisions, datasetId]);
+
+'''
+          text = text[:start] + new_block + text[end:]
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: git rm .github/workflows/wire-active-dashboard-atomicity.yml
+
+      - name: Commit directly to main
+        run: |
+          git config user.name "quantivis-integrity-bot"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git add src/components/dashboard/DecisionQueue.tsx
+          git commit -m "Wire active dashboard queue to atomic approval"
+          git push origin HEAD:main
