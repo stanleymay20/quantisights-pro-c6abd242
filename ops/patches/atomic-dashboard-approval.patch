@@ -1,0 +1,103 @@
+--- a/src/components/dashboard/DecisionQueue.tsx
++++ b/src/components/dashboard/DecisionQueue.tsx
+@@ -11,7 +11,8 @@
+ import { useOrganization } from "@/hooks/useOrganization";
+ import { useAuth } from "@/contexts/AuthContext";
+ import { useActiveDataContext } from "@/hooks/useActiveDataContext";
+-import { onDecisionApproved, onDecisionDismissed } from "@/lib/decision-lifecycle";
++import { onDecisionDismissed } from "@/lib/decision-lifecycle";
++import { createAndApproveQueueDecision, type QueueApprovalSourceType } from "@/lib/decision-queue-approval";
+ import type { EnrichedDecision } from "@/hooks/useBuildDecisionQueue";
+ import type { DecisionContext } from "@/hooks/useDecisionContexts";
+ import { useEntitlements } from "@/hooks/useEntitlements";
+@@ -183,65 +184,42 @@
+   const handleConfirmApprove = useCallback(async () => {
+-    if (!approveTarget || !currentOrgId || !user) return;
++    if (!approveTarget || !currentOrgId) return;
+     const { decision, suggestedOwner, evaluationDays } = approveTarget;
+     setApproving(true);
+ 
+     try {
+-      // 1. Mark source advisory/insight as acted-on
+-      if (decision.type === "advisory" && decision.sourceId) {
+-        await supabase
+-          .from("advisory_instances")
+-          .update({ status: "accepted" })
+-          .eq("id", decision.sourceId)
+-          .eq("organization_id", currentOrgId);
+-      } else if (decision.type === "signal" && decision.sourceId) {
+-        await supabase
+-          .from("insights")
+-          .update({ is_read: true })
+-          .eq("id", decision.sourceId)
+-          .eq("organization_id", currentOrgId);
+-      }
+-
+-      // 2. Insert into decision_ledger — single source of truth for ALL decisions
+-      const { data: ledgerRow, error: ledgerError } = await supabase
+-        .from("decision_ledger")
+-        .insert({
+-          organization_id: currentOrgId,
+-          recommended_action: decision.recommendation.recommendedAction,
+-          chosen_action: decision.recommendation.recommendedAction,
+-          decided_by: user.id,
+-          decided_at: new Date().toISOString(),
+-          decision_status: "approved",
+-          confidence_at_decision: decision.confidence ?? null,
+-          raw_confidence: decision.rawConfidence ?? decision.confidence ?? null,
+-          capped_confidence: decision.cappedConfidence ?? decision.confidence ?? null,
+-          confidence_cap_reason: decision.confidenceCapReason ?? null,
+-          decision_type: "strategic",
+-          decision_context_id: activeContext?.id || null,
+-          notes: `Approved from Decision Queue. Source: ${decision.source}. ${decision.recommendation.riskIfWrong}`,
+-        })
+-        .select("id")
+-        .single();
+-
+-      if (ledgerError || !ledgerRow) throw ledgerError || new Error("Failed to create decision ledger entry");
+-
+-      // 3. Full lifecycle: audit + execution plan + outcome tracking + embeddings
+-      await onDecisionApproved({
+-        decisionId: ledgerRow.id,
++      const sourceType: QueueApprovalSourceType =
++        decision.type === "advisory" ? "advisory" :
++        decision.type === "signal" ? "signal" :
++        null;
++
++      await createAndApproveQueueDecision({
+         organizationId: currentOrgId,
+-        userId: user.id,
+         recommendedAction: decision.recommendation.recommendedAction,
+         confidence: decision.confidence ?? null,
++        rawConfidence: decision.rawConfidence ?? decision.confidence ?? null,
++        cappedConfidence: decision.cappedConfidence ?? decision.confidence ?? null,
++        confidenceCapReason: decision.confidenceCapReason ?? null,
++        decisionContextId: activeContext?.id || null,
++        notes: `Approved from Decision Queue. Source: ${decision.source}. ${decision.recommendation.riskIfWrong}`,
+         datasetId: decision.sourceDatasetId ?? datasetId,
+         expectedMetric: decision.recommendation.successMetrics?.[0] || null,
+         evaluationWindowDays: evaluationDays,
+         suggestedOwner,
++        sourceType,
++        sourceId: sourceType ? (decision.sourceId ?? null) : null,
+       });
+ 
+       toast({
+@@ -251,7 +229,7 @@
+         description: `Assigned to ${suggestedOwner || "owner"} · Review in ${evaluationDays} days`,
+       });
+ 
+-      // Remove from UI queue after successful persistence
++      // Remove from UI queue only after the atomic server transaction succeeds.
+       setDecisions(prev => prev.filter(d => d.id !== decision.id));
+       setApproveTarget(null);
+     } catch (err: unknown) {
+@@ -261,7 +239,7 @@
+     } finally {
+       setApproving(false);
+     }
+-  }, [approveTarget, currentOrgId, user, activeContext, datasetId, toast, setDecisions]);
++  }, [approveTarget, currentOrgId, activeContext, datasetId, toast, setDecisions]);
+ 
+   // Confirm and persist dismissal
+   const handleConfirmDismiss = useCallback(async () => {
