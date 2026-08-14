@@ -10,7 +10,8 @@
   "files": [
     "src/lib/evidence-contract.ts",
     "src/lib/decision-maturity.ts",
-    "src/lib/safe-navigation.ts"
+    "src/lib/safe-navigation.ts",
+    "src/lib/decision-options.ts"
   ],
   "include": []
 }
