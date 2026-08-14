@@ -4,6 +4,7 @@ import { applyAdaptiveConfidenceWithFetch } from "../_shared/adaptive-confidence
 import type { AdaptiveConfidenceMeta } from "../_shared/adaptive-confidence.ts";
 import { enforceDatasetContract } from "../_shared/dataset-contract.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { detectChangepoints, type ChangepointEvidence } from "../_shared/changepoint.ts";
 
 interface MetricRow {
   metric_type: string;
@@ -28,14 +29,23 @@ interface MetricStats {
   max: number;
   date_range: string;
   segment_shifts: string[];
+  structural_breaks: ChangepointEvidence[];
 }
+
+type CausalStatus = "not_established" | "supported_by_causal_design";
+type EvidenceLevel = "descriptive" | "temporal_break" | "causal";
 
 interface DiagnosticResult {
   metric_type: string;
   diagnosis: string;
   severity: "critical" | "warning" | "info";
+  /** Compatibility field: contains a driver hypothesis, never an asserted root cause. */
   root_cause: string;
+  /** Compatibility field: contains associated evidence, never asserted causes. */
   causal_factors: string[];
+  causal_status: CausalStatus;
+  evidence_level: EvidenceLevel;
+  structural_breaks: ChangepointEvidence[];
   trend_direction: "improving" | "declining" | "stable" | "volatile";
   change_pct: number;
   recommendation: string;
@@ -77,12 +87,50 @@ function applyMeta(meta: AdaptiveConfidenceMeta): Pick<DiagnosticResult,
   };
 }
 
-/** Compute pure statistics for each metric type — no hardcoded interpretations. */
+function evidenceLevel(stat: MetricStats | undefined): EvidenceLevel {
+  return stat?.structural_breaks?.length ? "temporal_break" : "descriptive";
+}
+
+function sanitizeCausalLanguage(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\broot cause\b/gi, "candidate driver")
+    .replace(/\bcaused by\b/gi, "associated with")
+    .replace(/\bcauses\b/gi, "is associated with")
+    .replace(/\bcausal factor(s)?\b/gi, "associated factor$1")
+    .trim();
+}
+
+function driverHypothesis(value: unknown, stat: MetricStats | undefined): string {
+  const sanitized = sanitizeCausalLanguage(value);
+  const fallback = stat
+    ? `Observed slope ${stat.slope_normalized_pct.toFixed(1)}%, volatility ${stat.volatility_pct.toFixed(0)}%, and ${stat.structural_breaks.length} detected structural break(s).`
+    : "Available evidence is descriptive only.";
+  return `Driver hypothesis (causality not established): ${sanitized || fallback}`;
+}
+
+function associatedEvidence(values: unknown, stat: MetricStats | undefined): string[] {
+  const raw = Array.isArray(values) ? values : [];
+  const factors = raw
+    .map(value => sanitizeCausalLanguage(value))
+    .filter(Boolean)
+    .map(value => `Associated evidence (not causal): ${value}`);
+
+  if (factors.length > 0) return factors;
+  if (!stat) return ["Associated evidence (not causal): insufficient statistical detail"];
+
+  return [
+    `Associated evidence (not causal): ${stat.trend_direction} trend over ${stat.data_points} observations`,
+    `Associated evidence (not causal): ${stat.volatility_pct.toFixed(0)}% coefficient of variation`,
+    ...stat.segment_shifts.slice(0, 3).map(shift => `Associated evidence (not causal): segment shift ${shift}`),
+  ];
+}
+
+/** Compute pure statistics and temporal structural-break evidence for each metric. */
 function computeStats(metrics: MetricRow[]): { stats: MetricStats[]; skippedMetrics: string[] } {
   const grouped: Record<string, MetricRow[]> = {};
-  for (const m of metrics) {
-    if (!grouped[m.metric_type]) grouped[m.metric_type] = [];
-    grouped[m.metric_type].push(m);
+  for (const metric of metrics) {
+    if (!grouped[metric.metric_type]) grouped[metric.metric_type] = [];
+    grouped[metric.metric_type].push(metric);
   }
 
   const results: MetricStats[] = [];
@@ -94,47 +142,50 @@ function computeStats(metrics: MetricRow[]): { stats: MetricStats[]; skippedMetr
       continue;
     }
 
-    const sorted = rows.sort((a, b) => a.date.localeCompare(b.date));
-    const values = sorted.map(r => Number(r.value));
+    const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+    const values = sorted.map(row => Number(row.value));
+    const dates = sorted.map(row => row.date);
     const n = values.length;
     const latest = values[n - 1];
     const previous = values[n - 2];
     const changePct = previous !== 0 ? ((latest - previous) / Math.abs(previous)) * 100 : 0;
 
-    const mean = values.reduce((s, v) => s + v, 0) / n;
-    const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
+    const mean = values.reduce((sum, value) => sum + value, 0) / n;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / n;
     const stdDev = Math.sqrt(variance);
     const volatility = mean !== 0 ? (stdDev / Math.abs(mean)) * 100 : 0;
 
-    // Linear regression slope
     const xMean = (n - 1) / 2;
-    let num = 0, den = 0;
-    for (let i = 0; i < n; i++) {
-      num += (i - xMean) * (values[i] - mean);
-      den += (i - xMean) ** 2;
+    let numerator = 0;
+    let denominator = 0;
+    for (let index = 0; index < n; index++) {
+      numerator += (index - xMean) * (values[index] - mean);
+      denominator += (index - xMean) ** 2;
     }
-    const slope = den !== 0 ? num / den : 0;
+    const slope = denominator !== 0 ? numerator / denominator : 0;
     const slopeNorm = mean !== 0 ? (slope / Math.abs(mean)) * 100 : 0;
 
-    let trend_direction = "stable";
-    if (volatility > 30) trend_direction = "volatile";
-    else if (slopeNorm > 5) trend_direction = "improving";
-    else if (slopeNorm < -5) trend_direction = "declining";
+    let trendDirection = "stable";
+    if (volatility > 30) trendDirection = "volatile";
+    else if (slopeNorm > 5) trendDirection = "improving";
+    else if (slopeNorm < -5) trendDirection = "declining";
 
-    // Segment breakdown
     const segmentBreakdown: Record<string, number[]> = {};
-    for (const r of sorted) {
-      const seg = r.segment || r.region || "overall";
-      if (!segmentBreakdown[seg]) segmentBreakdown[seg] = [];
-      segmentBreakdown[seg].push(Number(r.value));
+    for (const row of sorted) {
+      const segment = row.segment || row.region || "overall";
+      if (!segmentBreakdown[segment]) segmentBreakdown[segment] = [];
+      segmentBreakdown[segment].push(Number(row.value));
     }
+
     const segmentShifts: string[] = [];
-    for (const [seg, vals] of Object.entries(segmentBreakdown)) {
-      if (vals.length < 2 || seg === "overall") continue;
-      const segChange = vals[vals.length - 1] - vals[0];
-      const segChangePct = vals[0] !== 0 ? (segChange / Math.abs(vals[0])) * 100 : 0;
-      if (Math.abs(segChangePct) > 10) {
-        segmentShifts.push(`${seg}: ${segChangePct > 0 ? "+" : ""}${segChangePct.toFixed(1)}%`);
+    for (const [segment, segmentValues] of Object.entries(segmentBreakdown)) {
+      if (segmentValues.length < 2 || segment === "overall") continue;
+      const segmentChange = segmentValues[segmentValues.length - 1] - segmentValues[0];
+      const segmentChangePct = segmentValues[0] !== 0
+        ? (segmentChange / Math.abs(segmentValues[0])) * 100
+        : 0;
+      if (Math.abs(segmentChangePct) > 10) {
+        segmentShifts.push(`${segment}: ${segmentChangePct > 0 ? "+" : ""}${segmentChangePct.toFixed(1)}%`);
       }
     }
 
@@ -148,20 +199,19 @@ function computeStats(metrics: MetricRow[]): { stats: MetricStats[]; skippedMetr
       std_dev: Number(stdDev.toFixed(4)),
       volatility_pct: Number(volatility.toFixed(2)),
       slope_normalized_pct: Number(slopeNorm.toFixed(2)),
-      trend_direction,
+      trend_direction: trendDirection,
       min: Number(values.reduce((a, b) => a < b ? a : b, values[0]).toFixed(4)),
       max: Number(values.reduce((a, b) => a > b ? a : b, values[0]).toFixed(4)),
       date_range: `${sorted[0].date} to ${sorted[n - 1].date}`,
       segment_shifts: segmentShifts,
+      structural_breaks: detectChangepoints(values, dates),
     });
   }
 
   return { stats: results, skippedMetrics };
 }
 
-/**
- * Paginated fetch: retrieves ALL metric rows for the dataset, not just the first 1000.
- */
+/** Paginated fetch: retrieves all metric rows for the selected dataset. */
 async function fetchAllMetrics(
   supabaseUrl: string,
   serviceKey: string,
@@ -175,18 +225,27 @@ async function fetchAllMetrics(
 
   while (true) {
     const url = `${supabaseUrl}/rest/v1/metrics?organization_id=eq.${organizationId}&dataset_id=eq.${datasetId}&order=date.asc&limit=${PAGE_SIZE}&offset=${offset}`;
-    const resp = await fetch(url, { headers });
-    const page: MetricRow[] = await resp.json();
+    const response = await fetch(url, { headers });
+    const page: MetricRow[] = await response.json();
     if (!Array.isArray(page) || page.length === 0) break;
     all.push(...page);
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
+
   return all;
 }
 
-/** Use AI to generate real diagnostic intelligence from computed statistics. */
-async function generateAIDiagnostics(stats: MetricStats[], contextBlock: string = "", datasetName: string = "dataset"): Promise<any[]> {
+/**
+ * Generate diagnostic interpretation from computed evidence.
+ * The model is explicitly prohibited from asserting causality because this
+ * pipeline supplies descriptive/time-series evidence, not a causal design.
+ */
+async function generateAIDiagnostics(
+  stats: MetricStats[],
+  contextBlock = "",
+  datasetName = "dataset",
+): Promise<any[]> {
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableApiKey || stats.length === 0) return [];
 
@@ -194,7 +253,7 @@ async function generateAIDiagnostics(stats: MetricStats[], contextBlock: string 
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       signal: controller.signal,
       headers: {
@@ -205,102 +264,106 @@ async function generateAIDiagnostics(stats: MetricStats[], contextBlock: string 
         model: "google/gemini-2.5-flash",
         messages: [{
           role: "user",
-          content: `You are an enterprise diagnostic intelligence engine performing root cause analysis on metrics from the dataset "${datasetName}".
+          content: `You are an enterprise statistical diagnostic engine analyzing the dataset "${datasetName}".
+
+EPISTEMIC RULE: The supplied evidence is descriptive and temporal. It does NOT establish causality. Never claim that a factor caused a metric movement, never state a root cause as fact, and never convert temporal order, slope, volatility, segment divergence, or a changepoint into causal proof. A structural break means the statistical regime changed; it does not identify why.
 ${contextBlock}
 METRIC STATISTICS (computed from real data):
 ${JSON.stringify(stats, null, 2)}
 
-For EACH metric, generate a diagnostic assessment. Return ONLY a JSON array:
+For EACH metric return ONLY a JSON array using this compatibility schema:
 [
   {
     "metric_type": "exact metric_type from input",
-    "diagnosis": "1-2 sentence clinical diagnosis referencing specific values and percentages from the statistics",
+    "diagnosis": "1-2 sentence description referencing actual values and statistics",
     "severity": "critical" | "warning" | "info",
-    "root_cause": "2-3 sentence root cause analysis explaining WHY this pattern exists, referencing volatility, trend slope, and segment shifts",
-    "causal_factors": ["factor1", "factor2", "factor3"],
+    "root_cause": "Driver hypothesis only. Begin with 'Driver hypothesis (causality not established):' and describe what should be investigated, not what caused the outcome.",
+    "causal_factors": ["Associated evidence only; each item must avoid causal language and cite slope, volatility, segment shifts, or structural breaks"],
     "trend_direction": "improving" | "declining" | "stable" | "volatile",
     "change_pct": <number from period_change_pct>,
-    "recommendation": "1-2 sentence actionable recommendation for decision-makers to address the diagnosed pattern",
+    "recommendation": "Actionable next step to investigate/monitor the pattern without assuming causality",
     "raw_confidence": <60-90 based on data quality>
   }
 ]
 
 Rules:
-- Be domain-agnostic. These metrics could be economic, financial, SaaS, industrial, or any domain.
-- Reference ACTUAL values, percentages, and data point counts from the statistics.
-- severity "critical": |period_change_pct| > 10% OR volatility > 40% OR clear structural instability (applies to both spikes AND drops)
-- severity "warning": |period_change_pct| between 5-10%, emerging instability, threshold approaches
-- severity "info": stable metrics with |period_change_pct| < 5% and volatility < 25%
-- causal_factors MUST reference specific statistical evidence (segment shifts, volatility levels, trend slopes)
-- recommendation MUST be concrete and actionable, referencing the specific metric and its diagnosed issue
-- raw_confidence should reflect data_points count: <12 pts = max 60, <30 pts = max 75, 30+ pts = max 90 (aligned with platform epistemic standard)
-- Do NOT invent data not present in the statistics
-- Every diagnosis MUST reference the dataset name "${datasetName}" and specific metric values
-- Return ONLY the JSON array`,
+- Be domain-agnostic.
+- Reference ACTUAL values, percentages, dates, changepoints, and data-point counts from the supplied statistics.
+- Critical: |period_change_pct| > 10%, volatility > 40%, or material structural instability.
+- Warning: |period_change_pct| 5-10%, volatility 25-40%, or an emerging structural break.
+- Info: otherwise stable/low-volatility evidence.
+- A changepoint is temporal structural-break evidence only, never causal evidence.
+- Do NOT use phrases such as 'caused by', 'root cause is', 'led to', or 'resulted from' unless explicitly negating causality.
+- recommendation must investigate candidate drivers, validate competing explanations, or monitor the metric.
+- raw_confidence: <12 pts max 60, <30 pts max 75, 30+ pts max 90.
+- Do NOT invent data.
+- Every diagnosis must reference dataset "${datasetName}" and specific observed values.
+- Return ONLY the JSON array.`,
         }],
       }),
     });
 
     clearTimeout(timeout);
+    if (!response.ok) return [];
 
-    if (!resp.ok) return [];
-
-    const data = await resp.json();
+    const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return [];
 
     try {
       return JSON.parse(jsonMatch[0]);
-    } catch (parseErr) {
-      console.error("AI returned malformed JSON, falling back to rule engine:", parseErr);
+    } catch (parseError) {
+      console.error("AI returned malformed JSON, falling back to rule engine:", parseError);
       return [];
     }
-  } catch (e) {
+  } catch (error) {
     clearTimeout(timeout);
-    console.error("AI diagnostic generation error:", e);
+    console.error("AI diagnostic generation error:", error);
     return [];
   }
 }
 
-/** Rule-based fallback when AI is unavailable — still data-driven, not hardcoded per metric. */
+/** Rule-based fallback — statistical evidence only, never causal attribution. */
 function fallbackDiagnostics(stats: MetricStats[]): any[] {
-  return stats.map(s => {
+  return stats.map(stat => {
     let severity: "critical" | "warning" | "info" = "info";
-    if (Math.abs(s.period_change_pct) > 10 || s.volatility_pct > 40) severity = "critical";
-    else if (Math.abs(s.period_change_pct) > 5 || s.volatility_pct > 25) severity = "warning";
+    if (Math.abs(stat.period_change_pct) > 10 || stat.volatility_pct > 40 || stat.structural_breaks.some(point => point.significance >= 0.7)) {
+      severity = "critical";
+    } else if (Math.abs(stat.period_change_pct) > 5 || stat.volatility_pct > 25 || stat.structural_breaks.length > 0) {
+      severity = "warning";
+    }
 
-    const factors = [
-      `${s.trend_direction} trend over ${s.data_points} data points`,
-      ...(s.volatility_pct > 20 ? [`${s.volatility_pct.toFixed(0)}% coefficient of variation`] : []),
-      ...s.segment_shifts.slice(0, 3),
-    ];
+    const breakSummary = stat.structural_breaks.length > 0
+      ? ` Structural break evidence: ${stat.structural_breaks.map(point => `${point.date ?? `index ${point.index}`} (${point.magnitude_pct > 0 ? "+" : ""}${point.magnitude_pct.toFixed(1)}%)`).join(", ")}.`
+      : " No statistically material structural break was detected by the changepoint routine.";
 
-    let recommendation = "";
+    let recommendation: string;
     if (severity === "critical") {
-      recommendation = `Investigate ${s.metric_type.replace(/_/g, " ")} immediately: ${Math.abs(s.period_change_pct).toFixed(1)}% period change with ${s.volatility_pct.toFixed(0)}% volatility indicates structural instability requiring root cause intervention.`;
+      recommendation = `Investigate candidate drivers of ${stat.metric_type.replace(/_/g, " ")} immediately. Compare events and interventions around detected break dates, test competing explanations, and do not treat temporal proximity as causal proof.`;
     } else if (severity === "warning") {
-      recommendation = `Monitor ${s.metric_type.replace(/_/g, " ")} closely and prepare contingency plans. The ${s.trend_direction} trend at ${s.slope_normalized_pct.toFixed(1)}% normalized slope may accelerate.`;
+      recommendation = `Monitor ${stat.metric_type.replace(/_/g, " ")} closely and investigate candidate drivers around segment shifts or structural-break dates before committing to an intervention.`;
     } else {
-      recommendation = `${s.metric_type.replace(/_/g, " ")} is within normal parameters. Continue current approach and review at next reporting cycle.`;
+      recommendation = `${stat.metric_type.replace(/_/g, " ")} is statistically stable under the current descriptive checks. Continue monitoring and escalate only if new break or variance evidence appears.`;
     }
 
     return {
-      metric_type: s.metric_type,
-      diagnosis: `${s.metric_type.replace(/_/g, " ")} changed ${s.period_change_pct > 0 ? "+" : ""}${s.period_change_pct.toFixed(1)}% (latest: ${s.latest_value}, mean: ${s.mean.toFixed(2)}). Trend is ${s.trend_direction} with ${s.volatility_pct.toFixed(0)}% volatility across ${s.data_points} observations.`,
+      metric_type: stat.metric_type,
+      diagnosis: `${stat.metric_type.replace(/_/g, " ")} changed ${stat.period_change_pct > 0 ? "+" : ""}${stat.period_change_pct.toFixed(1)}% (latest: ${stat.latest_value}, mean: ${stat.mean.toFixed(2)}). Trend is ${stat.trend_direction} with ${stat.volatility_pct.toFixed(0)}% volatility across ${stat.data_points} observations.${breakSummary}`,
       severity,
-      root_cause: `Regression analysis shows a normalized slope of ${s.slope_normalized_pct.toFixed(1)}% with ${s.volatility_pct.toFixed(0)}% volatility. ${s.segment_shifts.length > 0 ? `Segment-level shifts detected: ${s.segment_shifts.join(", ")}.` : "No significant segment-level divergences found."}`,
-      causal_factors: factors.length > 0 ? factors : [`Overall ${s.trend_direction} pattern`],
-      trend_direction: s.trend_direction,
-      change_pct: s.period_change_pct,
+      root_cause: `Driver hypothesis (causality not established): The observed pattern is statistically associated with a ${stat.slope_normalized_pct.toFixed(1)}% normalized slope, ${stat.volatility_pct.toFixed(0)}% volatility${stat.segment_shifts.length > 0 ? `, and segment divergence (${stat.segment_shifts.join(", ")})` : ""}. These features identify where to investigate; they do not identify a cause.`,
+      causal_factors: associatedEvidence([], stat),
+      trend_direction: stat.trend_direction,
+      change_pct: stat.period_change_pct,
       recommendation,
-      raw_confidence: Math.min(50 + Math.min((s.data_points - 2) * 2, 20) + (s.volatility_pct < 15 ? 10 : s.volatility_pct < 30 ? 5 : 0), 85),
+      raw_confidence: Math.min(50 + Math.min((stat.data_points - 2) * 2, 20) + (stat.volatility_pct < 15 ? 10 : stat.volatility_pct < 30 ? 5 : 0), 85),
     };
   });
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return corsPreflightResponse(req);const auth = await authenticateRequest(req);
+  if (req.method === "OPTIONS") return corsPreflightResponse(req);
+  const auth = await authenticateRequest(req);
   const corsHeaders = getCorsHeaders(req);
   if (auth.response) return auth.response;
 
@@ -312,7 +375,8 @@ serve(async (req) => {
     const isMember = await verifyOrgMembership(auth.userId, organization_id);
     if (!isMember) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -321,40 +385,40 @@ serve(async (req) => {
 
     if (!dataset_id) throw new Error("dataset_id required by Active Data Contract");
 
-    // Enforce dataset contract (validates dataset belongs to org, supports dry_run)
     const contract = await enforceDatasetContract(
       { organization_id, dataset_id, dry_run },
-      { from: (table: string) => {
-        const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
-        return {
-          select: (cols: string) => ({
-            eq: (col: string, val: string) => ({
-              eq: (col2: string, val2: string) => ({
-                maybeSingle: async () => {
-                  const url = `${supabaseUrl}/rest/v1/${table}?select=${cols}&${col}=eq.${val}&${col2}=eq.${val2}&limit=1`;
-                  const resp = await fetch(url, { headers });
-                  const arr = await resp.json();
-                  return { data: arr?.[0] || null, error: null };
-                },
+      {
+        from: (table: string) => {
+          const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+          return {
+            select: (columns: string) => ({
+              eq: (column: string, value: string) => ({
+                eq: (secondColumn: string, secondValue: string) => ({
+                  maybeSingle: async () => {
+                    const url = `${supabaseUrl}/rest/v1/${table}?select=${columns}&${column}=eq.${value}&${secondColumn}=eq.${secondValue}&limit=1`;
+                    const response = await fetch(url, { headers });
+                    const rows = await response.json();
+                    return { data: rows?.[0] || null, error: null };
+                  },
+                }),
               }),
             }),
-          }),
-        };
-      }},
+          };
+        },
+      },
     );
 
     if (contract.response) return contract.response;
 
-    // Paginated fetch: retrieve ALL metrics, not just first 1000
-    const [metrics, dsResp] = await Promise.all([
+    const [metrics, datasetResponse] = await Promise.all([
       fetchAllMetrics(supabaseUrl, serviceKey, organization_id, dataset_id),
       fetch(
         `${supabaseUrl}/rest/v1/datasets?id=eq.${dataset_id}&organization_id=eq.${organization_id}&select=name&limit=1`,
         { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
       ),
     ]);
-    const dsArr = await dsResp.json();
-    const datasetName = dsArr?.[0]?.name || "dataset";
+    const datasetRows = await datasetResponse.json();
+    const datasetName = datasetRows?.[0]?.name || "dataset";
 
     if (!metrics || metrics.length < 2) {
       return new Response(JSON.stringify({
@@ -364,95 +428,96 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Step 1: Compute pure statistics from real data
     const { stats, skippedMetrics } = computeStats(metrics);
 
-    // Fetch decision context if provided (no duplicate serviceKey declaration)
     let contextBlock = "";
     if (decision_context_id) {
-      const ctxResp = await fetch(
+      const contextResponse = await fetch(
         `${supabaseUrl}/rest/v1/decision_contexts?id=eq.${decision_context_id}&organization_id=eq.${organization_id}&select=name,decision_type,objective,industry,target_metrics`,
-        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
       );
-      const ctxArr = await ctxResp.json();
-      if (ctxArr?.[0]) {
-        const ctx = ctxArr[0];
+      const contextRows = await contextResponse.json();
+      if (contextRows?.[0]) {
+        const context = contextRows[0];
         contextBlock = `
 DECISION CONTEXT:
-Name: ${ctx.name}
-Type: ${ctx.decision_type}
-Objective: ${ctx.objective || "Not specified"}
-Industry: ${ctx.industry || "Not specified"}
+Name: ${context.name}
+Type: ${context.decision_type}
+Objective: ${context.objective || "Not specified"}
+Industry: ${context.industry || "Not specified"}
 
-IMPORTANT: Frame all diagnoses through this decision context. Explain how each finding impacts the "${ctx.decision_type}" decision and the stated objective.
+Frame diagnoses through this context, but do not let business context upgrade statistical evidence into causal evidence.
 `;
       }
     }
 
-    // Step 2: Generate AI-driven diagnostics from statistics
-    let aiResults = await generateAIDiagnostics(stats, contextBlock, datasetName);
+    let interpretedResults = await generateAIDiagnostics(stats, contextBlock, datasetName);
 
-    // Step 3: Fallback to data-driven rule engine if AI unavailable
-    if (aiResults.length === 0) {
-      aiResults = fallbackDiagnostics(stats);
+    if (interpretedResults.length === 0) {
+      interpretedResults = fallbackDiagnostics(stats);
     } else {
-      // Reconcile: backfill any metrics the AI omitted with fallback diagnostics
-      const aiMetricTypes = new Set(aiResults.map((r: any) => r.metric_type));
-      const missingStats = stats.filter(s => !aiMetricTypes.has(s.metric_type));
-      if (missingStats.length > 0) {
-        const backfilled = fallbackDiagnostics(missingStats);
-        aiResults.push(...backfilled);
-      }
+      const interpretedMetricTypes = new Set(interpretedResults.map((result: any) => result.metric_type));
+      const missingStats = stats.filter(stat => !interpretedMetricTypes.has(stat.metric_type));
+      if (missingStats.length > 0) interpretedResults.push(...fallbackDiagnostics(missingStats));
     }
 
-    // Step 4: Apply epistemic confidence capping + adaptive calibration (parallelized)
-    const diagnosticPromises = aiResults.map(async (ai) => {
-      const matchingStat = stats.find(s => s.metric_type === ai.metric_type);
+    const diagnosticPromises = interpretedResults.map(async interpreted => {
+      const matchingStat = stats.find(stat => stat.metric_type === interpreted.metric_type);
       const sampleSize = matchingStat?.data_points || 2;
       const volatility = matchingStat?.volatility_pct || 0;
+      const structuralBreaks = matchingStat?.structural_breaks ?? [];
+      const level = evidenceLevel(matchingStat);
 
       if (sampleSize < 8) {
         const meta = await applyAdaptiveConfidenceWithFetch(
           { rawConfidence: 0, sampleSize },
-          supabaseUrl, serviceKey, organization_id,
+          supabaseUrl,
+          serviceKey,
+          organization_id,
         );
         return {
-          metric_type: ai.metric_type,
-          diagnosis: `Insufficient data (${sampleSize} points). Minimum 8 required for credible analysis.`,
+          metric_type: interpreted.metric_type,
+          diagnosis: `Insufficient data (${sampleSize} points). Minimum 8 required for credible diagnostic interpretation.`,
           severity: "info" as const,
-          root_cause: "Data depth insufficient for statistical validity.",
-          causal_factors: [`Only ${sampleSize} data points available`],
+          root_cause: "Driver hypothesis unavailable: causality is not established and data depth is insufficient for a credible statistical driver hypothesis.",
+          causal_factors: [`Associated evidence (not causal): only ${sampleSize} data points available`],
+          causal_status: "not_established" as const,
+          evidence_level: "descriptive" as const,
+          structural_breaks: structuralBreaks,
           trend_direction: (matchingStat?.trend_direction as DiagnosticResult["trend_direction"]) || "stable",
           change_pct: Number((matchingStat?.period_change_pct || 0).toFixed(1)),
-          recommendation: "Collect more historical data to enable diagnostic intelligence.",
+          recommendation: "Collect more historical data before using this metric for diagnostic decision support.",
           ...applyMeta(meta),
         } as DiagnosticResult;
       }
 
       const meta = await applyAdaptiveConfidenceWithFetch(
-        { rawConfidence: ai.raw_confidence || 60, sampleSize, variance: volatility },
-        supabaseUrl, serviceKey, organization_id,
+        { rawConfidence: interpreted.raw_confidence || 60, sampleSize, variance: volatility },
+        supabaseUrl,
+        serviceKey,
+        organization_id,
       );
 
-      // Always use the authoritative computed stat value, not the AI's approximation
-      const normalizedChangePct = Number((matchingStat?.period_change_pct ?? ai.change_pct ?? 0).toFixed(1));
+      const normalizedChangePct = Number((matchingStat?.period_change_pct ?? interpreted.change_pct ?? 0).toFixed(1));
 
       return {
-        metric_type: ai.metric_type,
-        diagnosis: ai.diagnosis || "",
-        severity: ai.severity || "info",
-        root_cause: ai.root_cause || "",
-        causal_factors: Array.isArray(ai.causal_factors) ? ai.causal_factors : [],
-        trend_direction: ai.trend_direction || matchingStat?.trend_direction || "stable",
+        metric_type: interpreted.metric_type,
+        diagnosis: interpreted.diagnosis || "",
+        severity: interpreted.severity || "info",
+        root_cause: driverHypothesis(interpreted.root_cause, matchingStat),
+        causal_factors: associatedEvidence(interpreted.causal_factors, matchingStat),
+        causal_status: "not_established" as const,
+        evidence_level: level,
+        structural_breaks: structuralBreaks,
+        trend_direction: interpreted.trend_direction || matchingStat?.trend_direction || "stable",
         change_pct: normalizedChangePct,
-        recommendation: ai.recommendation || "",
+        recommendation: sanitizeCausalLanguage(interpreted.recommendation || "Investigate candidate drivers and validate competing explanations."),
         ...applyMeta(meta),
       } as DiagnosticResult;
     });
 
     const diagnostics = await Promise.all(diagnosticPromises);
 
-    // Sort: critical first, then warning, then info
     diagnostics.sort((a, b) => {
       const order = { critical: 0, warning: 1, info: 2 };
       return order[a.severity] - order[b.severity];
@@ -461,14 +526,16 @@ IMPORTANT: Frame all diagnoses through this decision context. Explain how each f
     return new Response(JSON.stringify({
       diagnostics,
       analyzed_metrics: metrics.length,
-      metric_types_analyzed: stats.map(s => s.metric_type),
+      metric_types_analyzed: stats.map(stat => stat.metric_type),
       skipped_metrics: skippedMetrics,
-      adaptive_calibration_applied: diagnostics.some(d => d.adaptive_calibration_applied),
+      adaptive_calibration_applied: diagnostics.some(diagnostic => diagnostic.adaptive_calibration_applied),
+      causal_status: "not_established",
+      diagnostic_method: "descriptive statistics + regression trend + segment shifts + deterministic changepoint detection",
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), {
+  } catch (error: any) {
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
