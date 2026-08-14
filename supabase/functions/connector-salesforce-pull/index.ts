@@ -25,6 +25,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, getCorsHeaders } from "../_shared/cors.ts";
 import { shouldAllow, recordSuccess, recordFailure, deadLetter } from "../_shared/connector-isolation.ts";
+import { authorizeConnectorInvocation } from "../_shared/connector-invocation-auth.ts";
 import { preflightWait, observeResponse } from "../_shared/connector-throttle.ts";
 import {
   upsertCanonicalEntities, upsertCanonicalEvents,
@@ -82,6 +83,23 @@ serve(async (req) => {
       return json({ error: "connector organization missing" }, 500, cors);
     }
     const orgId = connector.organization_id;
+
+    const authHeader = req.headers.get("authorization");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const userClient = anonKey
+      ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader ?? "" } } })
+      : null;
+    const invocation = await authorizeConnectorInvocation({
+      authHeader,
+      serviceRoleKey,
+      organizationId: orgId,
+      userClient,
+      membershipClient: svc,
+    });
+    if (!invocation.allowed) {
+      return json({ error: invocation.reason === "forbidden" ? "Forbidden" : "Unauthorized" }, invocation.status, cors);
+    }
+
     const cfg = (connector.config ?? {}) as { mode?: Mode; objects?: unknown; governance?: SoqlGovernance };
     const mode: Mode = request.mode ?? cfg.mode ?? "incremental_sync";
     if (mode !== "historical_backfill" && mode !== "incremental_sync") {
