@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Button } from "@/components/ui/button";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { useDecisionContexts } from "@/hooks/useDecisionContexts";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
-import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -16,12 +14,26 @@ import DiagnosticEmptyState from "@/components/diagnostics/DiagnosticEmptyState"
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
+export interface DiagnosticStructuralBreak {
+  index: number;
+  date?: string;
+  mean_before: number;
+  mean_after: number;
+  magnitude_pct: number;
+  significance: number;
+}
+
 export interface DiagnosticResult {
   metric_type: string;
   diagnosis: string;
   severity: "critical" | "warning" | "info";
+  /** Compatibility field; backend guarantees this is a driver hypothesis, not causal attribution. */
   root_cause: string;
+  /** Compatibility field; backend guarantees these are associated evidence, not asserted causes. */
   causal_factors: string[];
+  causal_status?: "not_established" | "supported_by_causal_design";
+  evidence_level?: "descriptive" | "temporal_break" | "causal";
+  structural_breaks?: DiagnosticStructuralBreak[];
   trend_direction: "improving" | "declining" | "stable" | "volatile";
   change_pct: number;
   recommendation: string;
@@ -71,7 +83,7 @@ const Diagnostics = () => {
       setSkippedMetrics((data?.skipped_metrics as string[]) || []);
       setHasRun(true);
       if ((data?.diagnostics as DiagnosticResult[])?.length === 0) {
-        toast({ title: "No anomalies detected", description: "All metrics within expected ranges." });
+        toast({ title: "No material diagnostic patterns detected", description: "No metric met the current diagnostic thresholds." });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Diagnostic failed";
@@ -98,7 +110,7 @@ const Diagnostics = () => {
           <div className="flex items-center gap-3">
             <SidebarMobileToggle />
             <h1 className="text-[18px] font-semibold tracking-tight">Diagnostic Intelligence</h1>
-            <p className="text-xs text-muted-foreground">Root cause analysis & causal pattern detection</p>
+            <p className="text-xs text-muted-foreground">Statistical patterns, structural breaks & driver hypotheses</p>
           </div>
           <Button onClick={runDiagnostics} disabled={loading} variant="outline" size="sm" className="gap-2">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
