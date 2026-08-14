@@ -12,9 +12,18 @@ import {
 import type { ReviewableDecision } from "@/components/decisions/executive-review-flow";
 import { NarrativeHeader } from "@/components/narrative/NarrativeHeader";
 
+const confidenceOf = (decision: ReviewableDecision): number =>
+  decision.capped_confidence ?? decision.confidence_at_decision ?? decision.raw_confidence ?? -1;
+
+const createdAtOf = (decision: ReviewableDecision): number => {
+  const value = decision.created_at ? new Date(decision.created_at).getTime() : 0;
+  return Number.isFinite(value) ? value : 0;
+};
+
 /**
- * UX-2 Executive Brief (/executive-brief): the single strongest pending
- * decision, readable in 30 seconds, with one CTA into the review flow.
+ * UX-2 Executive Brief (/executive-brief): one pending decision selected by
+ * decision-time confidence, newest on ties. Raw predicted_net_impact is not a
+ * priority signal because legacy rows may contain heuristic monetary estimates.
  */
 const ExecutiveBrief = () => {
   const { currentOrgId } = useOrganization();
@@ -31,12 +40,17 @@ const ExecutiveBrief = () => {
         .select("*")
         .eq("organization_id", currentOrgId)
         .eq("decision_status", "pending")
-        .order("predicted_net_impact", { ascending: false, nullsFirst: false })
         .order("created_at", { ascending: false })
         .limit(20);
       if (!error && data) {
-        setDecision((data[0] as unknown as ReviewableDecision) ?? null);
-        setPendingCount(data.length);
+        const ranked = (data as unknown as ReviewableDecision[])
+          .slice()
+          .sort((a, b) => {
+            const confidenceDelta = confidenceOf(b) - confidenceOf(a);
+            return confidenceDelta !== 0 ? confidenceDelta : createdAtOf(b) - createdAtOf(a);
+          });
+        setDecision(ranked[0] ?? null);
+        setPendingCount(ranked.length);
       }
       setLoading(false);
     };
@@ -61,12 +75,11 @@ const ExecutiveBrief = () => {
           }
           takeaway={
             decision
-              ? `The one decision that most needs your judgment right now${pendingCount > 1 ? `, out of ${pendingCount} pending` : ""}.`
+              ? `The pending decision with the highest available decision-time confidence${pendingCount > 1 ? `, out of ${pendingCount} pending` : ""}.`
               : "No decisions are waiting on you. Use this window to review measured outcomes and calibration."
           }
         />
       </div>
-
 
       {loading ? (
         <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
