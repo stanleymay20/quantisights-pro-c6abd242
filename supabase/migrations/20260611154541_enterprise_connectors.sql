@@ -47,7 +47,7 @@ BEGIN
     PERFORM cron.schedule(
       'daily-morning-brief',
       '0 7 * * *',   -- 07:00 UTC daily
-      $$
+      $cron$
         SELECT net.http_post(
           url := current_setting('app.supabase_url') || '/functions/v1/morning-brief',
           headers := jsonb_build_object(
@@ -56,7 +56,7 @@ BEGIN
           ),
           body := '{}'::jsonb
         ) AS request_id;
-      $$
+      $cron$
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
@@ -71,7 +71,7 @@ BEGIN
     PERFORM cron.schedule(
       'hourly-connector-sync',
       '0 * * * *',   -- top of every hour
-      $$
+      $cron$
         SELECT net.http_post(
           url := current_setting('app.supabase_url') || '/functions/v1/connector-scheduler',
           headers := jsonb_build_object(
@@ -80,7 +80,7 @@ BEGIN
           ),
           body := '{}'::jsonb
         ) AS request_id;
-      $$
+      $cron$
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
