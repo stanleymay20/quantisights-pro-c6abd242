@@ -165,6 +165,13 @@ function decodeSkipToken(value: string): string | undefined {
   }
 }
 
+function normalizeMetadataTarget(value: string): string {
+  const trimmed = value.trim();
+  const collection = /^Collection\((.+)\)$/i.exec(trimmed);
+  const qualified = collection?.[1]?.trim() ?? trimmed;
+  return qualified.split(".").pop() ?? qualified;
+}
+
 export function assertOdataQuerySafe(
   service: string,
   entity: SapEntityPull,
@@ -387,7 +394,7 @@ export function parseMetadataXml(xml: string): SapMetadataEntity[] {
     let navigationMatch: RegExpExecArray | null;
     while ((navigationMatch = navigationPattern.exec(body))) {
       if (navigationMatch[1] && navigationMatch[2]) {
-        navigationProperties.push({ name: navigationMatch[1], target: navigationMatch[2] });
+        navigationProperties.push({ name: navigationMatch[1], target: normalizeMetadataTarget(navigationMatch[2]) });
       }
     }
 
