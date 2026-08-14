@@ -100,7 +100,7 @@ serve(async (req) => {
 
     for (const ep of cfg.entity_pulls) {
       try {
-        const { url_path, top } = assertOdataQuerySafe(ep.service, ep, gov);
+        const { top } = assertOdataQuerySafe(ep.service, ep, gov);
 
         // Incremental: append cursor filter
         const effective: SapEntityPull = { ...ep, top };
@@ -131,13 +131,14 @@ serve(async (req) => {
         let maxCursor: string | undefined;
 
         do {
-          await preflightWait(svc, connector_id, VENDOR);
+          await preflightWait(svc, orgId, connector_id, VENDOR);
           const url = buildOdataUrl(cfg.base_url, version, ep.service, effective, top, skipToken);
           const res = await fetch(url, { headers, signal: AbortSignal.timeout((gov.query_timeout_seconds ?? 60) * 1000) });
-          await observeResponse(svc, connector_id, VENDOR, {
-            status: res.status,
-            remaining: Number(res.headers.get("x-ratelimit-remaining") ?? NaN),
-            reset_after_ms: Number(res.headers.get("retry-after") ?? NaN) * 1000,
+          await observeResponse(svc, {
+            orgId,
+            connectorId: connector_id,
+            vendor: VENDOR,
+            res,
           });
 
           if (!res.ok) {
@@ -212,7 +213,13 @@ serve(async (req) => {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         failures.push({ service: ep.service, entity_set: ep.entity_set, reason: msg });
-        await deadLetter(svc, connector_id, orgId, { service: ep.service, entity_set: ep.entity_set, reason: msg });
+        await deadLetter(svc, {
+          orgId,
+          connectorId: connector_id,
+          syncRunId: runId ?? undefined,
+          payload: { service: ep.service, entity_set: ep.entity_set },
+          errorMessage: msg,
+        });
       }
     }
 
