@@ -28,6 +28,8 @@ export interface DecisionOptionModel {
 export interface DecisionOptionInput {
   recommendedAction: string;
   predictedNetImpact?: number | null;
+  predictedImpactStatus?: OptionModelStatus;
+  predictedImpactLabel?: string | null;
   confidence?: number | null;
   assumptions?: string[];
   riskIfWrong?: string | null;
@@ -39,6 +41,19 @@ export interface DecisionOptionInput {
 export interface ExecutiveDecisionTraceabilityInput {
   id: string;
   explanationMetadata?: unknown;
+}
+
+export interface ExecutiveDecisionImpactInput {
+  predictedNetImpact?: number | null;
+  decisionSimulationId?: string | null;
+  explanationMetadata?: unknown;
+}
+
+export interface ExecutiveImpactClassification {
+  status: OptionModelStatus;
+  value: number | null;
+  label: string;
+  basis: string | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -103,6 +118,51 @@ export function traceabilityFromExecutiveDecision(input: ExecutiveDecisionTracea
   };
 }
 
+/**
+ * Classify a persisted financial-impact number without upgrading a heuristic
+ * estimate into a model result. A linked decision simulation is the explicit
+ * signal that the number is modeled. Legacy rule/severity estimates remain
+ * visible only as derived/heuristic values.
+ */
+export function classifyExecutiveDecisionImpact(input: ExecutiveDecisionImpactInput): ExecutiveImpactClassification {
+  const value = typeof input.predictedNetImpact === "number" && Number.isFinite(input.predictedNetImpact)
+    ? input.predictedNetImpact
+    : null;
+  const metadata = asRecord(input.explanationMetadata);
+  const expectedImpact = asRecord(metadata.expected_impact);
+  const basis = stringOrNull(expectedImpact.basis);
+
+  if (value === null) {
+    return {
+      status: "unmodeled",
+      value: null,
+      label: "Not quantified — no evidence-backed monetary impact model",
+      basis,
+    };
+  }
+
+  if (input.decisionSimulationId) {
+    return {
+      status: "modeled",
+      value,
+      label: "Modeled by linked decision simulation",
+      basis,
+    };
+  }
+
+  const normalizedBasis = basis?.toLowerCase() ?? "";
+  const explicitlyHeuristic = /(severity|rule|heuristic|estimate|assumption)/.test(normalizedBasis);
+
+  return {
+    status: "derived",
+    value,
+    label: explicitlyHeuristic
+      ? `Heuristic/derived estimate${basis ? ` — ${basis}` : ""}`
+      : "Derived estimate — no linked decision simulation",
+    basis,
+  };
+}
+
 function evidenceStatus(traceability: TraceabilityRecord | null | undefined): Pick<DecisionOptionModel, "evidenceStatus" | "evidenceLabel"> {
   if (traceability?.isVerifiedSource) {
     return {
@@ -122,18 +182,22 @@ function evidenceStatus(traceability: TraceabilityRecord | null | undefined): Pi
   };
 }
 
-function modeledImpact(value: number | null | undefined): DecisionOptionModel["impact"] {
+function modeledImpact(
+  value: number | null | undefined,
+  status: OptionModelStatus = "modeled",
+  label?: string | null,
+): DecisionOptionModel["impact"] {
   if (typeof value === "number" && Number.isFinite(value)) {
     return {
-      status: "modeled",
+      status,
       value,
-      label: "Modeled expected impact",
+      label: label ?? (status === "modeled" ? "Modeled expected impact" : "Derived impact estimate"),
     };
   }
   return {
     status: "unmodeled",
     value: null,
-    label: "Unmodeled — no independent impact estimate",
+    label: label ?? "Unmodeled — no independent impact estimate",
   };
 }
 
@@ -173,7 +237,7 @@ export function buildDecisionOptions(input: DecisionOptionInput): DecisionOption
     title: "Recommended action",
     action: input.recommendedAction,
     rationale: "Uses the currently supported decision model and evidence chain.",
-    impact: modeledImpact(input.predictedNetImpact),
+    impact: modeledImpact(input.predictedNetImpact, input.predictedImpactStatus, input.predictedImpactLabel),
     confidence: modeledConfidence(input.confidence),
     assumptions: baseAssumptions,
     risks: baseRisk,
