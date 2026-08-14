@@ -36,6 +36,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Strict trusted-kernel typecheck
+        run: npm run typecheck:trusted
+
       - name: Test
         run: npm test -- --run
 
