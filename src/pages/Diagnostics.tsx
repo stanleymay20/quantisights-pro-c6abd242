@@ -34,6 +34,7 @@ export interface DiagnosticResult {
   causal_status?: "not_established" | "supported_by_causal_design";
   evidence_level?: "descriptive" | "temporal_break" | "causal";
   structural_breaks?: DiagnosticStructuralBreak[];
+  expected_direction?: "increase" | "decrease" | "stable";
   trend_direction: "improving" | "declining" | "stable" | "volatile";
   change_pct: number;
   recommendation: string;
