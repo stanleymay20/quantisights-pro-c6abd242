@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 const evaluator = read("supabase/functions/aicis-evaluate-outcomes/index.ts");
 const widget = read("src/components/decisions/OutcomeFeedbackWidget.tsx");
+const boundsMigration = read("supabase/migrations/20260814182000_harden_aicis_probability_bounds.sql");
 
 describe("AICIS outcome calibration semantics", () => {
   it("never uses business impact as the binary Brier target", () => {
@@ -35,5 +36,13 @@ describe("AICIS outcome calibration semantics", () => {
   it("normalizes percentage probabilities before Brier scoring", () => {
     expect(evaluator).toContain("raw > 1 && raw <= 100 ? raw / 100 : raw");
     expect(evaluator).toContain("normalized >= 0 && normalized <= 1");
+  });
+
+  it("enforces the probability domain at the database boundary", () => {
+    expect(boundsMigration).toContain("aicis_outcomes_actual_value_binary_check");
+    expect(boundsMigration).toContain("actual_value IN (0, 1)");
+    expect(boundsMigration).toContain("predicted_value BETWEEN 0 AND 1");
+    expect(boundsMigration).toContain("brier_score BETWEEN 0 AND 1");
+    expect(boundsMigration).toContain("error_margin BETWEEN 0 AND 1");
   });
 });
