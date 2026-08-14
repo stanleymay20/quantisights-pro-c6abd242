@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { trustFromDecision } from "@/components/trust/trust-adapter";
+import DecisionOptionComparison from "@/components/decisions/DecisionOptionComparison";
+import { buildDecisionOptions, traceabilityFromExecutiveDecision } from "@/lib/decision-options";
 import {
   getExecutiveApprovalBlockReason,
   getExecutiveApprovalChecklist,
@@ -50,43 +52,6 @@ function Section({
   );
 }
 
-function AlternativeCard({
-  name,
-  benefit,
-  risk,
-  expectedOutcome,
-  recommended = false,
-}: {
-  name: string;
-  benefit: string;
-  risk: string;
-  expectedOutcome: string;
-  recommended?: boolean;
-}) {
-  return (
-    <div className={cn("rounded-lg border p-3", recommended ? "border-primary/40 bg-primary/[0.03]" : "border-border/50")}>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold">{name}</p>
-        {recommended && <Badge className="text-[10px]">Recommended</Badge>}
-      </div>
-      <dl className="mt-3 space-y-2 text-xs">
-        <div>
-          <dt className="font-semibold text-muted-foreground">Benefit</dt>
-          <dd>{benefit}</dd>
-        </div>
-        <div>
-          <dt className="font-semibold text-muted-foreground">Risk</dt>
-          <dd>{risk}</dd>
-        </div>
-        <div>
-          <dt className="font-semibold text-muted-foreground">Expected outcome</dt>
-          <dd>{expectedOutcome}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
 export default function ExecutiveDecisionReview({
   decision,
   organizationId,
@@ -98,6 +63,16 @@ export default function ExecutiveDecisionReview({
   const approvalAllowed = isExecutiveApprovalAllowed(decision);
   const blockReason = getExecutiveApprovalBlockReason(decision);
   const action = decision.recommended_action || "Review this recommendation with the responsible owner.";
+  const traceability = traceabilityFromExecutiveDecision({
+    id: decision.id,
+    explanationMetadata: decision.explanation_metadata,
+  });
+  const options = buildDecisionOptions({
+    recommendedAction: action,
+    predictedNetImpact: decision.predicted_net_impact,
+    confidence,
+    traceability,
+  });
   const evidenceQuality =
     trust.evidenceStatus === "verified"
       ? "decision-grade"
@@ -199,33 +174,7 @@ export default function ExecutiveDecisionReview({
         </div>
 
         <Section title="Alternative actions">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <AlternativeCard
-              name="Recommended option"
-              benefit="Fastest path to reduce the identified risk or capture the opportunity."
-              risk="Execution risk if the supporting evidence is misunderstood."
-              expectedOutcome="Measured impact against the selected KPI and audit trail."
-              recommended
-            />
-            <AlternativeCard
-              name="Alternative A"
-              benefit="Run a smaller controlled intervention first."
-              risk="Slower impact and possible missed timing window."
-              expectedOutcome="Lower operational risk with a narrower measured outcome."
-            />
-            <AlternativeCard
-              name="Alternative B"
-              benefit="Escalate to governance review before execution."
-              risk="Adds delay and may reduce responsiveness."
-              expectedOutcome="Stronger compliance posture before action."
-            />
-            <AlternativeCard
-              name="No action"
-              benefit="Avoids immediate execution cost."
-              risk="Risk or opportunity remains unmanaged."
-              expectedOutcome="No measurable improvement; exposure may persist."
-            />
-          </div>
+          <DecisionOptionComparison options={options} />
         </Section>
 
         <div className="grid gap-4 lg:grid-cols-2">
