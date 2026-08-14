@@ -38,8 +38,10 @@ export interface RecommendationInput {
   category?: string | null;
   sampleSize?: number;
   calibrationApplied?: boolean;
-  /** Source dataset for traceability */
-  datasetId?: string;
+  /** Stable source dataset id for traceability. */
+  datasetId?: string | null;
+  /** Stable source insight/advisory/decision id for traceability. */
+  sourceEntityId?: string | null;
   /** Human-readable dataset name */
   datasetName?: string;
   /** Row count used */
@@ -91,46 +93,35 @@ export interface StructuredRecommendation {
 }
 
 // Ordered longest-first to prevent partial matches (e.g. "cost_of_revenue" matching "cost" before "revenue")
-// Ordered longest-first to prevent partial matches
 const OWNER_MAP: [string, string][] = [
-  // Multi-word keys first
   ["cost_of_revenue", "VP Revenue / CRO"],
   ["supply chain", "VP Supply Chain / CPO"],
-  // Safety / Healthcare / Life Sciences
   ["mortality", "CMO / Chief Patient Safety Officer"],
   ["patient", "CMO / Chief Patient Safety Officer"],
   ["clinical", "CMO / VP Clinical Operations"],
   ["readmission", "CMO / VP Clinical Quality"],
   ["safety", "VP EHS / Chief Safety Officer"],
-  // Regulatory / Compliance
   ["compliance", "CCO / Chief Compliance Officer"],
   ["regulatory", "CCO / VP Regulatory Affairs"],
   ["audit", "VP Internal Audit / CCO"],
-  // Financial Services / Risk
   ["fraud", "CRO / VP Fraud Prevention"],
   ["liquidity", "CFO / VP Treasury"],
   ["exposure", "CRO / VP Risk Management"],
   ["credit", "CRO / VP Credit Risk"],
-  // Industrial / Manufacturing
   ["downtime", "VP Operations / Plant Manager"],
   ["outage", "VP Operations / Grid Manager"],
   ["defect", "VP Quality / Six Sigma Lead"],
   ["throughput", "VP Operations / Plant Manager"],
   ["yield", "VP Manufacturing / Process Engineering Lead"],
-  // Energy / Utilities
   ["emission", "VP Sustainability / Chief Sustainability Officer"],
   ["energy", "VP Energy Management / Facilities Director"],
-  // Supply Chain / Logistics
   ["inventory", "VP Supply Chain / Inventory Manager"],
   ["logistics", "VP Supply Chain / Logistics Director"],
   ["procurement", "VP Procurement / CPO"],
-  // Education / Public Sector
   ["enrollment", "VP Enrollment Management / Registrar"],
   ["attrition", "VP Student Success / CHRO"],
-  // Hospitality / Real Estate
   ["occupancy", "VP Revenue Management / Asset Manager"],
   ["vacancy", "VP Leasing / Asset Manager"],
-  // SaaS / Subscription (original)
   ["calibration", "Decision Governance Lead"],
   ["operational", "COO / VP Operations"],
   ["strategic", "CEO / Strategy Lead"],
@@ -153,7 +144,6 @@ function inferOwner(category: string | null | undefined, metricType: string | nu
 
 function inferDeadlineDays(severity: string, confidence: number | null, sampleSize?: number): number {
   const conf = confidence ?? 50;
-  // Low sample sizes warrant extra time to collect data before acting
   const dataBuffer = (sampleSize != null && sampleSize < 12) ? 3 : 0;
   if (severity === "critical") return (conf > 70 ? 3 : 5) + dataBuffer;
   if (severity === "high") return (conf > 70 ? 7 : 10) + dataBuffer;
@@ -181,15 +171,14 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
   // --- Evidence basis ---
   const evidenceBasis: string[] = [];
   if (msg.length > 20) evidenceBasis.push(`Signal: "${msg.slice(0, 120)}"`);
-  if (input.diagnosticFindings) evidenceBasis.push(`Diagnostic: ${input.diagnosticFindings}`);
-  if (input.causalFactors) evidenceBasis.push(`Causal factors: ${input.causalFactors}`);
+  if (input.diagnosticFindings) evidenceBasis.push(`Driver hypothesis: ${input.diagnosticFindings}`);
+  if (input.causalFactors) evidenceBasis.push(`Associated factors: ${input.causalFactors}`);
   if (input.priorAdvisoryAction) evidenceBasis.push(`Prior advisory: ${input.priorAdvisoryAction}`);
   if (conf > 0) evidenceBasis.push(`Confidence: ${conf}% (${confLabel})`);
 
   // --- Classified sections ---
   const sections: ClassifiedSection[] = [];
 
-  // What happened — advisory prior actions are AI_RECOMMENDATION, not OBSERVED_FACT
   let whatHappened: string;
   let whatHappenedClassification: OutputClassification;
   if (input.signalType === "advisory" && input.priorAdvisoryAction) {
@@ -205,12 +194,11 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
     whatHappenedClassification = "HEURISTIC_ESTIMATE";
   }
   sections.push({
-    classification: whatHappenedClassification!,
+    classification: whatHappenedClassification,
     label: "What happened",
     content: whatHappened,
   });
 
-  // STATISTICAL_INFERENCE or HEURISTIC: Why it matters
   const whyParts: string[] = [];
   whyParts.push(`Detected at ${confLabel} (${conf}%)`);
   if (sampleSize > 0) whyParts.push(`based on ${sampleSize} data points`);
@@ -219,9 +207,9 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
   } else if (input.severity === "high") {
     whyParts.push("classified as high severity — material business impact likely");
   }
-  if (input.diagnosticFindings) whyParts.push(`root cause analysis: ${input.diagnosticFindings}`);
-  if (input.causalFactors) whyParts.push(`contributing factors: ${input.causalFactors}`);
-  if (trend === "down") whyParts.push("negative trajectory compounds exposure over time");
+  if (input.diagnosticFindings) whyParts.push(`driver hypothesis: ${input.diagnosticFindings}`);
+  if (input.causalFactors) whyParts.push(`associated factors: ${input.causalFactors}`);
+  if (trend === "down") whyParts.push("downward trajectory may compound exposure over time where lower values are not the intended direction");
   if (msg.length > 20 && !input.diagnosticFindings) {
     const numMatch = msg.match(/(\d+\.?\d*)\s*%/);
     if (numMatch) whyParts.push(`signal magnitude: ${numMatch[0]}`);
@@ -233,33 +221,31 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
     content: whyItMatters,
   });
 
-  // Assumptions
   const assumptions: string[] = [];
   if (sampleSize < 30) {
     assumptions.push(`Limited sample size (${sampleSize} points) — trends may not be statistically significant`);
   }
+  assumptions.push("Observed associations and timing do not by themselves establish causality");
   if (!input.diagnosticFindings) {
-    assumptions.push("Root cause has not been diagnostically confirmed");
+    assumptions.push("Candidate drivers have not been diagnostically investigated");
   }
   if (trend !== "stable") {
-    assumptions.push(`Assumes ${trend === "down" ? "downward" : "upward"} trend will continue without intervention`);
+    assumptions.push(`Assumes the observed ${trend === "down" ? "downward" : "upward"} movement persists without intervention`);
   }
   if (input.signalType === "proactive") {
     assumptions.push("Proactive signal — threshold-based detection, not anomaly-confirmed");
   }
 
-  // Risk if wrong — contextualized with metric/category exposure
   const riskMetricRef = met || cat || "the monitored metric";
   let riskIfWrong: string;
   if (input.severity === "critical") {
-    riskIfWrong = `If this ${riskMetricRef} signal is a false positive, acting on it may divert resources from other priorities. However, the cost of ignoring a true critical ${riskMetricRef} degradation typically outweighs the cost of investigation.`;
+    riskIfWrong = `If this ${riskMetricRef} signal is a false positive, acting on it may divert resources from other priorities. The evidence should be investigated before irreversible action.`;
   } else if (conf < 40) {
     riskIfWrong = `Low confidence (${conf}%) on ${riskMetricRef} means this signal has a high probability of being noise. Recommend investigation before committing resources.`;
   } else {
-    riskIfWrong = `If the underlying ${riskMetricRef} trend reverses naturally, the recommended action may be unnecessary. Monitor the success metrics to detect early and adjust.`;
+    riskIfWrong = `If the underlying ${riskMetricRef} trend reverses naturally or the driver hypothesis is wrong, the recommended action may be unnecessary. Monitor the success metrics and adjust.`;
   }
 
-  // AI_RECOMMENDATION: Action
   let recommendedAction: string;
   if (input.signalType === "pending_outcome") {
     recommendedAction = `Record the actual outcome of this decision to close the feedback loop and improve calibration accuracy. Decision has been pending — outcome data is overdue.`;
@@ -268,22 +254,21 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
     if (msg.length > 20) {
       actionParts.push(`Investigate the specific signal: "${msg.slice(0, 80)}${msg.length > 80 ? "..." : ""}".`);
     } else {
-      actionParts.push(`Investigate ${met || cat || "this signal"} via the diagnostic engine to identify root cause.`);
+      actionParts.push(`Investigate ${met || cat || "this signal"} via the diagnostic engine to identify and test candidate drivers.`);
     }
-    actionParts.push(`Quantify impact using ${conf}% confidence signal (${confLabel}).`);
+    actionParts.push(`Quantify impact using the ${conf}% confidence signal (${confLabel}) and preserve the evidence chain.`);
 
-    // Domain-specific action playbooks — ordered by urgency tier
     const actionKey = [cat, met].join(" ");
     if (actionKey.includes("mortality") || actionKey.includes("patient") || actionKey.includes("clinical")) {
       actionParts.push(`Initiate clinical safety review. Assess patient impact, escalate through safety committee, and implement corrective protocol for ${segment}.`);
     } else if (actionKey.includes("safety")) {
-      actionParts.push(`Trigger EHS incident review. Conduct root cause analysis, implement containment measures, and update safety protocols for ${segment}.`);
+      actionParts.push(`Trigger EHS incident review. Conduct a formal root-cause investigation before attributing cause, implement containment measures, and update safety protocols for ${segment}.`);
     } else if (actionKey.includes("compliance") || actionKey.includes("regulatory")) {
       actionParts.push(`Initiate compliance gap assessment. Document findings, engage regulatory affairs, and implement remediation plan within action window.`);
     } else if (actionKey.includes("fraud")) {
       actionParts.push(`Escalate to fraud investigation team. Freeze affected transactions, run pattern analysis, and implement enhanced monitoring for ${segment}.`);
     } else if (actionKey.includes("outage") || actionKey.includes("downtime")) {
-      actionParts.push(`Execute incident response protocol. Perform root cause analysis, implement corrective maintenance, and update failover procedures.`);
+      actionParts.push(`Execute incident response protocol. Perform a formal root-cause investigation before attribution, implement corrective maintenance, and update failover procedures.`);
     } else if (actionKey.includes("defect") || actionKey.includes("yield")) {
       actionParts.push(`Run Pareto analysis on defect categories. Implement corrective actions on top contributors and verify via control charts.`);
     } else if (actionKey.includes("liquidity") || actionKey.includes("credit") || actionKey.includes("exposure")) {
@@ -307,14 +292,13 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
     } else if (actionKey.includes("calibration")) {
       actionParts.push(`Complete pending calibration assessments and close outstanding decision outcomes.`);
     } else {
-      actionParts.push(`Approve corrective action and set measurement checkpoint.`);
+      actionParts.push(`Approve corrective action only after the evidence threshold is satisfied, then set a measurement checkpoint.`);
     }
 
-    // Inject organizational identity context
     if (input.orgIdentity) {
       const oi = input.orgIdentity;
       if (oi.decisionSpeedPreference === "rapid" || oi.decisionSpeedPreference === "agile") {
-        actionParts.push(`Organization operates in ${oi.decisionSpeedPreference} decision mode — prioritize speed of execution.`);
+        actionParts.push(`Organization operates in ${oi.decisionSpeedPreference} decision mode — prioritize speed of investigation and reversible execution.`);
       }
       if (oi.governanceModel === "consensus") {
         actionParts.push(`Governance model requires consensus — secure stakeholder alignment before execution.`);
@@ -339,40 +323,11 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
 
   const successMetrics = inferSuccessMetrics(cat, met);
 
-  // --- Decision Quality Score ---
-  const evidenceBlock: Partial<EvidenceBlock> = {
-    observation: whatHappened,
-    evidence: evidenceBasis,
-    reasoning: whyItMatters,
-    confidenceBasis,
-    assumptions,
-    limitations: sampleSize < 12 ? ["Limited data — statistical significance not established"] : [],
-    recommendation: recommendedAction,
-    expectedImpact: input.severity === "critical" ? "Immediate risk mitigation" : "Trend correction within action window",
-    riskIfWrong,
-  };
-
-  const qualityScore = scoreDecisionQuality(evidenceBlock);
-  const isDecisionGrade = qualityScore.isDecisionGrade;
-
-  // --- FAIL-CLOSED GATE ---
-  let decisionGateMessage: string | null = null;
-  if (!isDecisionGrade) {
-    decisionGateMessage = `Insufficient evidence for decision-grade recommendation (${qualityScore.overall}/100, Grade ${qualityScore.grade}). ${qualityScore.downgradeReason ?? ""}`;
-    // Suppress the strategic recommendation text
-    recommendedAction = "⚠ Not decision-grade — insufficient evidence to generate a reliable recommendation. " + (qualityScore.downgradeReason ?? "");
-    // Update the section
-    sections[sections.length - 1] = {
-      classification: "AI_RECOMMENDATION",
-      label: "Recommendation suppressed",
-      content: recommendedAction,
-    };
-  }
-
-  // --- Traceability ---
+  // --- Traceability — built BEFORE scoring so provenance is a hard gate. ---
   const metricTypes = [met, cat].filter(Boolean);
   const traceability = buildTraceability({
-    datasetId: input.datasetId ?? "active-dataset",
+    datasetId: input.datasetId,
+    sourceEntityId: input.sourceEntityId,
     datasetName: input.datasetName,
     dataRowsUsed: input.dataRowsUsed ?? sampleSize,
     metricTypes: metricTypes.length > 0 ? metricTypes : ["unknown"],
@@ -382,7 +337,36 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
     limitations: sampleSize < 12 ? ["Insufficient data for statistical significance"] : [],
   });
 
-  // --- Execution Readiness ---
+  const evidenceBlock: Partial<EvidenceBlock> = {
+    observation: whatHappened,
+    evidence: evidenceBasis,
+    reasoning: whyItMatters,
+    confidenceBasis,
+    traceability,
+    assumptions,
+    limitations: [
+      ...(sampleSize < 12 ? ["Limited data — statistical significance not established"] : []),
+      ...traceability.limitations,
+    ],
+    recommendation: recommendedAction,
+    expectedImpact: input.severity === "critical" ? "Immediate risk mitigation" : "Trend correction within action window",
+    riskIfWrong,
+  };
+
+  const qualityScore = scoreDecisionQuality(evidenceBlock);
+  const isDecisionGrade = qualityScore.isDecisionGrade;
+
+  let decisionGateMessage: string | null = null;
+  if (!isDecisionGrade) {
+    decisionGateMessage = `Insufficient evidence or provenance for decision-grade recommendation (${qualityScore.overall}/100, Grade ${qualityScore.grade}). ${qualityScore.downgradeReason ?? ""}`;
+    recommendedAction = "⚠ Not decision-grade — evidence/provenance requirements are not satisfied. " + (qualityScore.downgradeReason ?? "");
+    sections[sections.length - 1] = {
+      classification: "AI_RECOMMENDATION",
+      label: "Recommendation suppressed",
+      content: recommendedAction,
+    };
+  }
+
   const executionReadiness = assessExecutionReadiness(conf, sampleSize, isDecisionGrade, input.calibrationApplied ?? false);
 
   return {
@@ -407,7 +391,7 @@ export function generateRecommendation(input: RecommendationInput): StructuredRe
 
 function assessExecutionReadiness(confidence: number, sampleSize: number, isDecisionGrade: boolean, calibrationApplied: boolean): ExecutionReadiness {
   if (!isDecisionGrade) {
-    return { level: "low", label: "Low", reason: "Insufficient evidence for confident execution" };
+    return { level: "low", label: "Low", reason: "Insufficient evidence or provenance for confident execution" };
   }
   const factors: string[] = [];
   let score = 0;
@@ -423,60 +407,41 @@ function assessExecutionReadiness(confidence: number, sampleSize: number, isDeci
 function inferSuccessMetrics(category: string, metricType: string): string[] {
   const key = [category, metricType].filter(Boolean).join(" ").toLowerCase();
 
-  // Healthcare / Life Sciences
   if (key.includes("mortality") || key.includes("patient")) {
     return ["Patient outcome improvement rate", "Adverse event reduction", "Readmission rate delta"];
   } else if (key.includes("clinical")) {
     return ["Clinical efficacy measure", "Treatment adherence rate", "Patient safety incident reduction"];
   } else if (key.includes("readmission")) {
     return ["30-day readmission rate", "Post-discharge follow-up compliance", "Patient satisfaction score"];
-  }
-  // Safety
-  else if (key.includes("safety")) {
+  } else if (key.includes("safety")) {
     return ["TRIR (Total Recordable Incident Rate)", "Lost time injury frequency", "Near-miss reporting rate"];
-  }
-  // Regulatory / Compliance
-  else if (key.includes("compliance") || key.includes("regulatory")) {
+  } else if (key.includes("compliance") || key.includes("regulatory")) {
     return ["Compliance gap closure rate", "Audit finding remediation time", "Regulatory submission success rate"];
   } else if (key.includes("audit")) {
     return ["Audit finding count (trend)", "Remediation completion rate", "Control effectiveness score"];
-  }
-  // Financial Services / Risk
-  else if (key.includes("fraud")) {
+  } else if (key.includes("fraud")) {
     return ["Fraud detection rate", "False positive reduction", "Mean time to detection (MTTD)"];
   } else if (key.includes("liquidity")) {
     return ["Liquidity coverage ratio", "Cash conversion cycle", "Days payable/receivable outstanding"];
   } else if (key.includes("exposure") || key.includes("credit")) {
     return ["Value-at-Risk (VaR) delta", "Expected loss reduction", "Risk-adjusted return improvement"];
-  }
-  // Industrial / Manufacturing
-  else if (key.includes("downtime") || key.includes("outage")) {
+  } else if (key.includes("downtime") || key.includes("outage")) {
     return ["MTTR (Mean Time To Repair)", "MTBF (Mean Time Between Failures)", "Availability % improvement"];
   } else if (key.includes("defect")) {
     return ["Defect rate (PPM) reduction", "First-pass yield improvement", "Cost of poor quality (COPQ) delta"];
   } else if (key.includes("yield") || key.includes("throughput")) {
     return ["Overall Equipment Effectiveness (OEE)", "Throughput rate improvement", "Cycle time reduction"];
-  }
-  // Supply Chain / Logistics
-  else if (key.includes("supply chain") || key.includes("inventory") || key.includes("logistics")) {
+  } else if (key.includes("supply chain") || key.includes("inventory") || key.includes("logistics")) {
     return ["Inventory turnover ratio", "Order fulfillment rate", "Supply chain cycle time"];
   } else if (key.includes("procurement")) {
     return ["Cost savings vs. baseline", "Supplier lead time reduction", "Purchase order cycle time"];
-  }
-  // Energy / Sustainability
-  else if (key.includes("emission") || key.includes("energy")) {
+  } else if (key.includes("emission") || key.includes("energy")) {
     return ["Carbon intensity reduction (tCO2e/unit)", "Energy efficiency improvement", "Sustainability target progress"];
-  }
-  // Education / Public Sector
-  else if (key.includes("enrollment") || key.includes("attrition")) {
+  } else if (key.includes("enrollment") || key.includes("attrition")) {
     return ["Retention/enrollment rate improvement", "Engagement score delta", "Time-to-completion improvement"];
-  }
-  // Hospitality / Real Estate
-  else if (key.includes("occupancy") || key.includes("vacancy")) {
+  } else if (key.includes("occupancy") || key.includes("vacancy")) {
     return ["Occupancy rate improvement", "RevPAR / Revenue per unit", "Average lease-up velocity"];
-  }
-  // SaaS / Subscription (original)
-  else if (key.includes("churn") || key.includes("retention")) {
+  } else if (key.includes("churn") || key.includes("retention")) {
     return ["Monthly churn rate (% change)", "At-risk cohort size reduction", "NPS / CSAT delta"];
   } else if (key.includes("revenue")) {
     return ["MRR / ARR recovery trajectory", "Revenue variance vs. plan", "Pipeline conversion rate"];
@@ -490,7 +455,6 @@ function inferSuccessMetrics(category: string, metricType: string): string[] {
     return ["Calibration score improvement", "Brier score reduction", "Pending outcomes closed"];
   }
 
-  // Domain-agnostic fallback
   const metricLabel = metricType?.replace(/_/g, " ") || category?.replace(/_/g, " ") || "primary metric";
   return [
     `${metricLabel} trend direction (period-over-period)`,
