@@ -141,19 +141,19 @@ Deno.serve(async (req: Request) => {
           .eq("organization_id", organization_id);
         if (error) console.error("connector rollback schedule delete failed:", error.message);
       }
-      if (dataSourceId) {
-        const { error } = await svc.from("data_sources")
-          .delete()
-          .eq("id", dataSourceId)
-          .eq("organization_id", organization_id);
-        if (error) console.error("connector rollback data source delete failed:", error.message);
-      }
       if (connectorCreated) {
         const { error } = await svc.from("data_connectors")
           .delete()
           .eq("id", connectorId)
           .eq("organization_id", organization_id);
         if (error) console.error("connector rollback connector delete failed:", error.message);
+      }
+      if (dataSourceId) {
+        const { error } = await svc.from("data_sources")
+          .delete()
+          .eq("id", dataSourceId)
+          .eq("organization_id", organization_id);
+        if (error) console.error("connector rollback data source delete failed:", error.message);
       }
       for (const vaultKey of Object.values(vaultKeys)) {
         const { error } = await svc.rpc("delete_vault_secret", { _name: vaultKey });
