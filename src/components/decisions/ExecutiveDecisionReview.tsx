@@ -6,7 +6,11 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { trustFromDecision } from "@/components/trust/trust-adapter";
 import DecisionOptionComparison from "@/components/decisions/DecisionOptionComparison";
-import { buildDecisionOptions, traceabilityFromExecutiveDecision } from "@/lib/decision-options";
+import {
+  buildDecisionOptions,
+  classifyExecutiveDecisionImpact,
+  traceabilityFromExecutiveDecision,
+} from "@/lib/decision-options";
 import {
   getExecutiveApprovalBlockReason,
   getExecutiveApprovalChecklist,
@@ -67,9 +71,16 @@ export default function ExecutiveDecisionReview({
     id: decision.id,
     explanationMetadata: decision.explanation_metadata,
   });
+  const impactClassification = classifyExecutiveDecisionImpact({
+    predictedNetImpact: decision.predicted_net_impact,
+    decisionSimulationId: decision.decision_simulation_id,
+    explanationMetadata: decision.explanation_metadata,
+  });
   const options = buildDecisionOptions({
     recommendedAction: action,
-    predictedNetImpact: decision.predicted_net_impact,
+    predictedNetImpact: impactClassification.value,
+    predictedImpactStatus: impactClassification.status,
+    predictedImpactLabel: impactClassification.label,
     confidence,
     traceability,
   });
@@ -148,11 +159,16 @@ export default function ExecutiveDecisionReview({
         <div className="grid gap-4 lg:grid-cols-3">
           <Section title="Business impact">
             <div className="space-y-2">
-              <p className="flex items-center gap-2 font-semibold">
-                <TrendingUp className="h-4 w-4 text-primary" />
-                {euro(decision.predicted_net_impact)}
-              </p>
-              <p className="text-muted-foreground">Estimated financial impact if the recommendation is executed.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="flex items-center gap-2 font-semibold">
+                  <TrendingUp className="h-4 w-4 text-primary" />
+                  {euro(impactClassification.value)}
+                </p>
+                <Badge variant="outline" className="text-[10px] capitalize">
+                  {impactClassification.status}
+                </Badge>
+              </div>
+              <p className="text-muted-foreground">{impactClassification.label}</p>
             </div>
           </Section>
 
@@ -218,7 +234,8 @@ export default function ExecutiveDecisionReview({
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground">Financial impact</p>
-              <p className="mt-1 font-medium">{euro(decision.predicted_net_impact)}</p>
+              <p className="mt-1 font-medium">{euro(impactClassification.value)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{impactClassification.label}</p>
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground">Operational impact</p>
