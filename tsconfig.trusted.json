@@ -24,7 +24,8 @@
     "supabase/functions/_shared/connector-throttle.ts",
     "supabase/functions/_shared/salesforce-auth.ts",
     "supabase/functions/_shared/soql-guard.ts",
-    "supabase/functions/_shared/warehouse-config.ts"
+    "supabase/functions/_shared/warehouse-config.ts",
+    "supabase/functions/_shared/sap-odata.ts"
   ],
   "include": []
 }
