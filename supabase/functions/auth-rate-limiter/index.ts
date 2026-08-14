@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * auth-rate-limiter
  *
@@ -33,6 +32,13 @@ const IP_MAX_ATTEMPTS = 5;
 const EMAIL_WINDOW_SECONDS = 900; // 15 minutes
 const EMAIL_MAX_ATTEMPTS = 10;
 
+type RateLimitAction = "check" | "record_failure" | "record_success";
+
+interface RateLimitRequestBody {
+  email?: string;
+  action?: RateLimitAction;
+}
+
 function j(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -40,16 +46,35 @@ function j(body: unknown, status = 200) {
   });
 }
 
+function isRateLimitRequestBody(value: unknown): value is RateLimitRequestBody {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const emailValid = record.email === undefined || typeof record.email === "string";
+  const actionValid =
+    record.action === undefined ||
+    record.action === "check" ||
+    record.action === "record_failure" ||
+    record.action === "record_success";
+  return emailValid && actionValid;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return j({ error: "Method not allowed" }, 405);
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    console.error("auth-rate-limiter missing required Supabase environment configuration");
+    return j({ allowed: true, warning: "Rate limiter unavailable — proceeding" });
+  }
   const svc = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
   try {
-    const { email, action = "check" } = await req.json().catch(() => ({}));
+    const rawBody: unknown = await req.json().catch(() => ({}));
+    const body = isRateLimitRequestBody(rawBody) ? rawBody : {};
+    const email = body.email?.trim();
+    const action: RateLimitAction = body.action ?? "check";
 
     // Get caller IP from headers
     const ip =
