@@ -1,9 +1,9 @@
 /**
  * similar-decisions — Hybrid retrieval: deterministic + neural fallback.
  *
- * v4: Historical success is evaluated against the expected metric direction.
- * A negative delta is therefore correctly treated as success for decrease-is-good
- * metrics such as churn, cost, risk, mortality, downtime, and emissions.
+ * v5: Historical success is evaluated against the expected metric direction,
+ * and precedent accuracy is refreshed from canonical decision_outcomes records
+ * instead of trusting potentially stale embedding metadata.
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -222,23 +222,25 @@ serve(async (req) => {
     const hasStrongMatch = finalResults.some(r => r.match_tier === "strong");
     const hasModerateMatch = finalResults.some(r => r.match_tier === "moderate");
 
-    // Resolve outcome direction from the source-of-truth outcome contract rather
-    // than inferring business success from the sign of outcome_delta.
+    // Resolve outcome direction and measured accuracy from the source-of-truth
+    // outcome contract rather than trusting sign conventions or stale embeddings.
     const outcomeIds = finalResults
       .filter(r => r.entity_type === "outcome")
       .map(r => r.entity_id);
     const directionByDecision = new Map<string, ExpectedDirection>();
+    const accuracyByDecision = new Map<string, number>();
 
     if (outcomeIds.length > 0) {
       const { data: outcomeDefs, error: directionError } = await svc
         .from("decision_outcomes")
-        .select("decision_id, expected_direction")
+        .select("decision_id, expected_direction, accuracy_score, evaluation_date")
         .eq("organization_id", organization_id)
         .in("decision_id", outcomeIds)
+        .order("evaluation_date", { ascending: false, nullsFirst: false })
         .limit(100);
 
       if (directionError) {
-        console.warn("Unable to resolve precedent outcome direction:", directionError.message);
+        console.warn("Unable to resolve precedent outcome contract:", directionError.message);
       } else {
         for (const def of outcomeDefs ?? []) {
           if (
@@ -246,6 +248,13 @@ serve(async (req) => {
             ["increase", "decrease", "stable"].includes(def.expected_direction)
           ) {
             directionByDecision.set(def.decision_id, def.expected_direction as ExpectedDirection);
+          }
+
+          if (!accuracyByDecision.has(def.decision_id) && def.accuracy_score != null) {
+            const accuracy = Number(def.accuracy_score);
+            if (Number.isFinite(accuracy)) {
+              accuracyByDecision.set(def.decision_id, accuracy);
+            }
           }
         }
       }
@@ -255,10 +264,12 @@ serve(async (req) => {
       if (result.entity_type !== "outcome") continue;
       const expectedDirection = directionByDecision.get(result.entity_id);
       const outcomeSuccess = successForDirection(result.metadata?.outcome_delta, expectedDirection);
+      const canonicalAccuracy = accuracyByDecision.get(result.entity_id) ?? null;
       result.metadata = {
         ...result.metadata,
         expected_direction: expectedDirection ?? null,
         outcome_success: outcomeSuccess,
+        accuracy_score: canonicalAccuracy,
       };
     }
 
@@ -281,8 +292,8 @@ serve(async (req) => {
     }
 
     const accuracies = outcomes
-      .map(r => Number(r.metadata?.accuracy_score))
-      .filter(a => Number.isFinite(a));
+      .map(r => r.metadata?.accuracy_score)
+      .filter((a): a is number => typeof a === "number" && Number.isFinite(a));
     if (accuracies.length > 0) {
       avgAccuracy = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length);
       if (hasStrongMatch) {
