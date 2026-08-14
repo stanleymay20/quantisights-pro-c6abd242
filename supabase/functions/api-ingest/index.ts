@@ -17,7 +17,7 @@ const MAX_RECORDS = 50_000;
 const BATCH_SIZE = 1000;
 const MAX_VALUE = 1e12;
 
-type ServiceClient = ReturnType<typeof createClient>;
+type ServiceClient = ReturnType<typeof createClient<any>>;
 
 type AuthContext = {
   userId: string | null;
