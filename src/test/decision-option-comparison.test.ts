@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDecisionOptions } from "@/lib/decision-options";
+import { buildDecisionOptions, traceabilityFromExecutiveDecision } from "@/lib/decision-options";
 import { buildTraceability } from "@/lib/evidence-contract";
 
 const verifiedTrace = buildTraceability({
@@ -63,5 +63,45 @@ describe("decision option comparison integrity", () => {
     });
     expect(options[0].evidenceStatus).toBe("unverified");
     expect(options[0].evidenceLabel).toContain("No verified source");
+  });
+
+  it("reuses persisted executive source metadata as verified provenance only when all hard fields exist", () => {
+    const traceability = traceabilityFromExecutiveDecision({
+      id: "decision-1",
+      explanationMetadata: {
+        source: { kind: "insight", id: "insight-9", created_at: "2026-08-14T10:00:00Z" },
+        source_data: {
+          dataset_name: "Revenue dataset",
+          dataset_id: "dataset-9",
+          rows_analyzed: 240,
+          key_metrics: ["revenue", "conversion"],
+        },
+        evidence_classification: "OBSERVED_SIGNAL_TO_DECISION",
+        limitations: ["Executive review required before execution"],
+      },
+    });
+
+    expect(traceability).toMatchObject({
+      sourceDataset: "Revenue dataset",
+      sourceDatasetId: "dataset-9",
+      sourceEntityId: "insight-9",
+      dataRowsUsed: 240,
+      isVerifiedSource: true,
+      modelOrHeuristic: "OBSERVED_SIGNAL_TO_DECISION",
+    });
+  });
+
+  it("keeps executive provenance unverified when source rows are absent", () => {
+    const traceability = traceabilityFromExecutiveDecision({
+      id: "decision-2",
+      explanationMetadata: {
+        source: { kind: "advisory", id: "advisory-2" },
+        source_data: { dataset_id: "dataset-2", rows_analyzed: null },
+      },
+    });
+
+    expect(traceability.isVerifiedSource).toBe(false);
+    expect(traceability.dataRowsUsed).toBe(0);
+    expect(traceability.limitations).toContain("No observed rows are traceable to this decision");
   });
 });
