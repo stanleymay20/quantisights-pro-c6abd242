@@ -12,6 +12,8 @@
     "src/lib/decision-maturity.ts",
     "src/lib/safe-navigation.ts",
     "src/lib/decision-options.ts",
+    "src/lib/system-config.ts",
+    "src/lib/cost-of-delay.ts",
     "supabase/functions/_shared/calibration-correction.ts"
   ],
   "include": []
