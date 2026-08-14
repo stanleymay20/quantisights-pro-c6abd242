@@ -36,6 +36,73 @@ export interface DecisionOptionInput {
   costOfDelayLabel?: string | null;
 }
 
+export interface ExecutiveDecisionTraceabilityInput {
+  id: string;
+  explanationMetadata?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function numberOrZero(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+/**
+ * Adapt the existing decision_ledger explanation metadata into the same strict
+ * provenance contract used by the evidence gate. This adapter never promotes a
+ * decision to verified by itself: dataset id, original source id and observed
+ * rows must all already exist in persisted metadata.
+ */
+export function traceabilityFromExecutiveDecision(input: ExecutiveDecisionTraceabilityInput): TraceabilityRecord {
+  const metadata = asRecord(input.explanationMetadata);
+  const sourceData = asRecord(metadata.source_data);
+  const source = asRecord(metadata.source);
+  const datasetId = stringOrNull(sourceData.dataset_id);
+  const sourceEntityId = stringOrNull(source.id);
+  const rows = numberOrZero(sourceData.rows_analyzed);
+  const datasetName = stringOrNull(sourceData.dataset_name);
+  const keyMetrics = stringArray(sourceData.key_metrics);
+  const limitations = stringArray(metadata.limitations);
+  const evidenceClassification = stringOrNull(metadata.evidence_classification);
+  const generatedAt = stringOrNull(source.created_at) ?? "";
+  const isVerifiedSource = Boolean(datasetId && sourceEntityId && rows > 0);
+
+  const missing: string[] = [];
+  if (!datasetId) missing.push("Source dataset could not be resolved");
+  if (!sourceEntityId) missing.push("Original source entity could not be resolved");
+  if (rows <= 0) missing.push("No observed rows are traceable to this decision");
+
+  return {
+    sourceDataset: datasetName ?? datasetId ?? "Unverified source",
+    sourceDatasetId: datasetId,
+    sourceEntityId,
+    isVerifiedSource,
+    dataRowsUsed: rows,
+    metricTransformationPath: keyMetrics.length > 0
+      ? `source data → ${keyMetrics.join(", ")} → executive decision`
+      : "source data → executive decision",
+    modelOrHeuristic: evidenceClassification ?? "Persisted decision evidence",
+    generatedAt,
+    limitations: [...new Set([...limitations, ...missing])],
+  };
+}
+
 function evidenceStatus(traceability: TraceabilityRecord | null | undefined): Pick<DecisionOptionModel, "evidenceStatus" | "evidenceLabel"> {
   if (traceability?.isVerifiedSource) {
     return {
