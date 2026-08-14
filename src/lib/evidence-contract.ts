@@ -17,6 +17,8 @@ export interface EvidenceBlock {
   reasoning: string;
   /** What the confidence score is based on */
   confidenceBasis: ConfidenceBasis;
+  /** Verified provenance for the observation and evidence */
+  traceability: TraceabilityRecord;
   /** Assumptions made in reaching this conclusion */
   assumptions: string[];
   /** Known limitations of this analysis */
@@ -79,8 +81,9 @@ function substantiveEvidenceItems(items: string[] | undefined): string[] {
  *
  * HARD-GATE PRINCIPLE:
  * A long recommendation, quantified-looking expected impact, or polished prose
- * must never turn zero observed data into decision-grade intelligence. Hard
- * evidence prerequisites are evaluated separately from the weighted score.
+ * must never turn zero observed data or an unresolved source into decision-grade
+ * intelligence. Hard evidence prerequisites are evaluated separately from the
+ * weighted score.
  */
 export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): DecisionQualityScore {
   let evidenceStrength = 0;
@@ -102,6 +105,16 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
     }
     if (!Number.isFinite(evidence.confidenceBasis.dataCoverage) || evidence.confidenceBasis.dataCoverage <= 0) {
       hardGateFailures.push("no measurable data coverage");
+    }
+  }
+
+  if (!evidence.traceability?.isVerifiedSource) {
+    hardGateFailures.push("unverified source traceability");
+  } else {
+    if (!evidence.traceability.sourceDatasetId) hardGateFailures.push("no source dataset id");
+    if (!evidence.traceability.sourceEntityId) hardGateFailures.push("no source entity id");
+    if (!Number.isFinite(evidence.traceability.dataRowsUsed) || evidence.traceability.dataRowsUsed <= 0) {
+      hardGateFailures.push("no traceable source rows");
     }
   }
 
@@ -171,6 +184,7 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
     if (!evidence.observation) missing.push("observation");
     if (substantiveEvidence.length === 0) missing.push("evidence");
     if (!evidence.confidenceBasis) missing.push("confidence basis");
+    if (!evidence.traceability?.isVerifiedSource) missing.push("verified source traceability");
     if (!evidence.expectedImpact) missing.push("expected impact");
     if (!evidence.riskIfWrong) missing.push("risk assessment");
 
@@ -253,7 +267,14 @@ export function buildConfidenceBasis(opts: {
  * Generate a traceability record for "Why am I seeing this?"
  */
 export interface TraceabilityRecord {
+  /** Human-readable dataset name, or an explicit unverified label. */
   sourceDataset: string;
+  /** Stable dataset identifier used for the evidence. */
+  sourceDatasetId: string | null;
+  /** Stable source insight/advisory/decision identifier. */
+  sourceEntityId: string | null;
+  /** True only when dataset, source entity, and observed rows are all present. */
+  isVerifiedSource: boolean;
   dataRowsUsed: number;
   metricTransformationPath: string;
   modelOrHeuristic: string;
@@ -262,7 +283,8 @@ export interface TraceabilityRecord {
 }
 
 export function buildTraceability(opts: {
-  datasetId: string;
+  datasetId?: string | null;
+  sourceEntityId?: string | null;
   /** Human-readable dataset name for executive-facing surfaces */
   datasetName?: string;
   dataRowsUsed: number;
@@ -270,12 +292,25 @@ export function buildTraceability(opts: {
   modelUsed: string;
   limitations?: string[];
 }): TraceabilityRecord {
+  const datasetId = opts.datasetId?.trim() || null;
+  const sourceEntityId = opts.sourceEntityId?.trim() || null;
+  const rows = Number.isFinite(opts.dataRowsUsed) ? Math.max(0, opts.dataRowsUsed) : 0;
+  const isVerifiedSource = Boolean(datasetId && sourceEntityId && rows > 0);
+  const limitations = [...(opts.limitations ?? [])];
+
+  if (!datasetId) limitations.push("Source dataset could not be resolved");
+  if (!sourceEntityId) limitations.push("Source entity could not be resolved");
+  if (rows <= 0) limitations.push("No observed rows are traceable to this recommendation");
+
   return {
-    sourceDataset: opts.datasetName || opts.datasetId,
-    dataRowsUsed: opts.dataRowsUsed,
+    sourceDataset: opts.datasetName?.trim() || datasetId || "Unverified source",
+    sourceDatasetId: datasetId,
+    sourceEntityId,
+    isVerifiedSource,
+    dataRowsUsed: rows,
     metricTransformationPath: `raw → ${opts.metricTypes.join(", ")} → statistical summary → AI analysis`,
     modelOrHeuristic: opts.modelUsed,
     generatedAt: new Date().toISOString(),
-    limitations: opts.limitations ?? [],
+    limitations: [...new Set(limitations)],
   };
 }
