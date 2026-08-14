@@ -1,19 +1,30 @@
 /**
  * embed-decisions — Batch embed decisions, outcomes, insights, and advisories
  * into vector store for institutional memory / RAG.
- * 
+ *
  * Triggered after:
  * - Decision approval (via decision lifecycle)
  * - Outcome evaluation completion
  * - Insight generation
  * - Advisory creation
- * 
+ *
  * Modes: "decisions" | "outcomes" | "insights" | "advisories" | "all" | "specific"
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { generateEmbedding, storeEmbedding, decisionToText, outcomeToText } from "../_shared/embeddings.ts";
+
+type ExpectedDirection = "increase" | "decrease" | "stable";
+
+function outcomeSucceeded(deltaValue: unknown, direction: ExpectedDirection | undefined): boolean | null {
+  if (!direction) return null;
+  const delta = Number(deltaValue);
+  if (!Number.isFinite(delta)) return null;
+  if (direction === "increase") return delta > 0;
+  if (direction === "decrease") return delta < 0;
+  return Math.abs(delta) <= 1;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
@@ -84,7 +95,7 @@ serve(async (req) => {
 
       const { data: decisions } = await query.limit(500);
 
-      for (const d of (decisions || [])) {
+      for (const d of decisions || []) {
         try {
           const text = decisionToText(d);
           const embedding = await generateEmbedding(text);
@@ -110,14 +121,47 @@ serve(async (req) => {
         .not("outcome_delta", "is", null)
         .limit(500);
 
-      for (const d of (outcomes || [])) {
+      // Outcome sign is not intrinsically good/bad. Resolve the expected
+      // direction once and persist normalized success semantics into memory.
+      const directionByDecision = new Map<string, ExpectedDirection>();
+      const outcomeIds = (outcomes || []).map(d => d.id);
+      if (outcomeIds.length > 0) {
+        const { data: outcomeDefinitions, error: directionError } = await svc
+          .from("decision_outcomes")
+          .select("decision_id, expected_direction")
+          .eq("organization_id", organization_id)
+          .in("decision_id", outcomeIds)
+          .limit(1000);
+
+        if (directionError) {
+          console.warn("Unable to resolve outcome directions for embeddings:", directionError.message);
+        } else {
+          for (const row of outcomeDefinitions || []) {
+            if (
+              !directionByDecision.has(row.decision_id) &&
+              ["increase", "decrease", "stable"].includes(row.expected_direction)
+            ) {
+              directionByDecision.set(row.decision_id, row.expected_direction as ExpectedDirection);
+            }
+          }
+        }
+      }
+
+      for (const d of outcomes || []) {
         try {
-          const text = outcomeToText(d);
+          const expectedDirection = directionByDecision.get(d.id);
+          const outcomeSuccess = outcomeSucceeded(d.outcome_delta, expectedDirection);
+          const semanticSuffix = expectedDirection
+            ? ` | Expected Direction: ${expectedDirection} | Outcome Success: ${outcomeSuccess === true ? "yes" : outcomeSuccess === false ? "no" : "unknown"}`
+            : " | Expected Direction: unknown | Outcome Success: unknown";
+          const text = outcomeToText(d) + semanticSuffix;
           const embedding = await generateEmbedding(text);
           await storeEmbedding(supabaseUrl, serviceKey, organization_id, "outcome", d.id, text, embedding, {
             outcome_delta: d.outcome_delta,
             accuracy_score: d.prediction_accuracy_score,
             calibration_error: d.calibration_error,
+            expected_direction: expectedDirection ?? null,
+            outcome_success: outcomeSuccess,
           });
           embedded++;
         } catch (e) {
@@ -135,7 +179,7 @@ serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(500);
 
-      for (const i of (insights || [])) {
+      for (const i of insights || []) {
         try {
           const text = `[${i.severity}] ${i.category}: ${i.message}`;
           const embedding = await generateEmbedding(text);
@@ -160,7 +204,7 @@ serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(500);
 
-      for (const a of (advisories || [])) {
+      for (const a of advisories || []) {
         try {
           const text = `[${a.priority}] ${a.category} ${a.advisory_type}: ${a.title}. Action: ${a.action}${a.rationale ? `. Rationale: ${a.rationale}` : ""}${a.expected_impact ? `. Impact: ${a.expected_impact}` : ""}`;
           const embedding = await generateEmbedding(text);
