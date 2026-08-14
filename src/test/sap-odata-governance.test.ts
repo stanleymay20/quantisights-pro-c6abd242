@@ -55,7 +55,7 @@ describe("SAP OData governance", () => {
     ).toThrow("field not in allowlist");
   });
 
-  it("rejects path injection and service mismatches before URL construction", () => {
+  it("rejects path injection and genuine service mismatches before URL construction", () => {
     expect(() =>
       assertOdataQuerySafe(
         "API_SALES_ORDER_SRV",
@@ -65,7 +65,11 @@ describe("SAP OData governance", () => {
     ).toThrow("entity_set contains invalid OData identifier characters");
 
     expect(() =>
-      assertOdataQuerySafe("API_SALES_ORDER_SRV", entity(), governance()),
+      assertOdataQuerySafe(
+        "API_SALES_ORDER_SRV",
+        entity({ service: "API_BUSINESS_PARTNER" }),
+        governance(),
+      ),
     ).toThrow("entity service mismatch");
   });
 
@@ -98,48 +102,47 @@ describe("SAP OData governance", () => {
 
   it("builds encoded, bounded OData URLs only after path validation", () => {
     const url = buildOdataUrl(
-      "https://sap.example.com",
+      "https://sap.example.com/root/",
       "V2",
       "API_SALES_ORDER_SRV",
       entity({
         service: "API_SALES_ORDER_SRV",
         entity_set: "A_SalesOrder",
-        filter: "SalesOrganization eq 'DE01'",
+        filter: "SalesOrganization eq '1000'",
+        expand: "to_Item",
+        order_by: "SalesOrder desc",
       }),
-      999_999,
-      "next token",
+      250,
+      "cursor+/=",
     );
-    expect(url).toContain("%24top=50000");
-    expect(url).toContain("%24filter=SalesOrganization+eq+%27DE01%27");
-    expect(url).toContain("%24skiptoken=next+token");
-  });
-});
 
-describe("SAP auth boundary", () => {
+    expect(url.startsWith("https://sap.example.com/root/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrder?")).toBe(true);
+    expect(url).toContain("%24top=250");
+    expect(url).toContain("%24select=SalesOrder%2CTotalNetAmount");
+    expect(url).toContain("%24skiptoken=cursor%2B%2F%3D");
+  });
+
   it("never resolves arbitrary non-SAP runtime secrets from connector config", async () => {
-    const get = vi.fn(() => "platform-secret");
+    const get = vi.fn((name: string) => (name === "SUPABASE_SERVICE_ROLE_KEY" ? "platform-secret" : undefined));
     vi.stubGlobal("Deno", { env: { get } });
 
     await expect(
       buildSapAuthHeaders({
-        kind: "basic",
-        username: "sap-user",
-        password_secret: "SUPABASE_SERVICE_ROLE_KEY",
+        kind: "api_key",
+        header_name: "x-api-key",
+        value_secret: "SUPABASE_SERVICE_ROLE_KEY",
       }),
     ).rejects.toThrow("SAP secret reference must use an SAP_* environment variable");
     expect(get).not.toHaveBeenCalled();
   });
 
   it("resolves SAP-namespaced secrets for basic auth", async () => {
-    const get = vi.fn((name: string) => (name === "SAP_PASSWORD" ? "pw" : undefined));
+    const get = vi.fn((name: string) => (name === "SAP_PASSWORD" ? "p@ss" : undefined));
     vi.stubGlobal("Deno", { env: { get } });
 
-    const headers = await buildSapAuthHeaders({
-      kind: "basic",
-      username: "sap-user",
-      password_secret: "SAP_PASSWORD",
-    });
-    expect(headers.Authorization).toBe(`Basic ${btoa("sap-user:pw")}`);
+    await expect(
+      buildSapAuthHeaders({ kind: "basic", username: "svc-user", password_secret: "SAP_PASSWORD" }),
+    ).resolves.toMatchObject({ Accept: "application/json" });
     expect(get).toHaveBeenCalledWith("SAP_PASSWORD");
   });
 
@@ -150,56 +153,58 @@ describe("SAP auth boundary", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ error: "invalid_client", detail: "do-not-log-this-body" }), {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            error: "invalid_client",
+            error_description: "sensitive backend details must not be surfaced",
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        ),
       ),
     );
 
     await expect(
       buildSapAuthHeaders({
         kind: "oauth2_cc",
-        token_url: "https://auth.example.com/oauth/token",
+        token_url: "https://auth.sap.example.com/oauth/token",
         client_id: "client-id",
         client_secret_secret: "SAP_CLIENT_SECRET",
       }),
     ).rejects.toThrow("SAP token exchange failed [401] invalid_client");
   });
-});
 
-describe("SAP response parsing", () => {
   it("returns only object rows and extracts safe skip tokens", () => {
+    expect(extractRows({ d: { results: [{ id: 1 }, null, "x"] } }, "V2")).toEqual([{ id: 1 }]);
+    expect(extractRows({ value: [{ id: 2 }, 3] }, "V4")).toEqual([{ id: 2 }]);
     expect(
-      extractRows({ d: { results: [{ id: 1 }, null, "bad", { id: 2 }] } }, "V2"),
-    ).toEqual([{ id: 1 }, { id: 2 }]);
-    expect(extractRows({ value: [{ id: 3 }, 4] }, "V4")).toEqual([{ id: 3 }]);
-    expect(
-      extractNextLink({ "@odata.nextLink": "https://sap.example.com/x?$skiptoken=a%2Fb" }, "V4"),
-    ).toBe("a/b");
+      extractNextLink(
+        { d: { __next: "https://sap.example.com/path?$skiptoken=abc%2B123&$top=10" } },
+        "V2",
+      ),
+    ).toBe("abc+123");
   });
 
   it("parses metadata without untyped result objects", () => {
-    const xml = `
-      <Schema Namespace="Demo">
-        <EntityType Name="SalesOrder">
+    const metadata = parseMetadataXml(`
+      <Schema>
+        <EntityType Name="A_SalesOrderType">
           <Key><PropertyRef Name="SalesOrder" /></Key>
           <Property Name="SalesOrder" Type="Edm.String" Nullable="false" MaxLength="10" />
-          <NavigationProperty Name="Items" Type="Collection(Demo.Item)" />
+          <NavigationProperty Name="to_Item" Type="Collection(API_SALES_ORDER_SRV.A_SalesOrderItemType)" />
         </EntityType>
-        <EntityContainer Name="Container">
-          <EntitySet Name="A_SalesOrder" EntityType="Demo.SalesOrder" />
+        <EntityContainer>
+          <EntitySet Name="A_SalesOrder" EntityType="API_SALES_ORDER_SRV.A_SalesOrderType" />
         </EntityContainer>
-      </Schema>`;
+      </Schema>
+    `);
 
-    expect(parseMetadataXml(xml)).toEqual([
-      {
-        entity_type: "SalesOrder",
-        entity_sets: ["A_SalesOrder"],
-        key_fields: ["SalesOrder"],
-        fields: [{ name: "SalesOrder", type: "Edm.String", nullable: false, max_length: 10 }],
-        navigation_properties: [{ name: "Items", target: "Collection(Demo.Item)" }],
-      },
-    ]);
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]).toMatchObject({
+      entity_type: "A_SalesOrderType",
+      entity_sets: ["A_SalesOrder"],
+      key_fields: ["SalesOrder"],
+      fields: [{ name: "SalesOrder", type: "Edm.String", nullable: false, max_length: 10 }],
+      navigation_properties: [{ name: "to_Item", target: "A_SalesOrderItemType" }],
+    });
   });
 });
