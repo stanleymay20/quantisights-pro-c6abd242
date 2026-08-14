@@ -28,6 +28,20 @@ describe("diagnostic epistemic / causality contract", () => {
     expect(changepoint).toContain("It is NOT proof");
   });
 
+  it("classifies trends against the KPI's desired direction", () => {
+    expect(engine).toContain("inferExpectedOutcomeDirection(metricType)");
+    expect(engine).toContain('expectedDirection === "decrease"');
+    expect(engine).toContain("slopeNormalizedPct < -5");
+    expect(engine).toContain('trendDirection: movingInDesiredDirection ? "improving" : "declining"');
+    expect(engine).toContain("trend_direction: computedTrend");
+  });
+
+  it("does not allow the LLM to override direction-aware computed trend labels", () => {
+    expect(engine).toContain("COPY the computed trend_direction");
+    expect(engine).toContain("Computed direction-aware trend is authoritative");
+    expect(engine).not.toContain("trend_direction: interpreted.trend_direction || matchingStat?.trend_direction");
+  });
+
   it("removes causal labels from the executive diagnostic UI", () => {
     expect(page).not.toContain("Root cause analysis & causal pattern detection");
     expect(page).toContain("Statistical patterns, structural breaks & driver hypotheses");
@@ -36,6 +50,18 @@ describe("diagnostic epistemic / causality contract", () => {
     expect(card).toContain("Driver Hypothesis");
     expect(card).toContain("Associated Statistical Evidence");
     expect(card).toContain("Causality not established");
+  });
+
+  it("surfaces desired KPI direction next to the diagnostic trend", () => {
+    expect(page).toContain('expected_direction?: "increase" | "decrease" | "stable"');
+    expect(card).toContain("Desired: {desiredDirection}");
+    expect(card).toContain("Desired direction: {desiredDirection}");
+    expect(card).toContain("{d.trend_direction} · {formattedChange}");
+  });
+
+  it("normalizes compatibility prefixes instead of duplicating them", () => {
+    expect(engine).toContain("replace(/^driver hypothesis");
+    expect(engine).toContain("replace(/^associated evidence");
   });
 
   it("states that changepoints are temporal evidence, not causes", () => {
