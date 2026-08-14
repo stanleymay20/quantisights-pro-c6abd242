@@ -7,6 +7,8 @@ const evaluator = read("supabase/functions/aicis-evaluate-outcomes/index.ts");
 const widget = read("src/components/decisions/OutcomeFeedbackWidget.tsx");
 const boundsMigration = read("supabase/migrations/20260814182000_harden_aicis_probability_bounds.sql");
 
+// These tests intentionally assert both application semantics and the database
+// constraint layer so future UI/edge-function regressions cannot corrupt calibration.
 describe("AICIS outcome calibration semantics", () => {
   it("never uses business impact as the binary Brier target", () => {
     expect(evaluator).toContain("const riskEventActual = businessSuccess ? 0 : 1;");
