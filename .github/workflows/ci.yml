@@ -48,6 +48,7 @@ jobs:
         run: |
           deno check supabase/functions/auth-rate-limiter/index.ts
           deno check supabase/functions/connector-credential-store/index.ts
+          deno check supabase/functions/connector-scheduler/index.ts
 
       - name: Test
         run: npm test -- --run
