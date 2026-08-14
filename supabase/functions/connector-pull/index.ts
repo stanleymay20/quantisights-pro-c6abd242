@@ -901,7 +901,10 @@ serve(async (req) => {
       return responseJson({ error: "Unable to create connector sync job" }, 503, corsHeaders);
     }
 
-    let result: { records: number; errors: string[] };
+    let result: { records: number; errors: string[] } = {
+      records: 0,
+      errors: ["Connector execution did not produce a result"],
+    };
 
     const delegated: Record<string, string> = {
       snowflake: "connector-snowflake-pull",
