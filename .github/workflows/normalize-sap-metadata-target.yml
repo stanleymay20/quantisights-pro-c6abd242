@@ -1,0 +1,72 @@
+name: Normalize SAP Metadata Target
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/normalize-sap-metadata-target.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Normalize navigation targets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("supabase/functions/_shared/sap-odata.ts")
+          text = path.read_text()
+
+          anchor = '''function decodeSkipToken(value: string): string | undefined {
+            try {
+              return decodeURIComponent(value);
+            } catch {
+              return undefined;
+            }
+          }
+
+          '''.replace('          ', '')
+          helper = '''function normalizeMetadataTarget(value: string): string {
+            const trimmed = value.trim();
+            const collection = /^Collection\\((.+)\\)$/i.exec(trimmed);
+            const qualified = collection?.[1]?.trim() ?? trimmed;
+            return qualified.split(".").pop() ?? qualified;
+          }
+
+          '''.replace('          ', '')
+          if helper not in text:
+              if anchor not in text:
+                  raise SystemExit("decodeSkipToken anchor not found")
+              text = text.replace(anchor, anchor + helper, 1)
+
+          old = 'navigationProperties.push({ name: navigationMatch[1], target: navigationMatch[2] });'
+          new = 'navigationProperties.push({ name: navigationMatch[1], target: normalizeMetadataTarget(navigationMatch[2]) });'
+          if old not in text and new not in text:
+              raise SystemExit("navigation target assignment not found")
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: git rm .github/workflows/normalize-sap-metadata-target.yml
+
+      - name: Commit directly to main
+        run: |
+          git config user.name "quantivis-integrity-bot"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git add supabase/functions/_shared/sap-odata.ts
+          git commit -m "Normalize SAP metadata navigation targets"
+          git push origin HEAD:main
