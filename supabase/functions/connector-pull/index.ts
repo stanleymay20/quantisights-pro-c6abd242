@@ -1,8 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { authorizeConnectorInvocation } from "../_shared/connector-invocation-auth.ts";
+import { resolveConnectorCredentials } from "../_shared/connector-credentials.ts";
+import {
+  assertDispatchIdentityMatches,
+  deriveStoredConnectorIdentity,
+  parseConnectorDispatchRequest,
+} from "../_shared/connector-dispatch-guard.ts";
 
 interface ConnectorConfig {
+  connector_id: string;
   connector_type: string;
   data_source_id: string;
   organization_id: string;
@@ -805,70 +813,96 @@ async function pullSalesforce(
 
 /* ──────────────────── MAIN HANDLER ──────────────────── */
 
+function responseJson(body: unknown, status: number, headers: Record<string, string>) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...headers, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
   try {
     const authHeader = req.headers.get("authorization");
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    if (!serviceKey || !supabaseUrl) {
+      return responseJson({ error: "Connector dispatcher unavailable" }, 503, corsHeaders);
+    }
 
-    // Allow both service role (from orchestrator) and user JWT
-    const token = authHeader?.replace("Bearer ", "") || "";
-    const isServiceCall = token === serviceKey;
+    let dispatchRequest;
+    try {
+      dispatchRequest = parseConnectorDispatchRequest(await req.json().catch(() => null));
+    } catch (error) {
+      return responseJson({ error: error instanceof Error ? error.message : String(error) }, 400, corsHeaders);
+    }
 
     const serviceClient = createClient(supabaseUrl, serviceKey);
 
-    if (!isServiceCall) {
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: "Missing authorization" }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const { data: { user }, error: authError } = await userClient.auth.getUser();
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+    const { data: storedConnector, error: connectorError } = await serviceClient
+      .from("data_connectors")
+      .select("id,organization_id,connector_type,config,data_source_id")
+      .eq("id", dispatchRequest.connectorId)
+      .single();
+    if (connectorError || !storedConnector) {
+      return responseJson({ error: "Connector not found" }, 404, corsHeaders);
     }
 
-    const config: ConnectorConfig = await req.json();
-    const { connector_type, data_source_id, organization_id } = config;
-
-    if (!connector_type || !data_source_id || !organization_id) {
-      return new Response(JSON.stringify({ error: "connector_type, data_source_id, organization_id required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    let identity;
+    try {
+      identity = deriveStoredConnectorIdentity(storedConnector);
+      assertDispatchIdentityMatches(dispatchRequest, identity);
+    } catch (error) {
+      return responseJson({ error: error instanceof Error ? error.message : "Connector identity invalid" }, 400, corsHeaders);
     }
 
-    // Create sync job
-    const { data: job } = await serviceClient.from("data_sync_jobs").insert({
-      data_source_id,
-      organization_id,
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const userClient = anonKey
+      ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader ?? "" } } })
+      : null;
+    const invocation = await authorizeConnectorInvocation({
+      authHeader,
+      serviceRoleKey: serviceKey,
+      organizationId: identity.organizationId,
+      userClient,
+      membershipClient: serviceClient,
+    });
+    if (!invocation.allowed) {
+      return responseJson(
+        { error: invocation.reason === "forbidden" ? "Forbidden" : "Unauthorized" },
+        invocation.status,
+        corsHeaders,
+      );
+    }
+
+    if (!identity.dataSourceId) {
+      return responseJson({ error: "Connector is not linked to a data source" }, 409, corsHeaders);
+    }
+
+    const config: ConnectorConfig = {
+      connector_id: identity.id,
+      connector_type: identity.connectorType,
+      data_source_id: identity.dataSourceId,
+      organization_id: identity.organizationId,
+      ...(dispatchRequest.datasetId ? { dataset_id: dispatchRequest.datasetId } : {}),
+      ...(dispatchRequest.dateFrom ? { date_from: dispatchRequest.dateFrom } : {}),
+      ...(dispatchRequest.dateTo ? { date_to: dispatchRequest.dateTo } : {}),
+    };
+
+    const { data: job, error: jobError } = await serviceClient.from("data_sync_jobs").insert({
+      data_source_id: identity.dataSourceId,
+      organization_id: identity.organizationId,
       status: "running",
       started_at: new Date().toISOString(),
     }).select().single();
+    if (jobError || !job) {
+      return responseJson({ error: "Unable to create connector sync job" }, 503, corsHeaders);
+    }
 
     let result: { records: number; errors: string[] };
 
-    // Resolve per-connector credentials if connector_id is in the config
-    // This enables multi-tenant credential isolation
-    let perConnectorCreds: Record<string, string | undefined> = {};
-    const connectorId = config.connector_id ?? data_source_id;
-    if (connectorId) {
-      try {
-        const credModule = await import("../_shared/connector-credentials.ts");
-        perConnectorCreds = await credModule.resolveConnectorCredentials(serviceClient, connectorId);
-      } catch { /* fall through to env vars */ }
-    }
-
-    // Warehouse / lake connectors delegate to dedicated functions (canonical-mapper + circuit breaker)
     const delegated: Record<string, string> = {
       snowflake: "connector-snowflake-pull",
       bigquery: "connector-bigquery-pull",
@@ -883,59 +917,102 @@ serve(async (req) => {
       google_sheets: "connector-sheets-pull",
     };
 
-    if (delegated[connector_type]) {
-      const dRes = await fetch(`${supabaseUrl}/functions/v1/${delegated[connector_type]}`, {
+    const delegatedFunction = delegated[identity.connectorType];
+    if (delegatedFunction) {
+      const delegatedResponse = await fetch(`${supabaseUrl}/functions/v1/${delegatedFunction}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({ connector_id: data_source_id }),
+        body: JSON.stringify({ connector_id: identity.id }),
+        signal: AbortSignal.timeout(120_000),
       });
-      const dBody = await dRes.json();
+      const delegatedBody: unknown = await delegatedResponse.json().catch(() => null);
+      const body = delegatedBody && typeof delegatedBody === "object"
+        ? delegatedBody as Record<string, unknown>
+        : {};
+      const rowsInserted = Number(body.rows_inserted ?? body.records ?? 0);
+      const sampleErrors = Array.isArray(body.sample_errors)
+        ? body.sample_errors.slice(0, 5).map((entry) => {
+            if (entry && typeof entry === "object" && "reason" in entry && typeof entry.reason === "string") {
+              return entry.reason.slice(0, 300);
+            }
+            return "delegated connector error";
+          })
+        : [];
+      const delegatedError = typeof body.error === "string" ? body.error.slice(0, 300) : null;
+      const success = delegatedResponse.ok && body.success !== false && !delegatedError;
       result = {
-        records: dBody.rows_inserted ?? 0,
-        errors: dBody.error ? [dBody.error] : (dBody.sample_errors ?? []).map((e: any) => e.reason ?? JSON.stringify(e)),
+        records: Number.isFinite(rowsInserted) && rowsInserted >= 0 ? rowsInserted : 0,
+        errors: success
+          ? sampleErrors
+          : [delegatedError ?? `Connector sync failed (${delegatedResponse.status})`, ...sampleErrors],
       };
     } else {
-      switch (connector_type) {
-        case "stripe":     result = await pullStripe(config, serviceClient, perConnectorCreds); break;
-        case "ga4":
-        case "google_analytics": result = await pullGA4(config, serviceClient, perConnectorCreds); break;
-        case "hubspot":    result = await pullHubSpot(config, serviceClient, perConnectorCreds); break;
-        case "xero":       result = await pullXero(config, serviceClient, perConnectorCreds); break;
-        case "quickbooks": result = await pullQuickBooks(config, serviceClient, perConnectorCreds); break;
-        case "salesforce": result = await pullSalesforce(config, serviceClient, perConnectorCreds); break;
-        default:
-          result = { records: 0, errors: [`Unknown connector type: ${connector_type}`] };
+      let perConnectorCreds: Record<string, string | undefined>;
+      try {
+        perConnectorCreds = await resolveConnectorCredentials(serviceClient, identity.id);
+      } catch (error) {
+        result = {
+          records: 0,
+          errors: [error instanceof Error ? error.message : "Connector credentials unavailable"],
+        };
+        perConnectorCreds = {};
+      }
+
+      if (Object.keys(perConnectorCreds).length > 0) {
+        switch (identity.connectorType) {
+          case "stripe": result = await pullStripe(config, serviceClient, perConnectorCreds); break;
+          case "ga4":
+          case "google_analytics": result = await pullGA4(config, serviceClient, perConnectorCreds); break;
+          case "xero": result = await pullXero(config, serviceClient, perConnectorCreds); break;
+          case "quickbooks": result = await pullQuickBooks(config, serviceClient, perConnectorCreds); break;
+          default:
+            result = { records: 0, errors: [`Unknown connector type: ${identity.connectorType}`] };
+        }
       }
     }
 
-    // Update sync job
-    if (job) {
-      await serviceClient.from("data_sync_jobs").update({
-        status: result.errors.length > 0 && result.records === 0 ? "failed" : result.errors.length > 0 ? "partial" : "completed",
-        records_synced: result.records,
-        error_message: result.errors.length > 0 ? result.errors.join("; ") : null,
-        completed_at: new Date().toISOString(),
-      }).eq("id", job.id);
+    const finalStatus = result.errors.length > 0 && result.records === 0
+      ? "failed"
+      : result.errors.length > 0
+        ? "partial"
+        : "completed";
+    const { error: jobUpdateError } = await serviceClient.from("data_sync_jobs").update({
+      status: finalStatus,
+      records_synced: result.records,
+      error_message: result.errors.length > 0 ? result.errors.join("; ").slice(0, 2_000) : null,
+      completed_at: new Date().toISOString(),
+    }).eq("id", job.id).eq("organization_id", identity.organizationId);
+    if (jobUpdateError) {
+      return responseJson({ error: "Connector completed but sync bookkeeping failed" }, 503, corsHeaders);
     }
 
-    // Audit log
-    await serviceClient.from("audit_log").insert({
-      organization_id,
-      actor_type: isServiceCall ? "system" : "user",
+    const { error: auditError } = await serviceClient.from("audit_log").insert({
+      organization_id: identity.organizationId,
+      actor_type: invocation.actor === "service_role" ? "system" : "user",
+      actor_id: invocation.userId,
       action_type: "connector_pull",
-      resource_type: "data_source",
-      resource_id: data_source_id,
-      payload: { connector_type, records: result.records, errors: result.errors.length, dataset_id: config.dataset_id },
+      resource_type: "data_connector",
+      resource_id: identity.id,
+      payload: {
+        connector_type: identity.connectorType,
+        data_source_id: identity.dataSourceId,
+        records: result.records,
+        errors: result.errors.length,
+        dataset_id: config.dataset_id ?? null,
+      },
     });
+    if (auditError) {
+      return responseJson({ error: "Connector completed but audit logging failed" }, 503, corsHeaders);
+    }
 
-    return new Response(JSON.stringify({ success: true, ...result }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return responseJson(
+      { success: finalStatus !== "failed", ...result },
+      finalStatus === "failed" ? 502 : 200,
+      corsHeaders,
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("connector-pull error:", message);
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return responseJson({ error: "Connector dispatcher failed" }, 500, corsHeaders);
   }
 });
