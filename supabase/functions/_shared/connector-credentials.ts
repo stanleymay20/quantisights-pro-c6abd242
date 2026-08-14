@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * connector-credentials.ts
  *
@@ -15,11 +14,46 @@ export interface ResolvedCredentials {
   [key: string]: string | undefined;
 }
 
+type QueryResult = {
+  data: unknown;
+  error: unknown;
+};
+
+type ConnectorCredentialClient = {
+  rpc(name: string, args: Record<string, unknown>): PromiseLike<QueryResult>;
+  from(table: string): {
+    select(columns: string): {
+      eq(column: string, value: string): {
+        single(): PromiseLike<QueryResult>;
+      };
+    };
+  };
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asCredentialClient(value: unknown): ConnectorCredentialClient | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.rpc !== "function" || typeof value.from !== "function") return null;
+  return value as ConnectorCredentialClient;
+}
+
+function toStringMap(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const mapped: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string") mapped[key] = entry;
+  }
+  return mapped;
+}
+
 /**
  * Read a secret from Supabase Vault via RPC.
  * Returns null if the secret doesn't exist or the RPC fails.
  */
-async function vaultGet(svc: any, name: string): Promise<string | null> {
+async function vaultGet(svc: ConnectorCredentialClient, name: string): Promise<string | null> {
   try {
     const { data, error } = await svc.rpc("get_connector_secret", { _secret_name: name });
     if (error || !data) return null;
@@ -35,36 +69,45 @@ async function vaultGet(svc: any, name: string): Promise<string | null> {
  * Falls back to config.credentials for non-vaulted fields.
  */
 export async function resolveConnectorCredentials(
-  svc: any,
+  svc: unknown,
   connectorId: string,
 ): Promise<ResolvedCredentials> {
-  const { data: connector, error } = await svc
+  const client = asCredentialClient(svc);
+  if (!client) return {};
+
+  const { data: connectorData, error } = await client
     .from("data_connectors")
     .select("config, credential_vault_keys, vault_secret_name")
     .eq("id", connectorId)
     .single();
 
-  if (error || !connector) return {};
+  if (error || !isRecord(connectorData)) return {};
 
   const resolved: ResolvedCredentials = {};
-  const cfg = connector.config ?? {};
+  const cfg = isRecord(connectorData.config) ? connectorData.config : {};
 
   // Primary vault key mapping: credential_vault_keys (new column) OR config.vault_keys (fallback)
-  const vaultKeys: Record<string, string> =
-    connector.credential_vault_keys ?? cfg.vault_keys ?? {};
+  const vaultKeys = toStringMap(connectorData.credential_vault_keys ?? cfg.vault_keys);
 
   // Read each field from Vault
   for (const [field, vaultKey] of Object.entries(vaultKeys)) {
-    const value = await vaultGet(svc, vaultKey as string);
+    const value = await vaultGet(client, vaultKey);
     if (value) resolved[field] = value;
   }
 
   // Also try the single vault_secret_name (single-credential connectors like Stripe)
-  if (Object.keys(resolved).length === 0 && connector.vault_secret_name) {
-    const primary = await vaultGet(svc, connector.vault_secret_name);
+  const vaultSecretName =
+    typeof connectorData.vault_secret_name === "string" ? connectorData.vault_secret_name : null;
+  if (Object.keys(resolved).length === 0 && vaultSecretName) {
+    const primary = await vaultGet(client, vaultSecretName);
     if (primary) {
       // Determine the field name from config.connector_type_detail
-      const connType = cfg.connector_type_detail as string ?? cfg.connector_type;
+      const connType =
+        typeof cfg.connector_type_detail === "string"
+          ? cfg.connector_type_detail
+          : typeof cfg.connector_type === "string"
+            ? cfg.connector_type
+            : "";
       const primaryFieldMap: Record<string, string> = {
         stripe: "stripeApiKey",
         hubspot: "privateAppToken",
@@ -76,7 +119,7 @@ export async function resolveConnectorCredentials(
   }
 
   // Embedded credentials in config (non-vaulted fallback)
-  const embedded = cfg.credentials ?? {};
+  const embedded = isRecord(cfg.credentials) ? cfg.credentials : {};
   for (const [field, value] of Object.entries(embedded)) {
     if (!resolved[field] && value) resolved[field] = String(value);
   }
