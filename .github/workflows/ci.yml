@@ -44,8 +44,10 @@ jobs:
       - name: Strict trusted-kernel typecheck
         run: npm run typecheck:trusted
 
-      - name: Typecheck auth rate limiter
-        run: deno check supabase/functions/auth-rate-limiter/index.ts
+      - name: Typecheck privileged Edge functions
+        run: |
+          deno check supabase/functions/auth-rate-limiter/index.ts
+          deno check supabase/functions/connector-credential-store/index.ts
 
       - name: Test
         run: npm test -- --run
