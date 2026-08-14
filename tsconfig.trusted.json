@@ -20,7 +20,8 @@
     "src/lib/cost-of-delay.ts",
     "supabase/functions/_shared/calibration-correction.ts",
     "supabase/functions/_shared/connector-credentials.ts",
-    "supabase/functions/_shared/connector-isolation.ts"
+    "supabase/functions/_shared/connector-isolation.ts",
+    "supabase/functions/_shared/connector-throttle.ts"
   ],
   "include": []
 }
