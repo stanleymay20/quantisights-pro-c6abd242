@@ -21,7 +21,8 @@
     "supabase/functions/_shared/calibration-correction.ts",
     "supabase/functions/_shared/connector-credentials.ts",
     "supabase/functions/_shared/connector-isolation.ts",
-    "supabase/functions/_shared/connector-throttle.ts"
+    "supabase/functions/_shared/connector-throttle.ts",
+    "supabase/functions/_shared/salesforce-auth.ts"
   ],
   "include": []
 }
