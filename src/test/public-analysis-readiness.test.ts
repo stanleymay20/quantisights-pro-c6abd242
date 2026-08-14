@@ -6,6 +6,8 @@ import { PublicAnalysisError, requestPublicAnalysis } from "@/lib/public-analysi
 
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+type FetchArgs = Parameters<typeof fetch>;
+
 const options = {
   url: "https://example.supabase.co/functions/v1/strategy-session",
   publishableKey: "publishable-test-key",
@@ -15,10 +17,10 @@ const options = {
 
 describe("public analysis client recovery", () => {
   it("uses stable request and idempotency identifiers", async () => {
-    const fetchImpl = vi.fn(async () => new Response("stream", { status: 200 }));
+    const fetchImpl = vi.fn(async (..._args: FetchArgs) => new Response("stream", { status: 200 }));
     await requestPublicAnalysis({ ...options, fetchImpl });
 
-    const request = fetchImpl.mock.calls[0][1];
+    const request = fetchImpl.mock.calls[0]?.[1];
     expect(request?.headers).toMatchObject({
       "X-Request-ID": options.requestId,
       "Idempotency-Key": options.requestId,
@@ -26,7 +28,7 @@ describe("public analysis client recovery", () => {
   });
 
   it("retries a recoverable dependency failure and returns the successful stream", async () => {
-    const fetchImpl = vi.fn()
+    const fetchImpl = vi.fn(async (..._args: FetchArgs) => new Response("stream", { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Unavailable", code: "dependency_error" }), {
         status: 503,
         headers: { "Retry-After": "0", "Content-Type": "application/json" },
@@ -39,16 +41,16 @@ describe("public analysis client recovery", () => {
   });
 
   it("returns a typed, recoverable error after retries are exhausted", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: "Unavailable", code: "dependency_error" }), {
+    const fetchImpl = vi.fn(async (..._args: FetchArgs) => new Response(JSON.stringify({ error: "Unavailable", code: "dependency_error" }), {
       status: 503,
       headers: { "Retry-After": "0", "Content-Type": "application/json" },
     }));
 
-    await expect(requestPublicAnalysis({ ...options, fetchImpl })).rejects.toMatchObject<Partial<PublicAnalysisError>>({
+    await expect(requestPublicAnalysis({ ...options, fetchImpl })).rejects.toMatchObject({
       status: 503,
       code: "dependency_error",
       retryable: true,
-    });
+    } satisfies Partial<PublicAnalysisError>);
   });
 });
 
