@@ -50,10 +50,17 @@ describe("SSO database hardening", () => {
     expect(migration).toContain("REVOKE ALL ON FUNCTION public.resolve_sso_for_email(text) FROM PUBLIC");
   });
 
-  it("returns no organization identifier from the anonymous resolver", () => {
-    const types = read("src/integrations/supabase/types.ts");
-    const signature = types.match(/resolve_sso_for_email:[\s\S]*?try_cron_advisory_lock/)?.[0] ?? "";
-    expect(signature).not.toContain("organization_id");
-    expect(signature).not.toContain("provider_type");
+  it("defines the anonymous resolver contract with no organization identifier", () => {
+    // The migration is the executable schema contract. Generated Supabase types
+    // may lag a migration until the target project has been migrated and types
+    // are regenerated, so security assertions must verify the actual DDL rather
+    // than trusting a generated snapshot.
+    const publicResolver = migration.match(
+      /CREATE FUNCTION public\.resolve_sso_for_email\(_email text\)[\s\S]*?GRANT EXECUTE ON FUNCTION public\.resolve_sso_for_email\(text\)/,
+    )?.[0] ?? "";
+
+    expect(publicResolver).toContain("RETURNS TABLE(idp_sso_url text, enforce_sso boolean)");
+    expect(publicResolver).not.toContain("organization_id");
+    expect(publicResolver).not.toContain("provider_type");
   });
 });
