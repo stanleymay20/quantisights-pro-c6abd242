@@ -3,6 +3,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 import { captureError } from "@/lib/sentry";
+import { inferExpectedOutcomeDirection } from "@/lib/outcome-direction";
 import { writeAuditLog } from "./audit";
 import { checkEvaluability } from "./evaluability";
 import type { EvaluabilityResult } from "./evaluability";
@@ -85,13 +86,14 @@ export async function onDecisionApproved(params: PostApprovalParams) {
     try {
       const resolvedMetric = evalResult.resolvedMetric ?? expectedMetric ?? "unknown";
       const resolvedDataset = evalResult.resolvedDatasetId ?? datasetId ?? null;
+      const expectedDirection = inferExpectedOutcomeDirection(resolvedMetric);
 
       await supabase.from("decision_outcomes").insert({
         decision_id: decisionId,
         organization_id: organizationId,
         dataset_id: resolvedDataset,
         expected_metric: resolvedMetric,
-        expected_direction: "increase",
+        expected_direction: expectedDirection,
         evaluation_window_days: evaluationWindowDays,
       });
     } catch (err) {
