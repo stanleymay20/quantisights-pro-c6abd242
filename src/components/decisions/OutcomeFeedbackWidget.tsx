@@ -16,9 +16,12 @@ interface Props {
 }
 
 /**
- * One-click outcome capture for AICIS-linked decisions.
- * Writes a row to aicis_outcomes via the aicis-evaluate-outcomes edge function,
- * which computes Brier score and feeds the calibration loop.
+ * One-click qualitative outcome capture for AICIS-linked decisions.
+ *
+ * IMPORTANT: outcome success and prediction accuracy are different concepts.
+ * This widget records the user's success/failure verdict for calibration, but it
+ * never fabricates prediction_accuracy_score or outcome_delta. Quantitative
+ * forecast accuracy remains the responsibility of the metric-based evaluator.
  */
 const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, onSubmitted }: Props) => {
   const { toast } = useToast();
@@ -38,34 +41,32 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
   const submit = async (verdict: "positive" | "negative") => {
     setSubmitting(verdict);
     try {
-      // Persist outcome fields on decision_ledger so /outcomes KPIs and
-      // similarity retrieval see this signal (previously only actual_value
-      // was written, leaving outcome_delta / prediction_accuracy_score null
-      // and hiding user feedback from Outcome Tracking).
-      const numeric = verdict === "positive" ? 1 : 0;
       const parsedImpact = impact.trim() ? Number(impact) : NaN;
-      const actual_value = Number.isFinite(parsedImpact) ? parsedImpact : numeric;
-      const outcome_delta = Number.isFinite(parsedImpact)
-        ? parsedImpact
-        : verdict === "positive" ? 1 : -1;
-      const prediction_accuracy_score = verdict === "positive" ? 100 : 0;
-      await supabase
-        .from("decision_ledger")
-        .update({
-          actual_value,
-          outcome_delta,
-          prediction_accuracy_score,
-          outcome_measured_at: new Date().toISOString(),
-        })
-        .eq("id", decisionId);
+      const measuredAt = new Date().toISOString();
 
-      const parsedImpactBody = impact.trim() ? Number(impact) : NaN;
+      // A manual yes/no verdict is a qualitative outcome signal, not a numeric
+      // forecast-accuracy score. Only persist an actual business value when the
+      // user explicitly supplied one; leave outcome_delta and accuracy untouched.
+      const ledgerPatch: {
+        outcome_measured_at: string;
+        actual_value?: number;
+      } = { outcome_measured_at: measuredAt };
+      if (Number.isFinite(parsedImpact)) ledgerPatch.actual_value = parsedImpact;
+
+      const { error: ledgerError } = await supabase
+        .from("decision_ledger")
+        .update(ledgerPatch)
+        .eq("id", decisionId);
+      if (ledgerError) throw ledgerError;
+
       const { error } = await invokeWithRetry("aicis-evaluate-outcomes", {
         body: {
           organization_id: organizationId,
           decision_id: decisionId,
           actual_outcome: verdict,
-          actual_value: Number.isFinite(parsedImpactBody) ? parsedImpactBody : undefined,
+          // Business impact is contextual metadata only. It must never be used
+          // as the binary target in a Brier-score calculation.
+          actual_impact: Number.isFinite(parsedImpact) ? parsedImpact : undefined,
         },
       });
       if (error) throw error;
@@ -106,7 +107,7 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
           disabled={!!submitting}
           onClick={() => submit("negative")}
         >
-          {submitting === "negative" ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+          {submitting === "negative" ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle2 className="w-3 h-3" />}
           No
         </Button>
         <button
@@ -122,7 +123,7 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
             onChange={(e) => setImpact(e.target.value)}
             placeholder="e.g. 25000"
             className="h-7 text-xs w-32"
-            inputMode="numeric"
+            inputMode="decimal"
           />
         )}
       </div>
