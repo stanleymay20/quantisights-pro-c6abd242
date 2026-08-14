@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -67,10 +66,11 @@ async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl
   const apiKey = req.headers.get("x-api-key");
 
   if (authHeader) {
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!anonKey) throw new Error("Supabase auth configuration unavailable");
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
-    }) as any;
+    });
 
     const { data: { user }, error } = await userClient.auth.getUser();
     if (error || !user?.id) {
@@ -85,6 +85,16 @@ async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl
 
     if (!profile?.organization_id) {
       throw new Error("Organization not found for user");
+    }
+
+    const { data: membership } = await svc
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", profile.organization_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) {
+      throw new Error("User is not a member of organization");
     }
 
     logger.setUser(user.id);
@@ -195,18 +205,21 @@ async function resolveDataset(
   return created.id;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
   const logger = createLogger("api-ingest", req);
-
-  const startTime = Date.now();
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const svc = createClient(supabaseUrl, serviceKey) as any;
-
   const respond = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  const startTime = Date.now();
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    logger.error("missing required Supabase environment configuration");
+    return respond({ error: "API ingestion service unavailable" }, 503);
+  }
+  const svc = createClient(supabaseUrl, serviceKey);
 
   let jobId: string | null = null;
 
@@ -409,12 +422,17 @@ serve(async (req) => {
       await failSyncJob(svc, { jobId, errorMessage: message });
     }
     logger.error("ingest failed", { error: message, execution_ms: Date.now() - startTime, job_id: jobId });
-    return respond({ error: message }, [
+    const status = [
       "Invalid authorization token",
       "Invalid API key",
       "Authorization header or x-api-key required",
-      "Organization not found for user",
-      "x-dataset-id not found for organization",
-    ].includes(message) ? 401 : 500);
+    ].includes(message)
+      ? 401
+      : ["Organization not found for user", "User is not a member of organization"].includes(message)
+        ? 403
+        : message === "x-dataset-id not found for organization"
+          ? 400
+          : 500;
+    return respond({ error: message }, status);
   }
 });
