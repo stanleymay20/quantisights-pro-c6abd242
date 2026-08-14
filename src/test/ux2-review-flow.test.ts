@@ -45,13 +45,14 @@ const completeChecklist = () => {
 afterEach(cleanup);
 
 describe("UX-2 executive review flow", () => {
-  it("renders the Executive Brief hero with impact, risk, confidence, evidence, and timeline", () => {
+  it("renders the Executive Brief hero with impact provenance, risk, confidence, evidence, and timeline", () => {
     withRouter(React.createElement(ExecutiveBriefHero, { decision: DEMO_DECISION, isDemo: true }));
 
     expect(screen.getByTestId("executive-brief-hero")).toBeInTheDocument();
     expect(screen.getByText(DEMO_DECISION.recommended_action as string)).toBeInTheDocument();
     expect(screen.getByText(getExecutiveNarrative(DEMO_DECISION))).toBeInTheDocument();
-    expect(screen.getByText("Expected impact")).toBeInTheDocument();
+    expect(screen.getByText("Financial impact")).toBeInTheDocument();
+    expect(screen.getByText(/heuristic/i)).toBeInTheDocument();
     expect(screen.getByText("Risk level")).toBeInTheDocument();
     expect(screen.getByText("Confidence")).toBeInTheDocument();
     expect(screen.getByText("Evidence")).toBeInTheDocument();
@@ -217,6 +218,13 @@ describe("UX-2 wiring (routes, navigation, pages)", () => {
     const dashboard = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
     expect(dashboard).toContain('navigate("/executive-brief")');
     expect(dashboard).toContain("Open Executive Brief");
+  });
+
+  it("does not rank the Executive Brief by raw predicted financial impact", () => {
+    const page = read("src/pages/ExecutiveBrief.tsx");
+    expect(page).not.toContain('.order("predicted_net_impact"');
+    expect(page).toContain("confidenceOf");
+    expect(page).toContain("highest available decision-time confidence");
   });
 
   it("keeps the Executive Brief free of trust/status surface links", () => {
