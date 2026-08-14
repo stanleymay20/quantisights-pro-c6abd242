@@ -46,6 +46,7 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
     : "0.0%";
 
   const associatedEvidence = Array.isArray(d.causal_factors) ? d.causal_factors : [];
+  const desiredDirection = d.expected_direction ?? "unknown";
 
   return (
     <motion.div
@@ -72,13 +73,16 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                   <Badge variant="outline" className="text-[10px]">
                     {d.evidence_level === "temporal_break" ? "Temporal-break evidence" : "Descriptive evidence"}
                   </Badge>
+                  <Badge variant="outline" className="text-[10px]">
+                    Desired: {desiredDirection}
+                  </Badge>
                   <Badge variant="outline" className="text-[10px] text-muted-foreground">
                     Causality not established
                   </Badge>
                   <div className="flex items-center gap-1">
                     <TrendIcon className={`w-4 h-4 ${trend.color}`} />
                     <span className={`text-xs font-medium ${trend.color}`}>
-                      {formattedChange}
+                      {d.trend_direction} · {formattedChange}
                     </span>
                   </div>
                 </div>
@@ -170,9 +174,11 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                   <Progress value={d.confidence} className="flex-1 h-2" />
                   <span className="text-sm font-mono font-bold">{Math.round(d.confidence)}%</span>
                 </div>
-                <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground/60">
+                <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground/60 flex-wrap">
                   <span>Sample: {d.sample_size} pts</span>
                   <span>Sufficiency: {d.data_sufficiency}</span>
+                  <span>Desired direction: {desiredDirection}</span>
+                  <span>Trend: {d.trend_direction}</span>
                   <span>Evidence: {d.evidence_level ?? "descriptive"}</span>
                   <span>Causality: {d.causal_status ?? "not_established"}</span>
                   <span>Cap: {d.confidence_cap_reason}</span>
