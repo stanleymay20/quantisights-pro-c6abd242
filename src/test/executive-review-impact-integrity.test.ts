@@ -16,9 +16,11 @@ describe("primary executive review impact integrity", () => {
     expect(review).not.toContain("Alternative B — escalate to governance");
   });
 
-  it("classifies financial impact before displaying it in the executive review", () => {
+  it("preserves impact provenance when the recommended option is built", () => {
     expect(review).toContain("classifyExecutiveDecisionImpact");
     expect(review).toContain("impactClassification");
+    expect(review).toContain("predictedImpactStatus: impactClassification.status");
+    expect(review).toContain("predictedImpactLabel: impactClassification.label");
     expect(review).not.toContain("formatEuro(decision.predicted_net_impact)");
     expect(review).toContain("impactClassification.label");
   });
