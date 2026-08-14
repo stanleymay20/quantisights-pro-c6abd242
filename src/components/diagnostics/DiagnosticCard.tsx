@@ -7,7 +7,7 @@ import OutputClassificationBadge from "@/components/dashboard/OutputClassificati
 import EvidenceChain from "@/components/diagnostics/EvidenceChain";
 import {
   Activity, AlertTriangle, TrendingUp, TrendingDown, Minus, Zap,
-  Search, ChevronRight,
+  Search, ChevronRight, GitCommitHorizontal,
 } from "lucide-react";
 import type { DiagnosticResult } from "@/pages/Diagnostics";
 
@@ -17,47 +17,14 @@ const SEVERITY_CONFIG = {
   info: { bg: "bg-primary/10", border: "border-primary/30", text: "text-primary", icon: Activity, label: "Healthy" },
 };
 
-/** Exact tokens where "declining" is positive (lower = better). Uses word-boundary matching. */
-const INVERSE_TOKENS = [
-  "cost", "costs", "churn", "churn_rate", "attrition", "turnover",
-  "expense", "expenses", "burn", "burn_rate", "debt", "risk",
-  "error", "errors", "defects", "incidents", "downtime",
-  "cost_rate", "cost_of_revenue", "operating_cost",
-];
-
-/** Word-boundary-safe inverse metric detection. Prevents false positives like "discount" matching "cost". */
-function isInverseMetric(slug: string): boolean {
-  const lower = slug.toLowerCase();
-  // Split by common separators to get discrete tokens
-  const tokens = lower.split(/[\s_\-./]+/);
-  return tokens.some(token => INVERSE_TOKENS.includes(token));
-}
-
-function getTrendConfig(direction: string, metricType: string) {
-  const inverse = isInverseMetric(metricType);
-
+function getTrendConfig(direction: string) {
   const baseIcons = {
-    improving: { icon: TrendingUp },
-    declining: { icon: TrendingDown },
-    stable: { icon: Minus },
-    volatile: { icon: Zap },
+    improving: { icon: TrendingUp, color: "text-success" },
+    declining: { icon: TrendingDown, color: "text-destructive" },
+    stable: { icon: Minus, color: "text-muted-foreground" },
+    volatile: { icon: Zap, color: "text-warning" },
   };
-
-  const entry = baseIcons[direction as keyof typeof baseIcons] || baseIcons.stable;
-
-  let color: string;
-  if (direction === "volatile") {
-    color = "text-warning";
-  } else if (direction === "stable") {
-    color = "text-muted-foreground";
-  } else if (inverse) {
-    // Inverse: "improving" means the bad metric went down = green; "declining" means it went up = red
-    color = direction === "improving" ? "text-success" : "text-destructive";
-  } else {
-    color = direction === "improving" ? "text-success" : "text-destructive";
-  }
-
-  return { icon: entry.icon, color };
+  return baseIcons[direction as keyof typeof baseIcons] || baseIcons.stable;
 }
 
 interface DiagnosticCardProps {
@@ -69,15 +36,16 @@ interface DiagnosticCardProps {
 
 const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: DiagnosticCardProps) => {
   const config = SEVERITY_CONFIG[d.severity];
-  const trend = getTrendConfig(d.trend_direction, d.metric_type);
+  const trend = getTrendConfig(d.trend_direction);
   const TrendIcon = trend.icon;
   const SevIcon = config.icon;
+  const structuralBreaks = Array.isArray(d.structural_breaks) ? d.structural_breaks : [];
 
   const formattedChange = typeof d.change_pct === "number"
     ? `${d.change_pct > 0 ? "+" : ""}${d.change_pct.toFixed(1)}%`
     : "0.0%";
 
-  const causalFactors = Array.isArray(d.causal_factors) ? d.causal_factors : [];
+  const associatedEvidence = Array.isArray(d.causal_factors) ? d.causal_factors : [];
 
   return (
     <motion.div
@@ -100,6 +68,12 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                   <h3 className="font-semibold text-base capitalize">{d.metric_type.replace(/_/g, " ")}</h3>
                   <Badge className={`${config.bg} ${config.text} border-none text-xs`}>
                     {config.label}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px]">
+                    {d.evidence_level === "temporal_break" ? "Temporal-break evidence" : "Descriptive evidence"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    Causality not established
                   </Badge>
                   <div className="flex items-center gap-1">
                     <TrendIcon className={`w-4 h-4 ${trend.color}`} />
@@ -135,23 +109,47 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Search className="w-4 h-4 text-primary" />
-                  <h4 className="text-sm font-semibold">Root Cause Analysis</h4>
-                  <OutputClassificationBadge classification="AI_RECOMMENDATION" compact />
+                  <h4 className="text-sm font-semibold">Driver Hypothesis</h4>
+                  <OutputClassificationBadge classification="HEURISTIC_ESTIMATE" compact />
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed">{d.root_cause}</p>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  This hypothesis identifies what to investigate. It does not establish that any factor caused the observed change.
+                </p>
               </div>
 
-              {causalFactors.length > 0 && (
+              {associatedEvidence.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <h4 className="text-sm font-semibold">Causal Factors</h4>
+                    <h4 className="text-sm font-semibold">Associated Statistical Evidence</h4>
                     <OutputClassificationBadge classification="STATISTICAL_INFERENCE" compact />
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {causalFactors.map((f, j) => (
-                      <Badge key={j} variant="outline" className="text-xs">{f}</Badge>
+                    {associatedEvidence.map((factor, factorIndex) => (
+                      <Badge key={factorIndex} variant="outline" className="text-xs">{factor}</Badge>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {structuralBreaks.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <GitCommitHorizontal className="w-4 h-4 text-primary" />
+                    <h4 className="text-sm font-semibold">Detected Structural Breaks</h4>
+                    <OutputClassificationBadge classification="STATISTICAL_INFERENCE" compact />
+                  </div>
+                  <div className="space-y-2">
+                    {structuralBreaks.map((point, pointIndex) => (
+                      <div key={`${point.date ?? point.index}-${pointIndex}`} className="rounded-md border border-border/50 p-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{point.date ?? `Observation ${point.index}`}</span>
+                        {` · mean ${point.mean_before.toFixed(2)} → ${point.mean_after.toFixed(2)} · ${point.magnitude_pct > 0 ? "+" : ""}${point.magnitude_pct.toFixed(1)}% · break strength ${Math.round(point.significance * 100)}%`}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    A structural break shows that the statistical regime changed around this point; it does not identify the cause of the change.
+                  </p>
                 </div>
               )}
 
@@ -159,7 +157,7 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Zap className="w-4 h-4 text-primary" />
-                    <h4 className="text-sm font-semibold">Recommended Action</h4>
+                    <h4 className="text-sm font-semibold">Recommended Investigation / Action</h4>
                     <OutputClassificationBadge classification="AI_RECOMMENDATION" compact />
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed">{d.recommendation}</p>
@@ -175,6 +173,8 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                 <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground/60">
                   <span>Sample: {d.sample_size} pts</span>
                   <span>Sufficiency: {d.data_sufficiency}</span>
+                  <span>Evidence: {d.evidence_level ?? "descriptive"}</span>
+                  <span>Causality: {d.causal_status ?? "not_established"}</span>
                   <span>Cap: {d.confidence_cap_reason}</span>
                   {d.adaptive_calibration_applied && (
                     <span>Calibration: v{d.calibration_model_version} ({(d.calibration_correction_applied_pp ?? 0) > 0 ? "+" : ""}{d.calibration_correction_applied_pp}pp)</span>
@@ -182,7 +182,6 @@ const DiagnosticCard = ({ diagnostic: d, index, isExpanded, onToggle }: Diagnost
                 </div>
               </div>
 
-              {/* Evidence Chain — full traceability */}
               <div className="pt-4 border-t border-border/30">
                 <EvidenceChain diagnostic={d} />
               </div>
