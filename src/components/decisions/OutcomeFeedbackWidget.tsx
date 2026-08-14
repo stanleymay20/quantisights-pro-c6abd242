@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CheckCircle2, XCircle, Loader2, Sparkles } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,8 +16,13 @@ interface Props {
 
 /**
  * One-click outcome capture for AICIS-linked decisions.
- * Writes a row to aicis_outcomes via the aicis-evaluate-outcomes edge function,
- * which computes Brier score and feeds the calibration loop.
+ *
+ * Outcome success and prediction accuracy are deliberately separate concepts:
+ * - Yes/No records whether the decision delivered the expected business outcome.
+ * - Optional impact is stored as the observed business value.
+ * - AICIS risk calibration converts the verdict to a binary risk-event target
+ *   server-side; the monetary/metric impact is never used as a Brier target.
+ * - We do not manufacture a 100/0 prediction-accuracy score from this verdict.
  */
 const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, onSubmitted }: Props) => {
   const { toast } = useToast();
@@ -30,7 +34,7 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
     return (
       <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
         <Sparkles className="w-3 h-3 text-primary" />
-        Outcome scored — feeding calibration loop.
+        Outcome recorded — risk calibration updated where a probability prediction exists.
       </div>
     );
   }
@@ -38,38 +42,23 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
   const submit = async (verdict: "positive" | "negative") => {
     setSubmitting(verdict);
     try {
-      // Persist outcome fields on decision_ledger so /outcomes KPIs and
-      // similarity retrieval see this signal (previously only actual_value
-      // was written, leaving outcome_delta / prediction_accuracy_score null
-      // and hiding user feedback from Outcome Tracking).
-      const numeric = verdict === "positive" ? 1 : 0;
       const parsedImpact = impact.trim() ? Number(impact) : NaN;
-      const actual_value = Number.isFinite(parsedImpact) ? parsedImpact : numeric;
-      const outcome_delta = Number.isFinite(parsedImpact)
-        ? parsedImpact
-        : verdict === "positive" ? 1 : -1;
-      const prediction_accuracy_score = verdict === "positive" ? 100 : 0;
-      await supabase
-        .from("decision_ledger")
-        .update({
-          actual_value,
-          outcome_delta,
-          prediction_accuracy_score,
-          outcome_measured_at: new Date().toISOString(),
-        })
-        .eq("id", decisionId);
+      const actualValue = Number.isFinite(parsedImpact) ? parsedImpact : undefined;
 
-      const parsedImpactBody = impact.trim() ? Number(impact) : NaN;
       const { error } = await invokeWithRetry("aicis-evaluate-outcomes", {
         body: {
           organization_id: organizationId,
           decision_id: decisionId,
           actual_outcome: verdict,
-          actual_value: Number.isFinite(parsedImpactBody) ? parsedImpactBody : undefined,
+          actual_value: actualValue,
         },
       });
       if (error) throw error;
-      toast({ title: "Outcome recorded", description: "Calibration loop updated." });
+
+      toast({
+        title: "Outcome recorded",
+        description: "Business outcome saved; calibration updated without fabricating forecast accuracy.",
+      });
       onSubmitted?.();
     } catch (e) {
       toast({
@@ -86,7 +75,7 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
     <div className="mt-3 rounded-lg border border-dashed p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium">Did this decision deliver the expected impact?</p>
-        <Badge variant="outline" className="text-[10px]">Calibration</Badge>
+        <Badge variant="outline" className="text-[10px]">Outcome feedback</Badge>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <Button
@@ -122,10 +111,13 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
             onChange={(e) => setImpact(e.target.value)}
             placeholder="e.g. 25000"
             className="h-7 text-xs w-32"
-            inputMode="numeric"
+            inputMode="decimal"
           />
         )}
       </div>
+      <p className="text-[10px] text-muted-foreground">
+        Actual impact is stored as a business value. It is not treated as prediction accuracy or a probability target.
+      </p>
     </div>
   );
 };
