@@ -5,7 +5,11 @@
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "noEmit": true
+    "noEmit": true,
+    "types": [
+      "vitest/globals",
+      "vite/client"
+    ]
   },
   "files": [
     "src/lib/evidence-contract.ts",
