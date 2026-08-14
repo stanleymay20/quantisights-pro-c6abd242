@@ -63,6 +63,17 @@ function optionalString(record: Record<string, unknown>, key: string): string | 
   return value == null ? undefined : nonEmptyString(value) ?? undefined;
 }
 
+function scalarCellString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? undefined : trimmed;
+  }
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : undefined;
+  if (typeof value === "bigint" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
 function isPeriodGrain(value: unknown): value is PeriodGrain {
   return typeof value === "string" && PERIOD_GRAINS.has(value as PeriodGrain);
 }
@@ -140,9 +151,9 @@ export function rowToCanonicalMetric(row: Record<string, unknown>, mapping: Ware
     if (column in row) dimensions[column] = row[column];
   }
 
-  const unit = mapping.unit_column ? nonEmptyString(row[mapping.unit_column]) ?? undefined : undefined;
+  const unit = mapping.unit_column ? scalarCellString(row[mapping.unit_column]) : undefined;
   const entityExternalId = mapping.entity_external_id_column
-    ? nonEmptyString(row[mapping.entity_external_id_column]) ?? undefined
+    ? scalarCellString(row[mapping.entity_external_id_column])
     : undefined;
 
   return {
@@ -236,6 +247,75 @@ function maskSqlNonCode(query: string): string {
   return masked.join("");
 }
 
+/**
+ * Find the end of the executable statement while counting quoted literals/identifiers as part of
+ * the statement, but excluding comments, trailing whitespace, and a trailing semicolon.
+ */
+function statementInsertionIndex(query: string): number {
+  const chars = [...query];
+  let mode: "code" | "single" | "double" | "backtick" | "line_comment" | "block_comment" = "code";
+  let lastStatementChar = -1;
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const current = chars[i];
+    const next = chars[i + 1];
+
+    if (mode === "line_comment") {
+      if (current === "\n") mode = "code";
+      continue;
+    }
+    if (mode === "block_comment") {
+      if (current === "*" && next === "/") {
+        i += 1;
+        mode = "code";
+      }
+      continue;
+    }
+    if (mode === "single" || mode === "double" || mode === "backtick") {
+      lastStatementChar = i;
+      const quote = mode === "single" ? "'" : mode === "double" ? '"' : "`";
+      if (current === quote) {
+        if (next === quote) {
+          lastStatementChar = i + 1;
+          i += 1;
+        } else {
+          mode = "code";
+        }
+      }
+      continue;
+    }
+
+    if (current === "-" && next === "-") {
+      i += 1;
+      mode = "line_comment";
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      i += 1;
+      mode = "block_comment";
+      continue;
+    }
+    if (current === "'") {
+      lastStatementChar = i;
+      mode = "single";
+      continue;
+    }
+    if (current === '"') {
+      lastStatementChar = i;
+      mode = "double";
+      continue;
+    }
+    if (current === "`") {
+      lastStatementChar = i;
+      mode = "backtick";
+      continue;
+    }
+    if (!/\s/.test(current ?? "") && current !== ";") lastStatementChar = i;
+  }
+
+  return lastStatementChar + 1;
+}
+
 function boundedRowCap(maxRows: number): number {
   if (!Number.isFinite(maxRows)) return DEFAULT_QUERY_ROWS;
   return Math.min(MAX_QUERY_ROWS, Math.max(1, Math.floor(maxRows)));
@@ -259,12 +339,8 @@ export function enforceLimit(query: string, maxRows: number): string {
     return `${query.slice(0, start)}${bounded}${query.slice(end)}`;
   }
 
-  let insertionIndex = masked.length - 1;
-  while (insertionIndex >= 0 && /\s/.test(masked[insertionIndex] ?? "")) insertionIndex -= 1;
-  if (insertionIndex < 0) return `LIMIT ${cap}`;
-  if (masked[insertionIndex] === ";") insertionIndex -= 1;
-  while (insertionIndex >= 0 && /\s/.test(masked[insertionIndex] ?? "")) insertionIndex -= 1;
-  const insertAt = insertionIndex + 1;
+  const insertAt = statementInsertionIndex(query);
+  if (insertAt === 0) return `LIMIT ${cap}`;
   const prefix = query.slice(0, insertAt).trimEnd();
   return `${prefix} LIMIT ${cap}${query.slice(insertAt)}`;
 }
