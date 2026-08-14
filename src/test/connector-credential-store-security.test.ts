@@ -40,6 +40,20 @@ describe("connector credential storage security", () => {
     expect(rollbackMigration).toContain("REVOKE ALL ON FUNCTION public.delete_vault_secret(text) FROM PUBLIC, anon, authenticated");
   });
 
+  it("rolls back in foreign-key-safe dependency order", () => {
+    const rollbackStart = store.indexOf("const rollback = async () =>");
+    const rollbackEnd = store.indexOf("for (const [field, rawValue]", rollbackStart);
+    const rollbackBody = store.slice(rollbackStart, rollbackEnd);
+    const scheduleDelete = rollbackBody.indexOf('.from("connector_sync_schedules")');
+    const connectorDelete = rollbackBody.indexOf('.from("data_connectors")');
+    const dataSourceDelete = rollbackBody.indexOf('.from("data_sources")');
+    const vaultDelete = rollbackBody.indexOf('svc.rpc("delete_vault_secret"');
+    expect(scheduleDelete).toBeGreaterThan(-1);
+    expect(connectorDelete).toBeGreaterThan(scheduleDelete);
+    expect(dataSourceDelete).toBeGreaterThan(connectorDelete);
+    expect(vaultDelete).toBeGreaterThan(dataSourceDelete);
+  });
+
   it("requires the linked data source, schedule, and audit write before reporting success", () => {
     expect(store).toContain("Unable to create connector data source");
     expect(store).toContain("Unable to link connector data source");
