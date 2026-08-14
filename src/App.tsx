@@ -115,7 +115,9 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        {/* React Router 7 enables the v7 transition/splat behavior by default;
+            the old `future` prop is no longer part of BrowserRouterProps. */}
+        <BrowserRouter>
           <RouteMetadata />
           <AuthProvider>
             <CookieConsent />
