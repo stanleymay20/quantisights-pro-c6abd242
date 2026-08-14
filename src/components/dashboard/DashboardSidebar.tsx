@@ -181,6 +181,7 @@ const navSections: NavSection[] = [
     subItems: [
       { icon: Target,         label: "Outcome Tracking",  path: "/outcomes" },
       { icon: BarChart3,      label: "Decision Accuracy", path: "/decision-accuracy" },
+      { icon: BarChart3,      label: "Diagnostics",       path: "/diagnostics" },
       { icon: Factory,        label: "Industrial Ops",    path: "/industrial-operations" },
       { icon: Scale,          label: "Contradictions",    path: "/contradictions" },
       { icon: ShieldAlert,    label: "Executive Intel",   path: "/executive-intelligence" },
@@ -267,7 +268,6 @@ const advancedGroups: AdvancedGroup[] = [
       { icon: Brain,     label: "Counterfactual",      path: "/counterfactual" },
       { icon: ShieldAlert,label:"Bias Detection",      path: "/cognitive-bias" },
       { icon: Network,   label: "Operational Graph",   path: "/operational-graph" },
-      { icon: BarChart3, label: "Diagnostics",         path: "/diagnostics" },
     ],
   },
   {
