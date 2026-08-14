@@ -6,6 +6,7 @@
 DO $$
 DECLARE
   job_name text;
+  generated_cron_secret text;
 BEGIN
   IF NOT EXISTS (
     SELECT 1
@@ -17,9 +18,24 @@ BEGIN
       'Vault secret project_url is missing or invalid; refusing to schedule cross-environment jobs';
   END IF;
 
+  -- Cron callers and Edge Functions read the same Vault-backed secret through
+  -- public.get_ingest_cron_secret(). Bootstrap an environment-local secret only
+  -- when one does not already exist; never overwrite a configured value.
+  IF NULLIF(public.get_ingest_cron_secret(), '') IS NULL THEN
+    generated_cron_secret :=
+      replace(gen_random_uuid()::text, '-', '') ||
+      replace(gen_random_uuid()::text, '-', '');
+
+    PERFORM vault.create_secret(
+      generated_cron_secret,
+      'ingest_cron_secret',
+      'Environment-local secret for authenticated pg_cron Edge Function calls'
+    );
+  END IF;
+
   IF NULLIF(public.get_ingest_cron_secret(), '') IS NULL THEN
     RAISE EXCEPTION
-      'Vault secret ingest_cron_secret is missing; refusing to create cron jobs';
+      'Vault secret ingest_cron_secret could not be provisioned; refusing to create cron jobs';
   END IF;
 
   FOREACH job_name IN ARRAY ARRAY[
