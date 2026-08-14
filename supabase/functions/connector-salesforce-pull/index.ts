@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Salesforce connector — Phase 3B
  *
@@ -34,10 +33,19 @@ import {
 import { logConnectorEvent } from "../_shared/warehouse-config.ts";
 import { getSalesforceTokens } from "../_shared/salesforce-auth.ts";
 import { assertSoqlSafe, type SoqlGovernance } from "../_shared/soql-guard.ts";
+import {
+  normalizeSalesforceObjects,
+  parseSalesforcePullRequest,
+  parseSalesforceQueryPage,
+  safeSalesforceHttpError,
+  validateSalesforceCursor,
+} from "../_shared/salesforce-pull-guard.ts";
 
 const API_VERSION = "v60.0";
 const VENDOR = "salesforce";
 const SOURCE = "salesforce" as const;
+const FETCH_TIMEOUT_MS = 60_000;
+const DEFAULT_OBJECTS = ["Account", "Contact", "Opportunity", "Case", "Task", "Event"] as const;
 
 type Mode = "historical_backfill" | "incremental_sync";
 
@@ -51,19 +59,41 @@ const DEFAULT_GOV: SoqlGovernance = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const cors = getCorsHeaders(req);
-  const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    return json({ error: "Salesforce pull service unavailable" }, 503, cors);
+  }
+  const svc = createClient(supabaseUrl, serviceRoleKey);
 
   try {
-    const { connector_id, mode: requestedMode } = await req.json().catch(() => ({}));
-    if (!connector_id) return json({ error: "connector_id required" }, 400, cors);
+    let request;
+    try {
+      request = parseSalesforcePullRequest(await req.json().catch(() => null));
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : String(error) }, 400, cors);
+    }
+    const connector_id = request.connectorId;
 
     const { data: connector, error: cErr } = await svc.from("data_connectors").select("*").eq("id", connector_id).single();
     if (cErr || !connector) return json({ error: "connector not found" }, 404, cors);
+    if (connector.connector_type !== "salesforce") return json({ error: "not a Salesforce connector" }, 400, cors);
+    if (typeof connector.organization_id !== "string" || !connector.organization_id) {
+      return json({ error: "connector organization missing" }, 500, cors);
+    }
     const orgId = connector.organization_id;
-    const cfg = (connector.config ?? {}) as { mode?: Mode; objects?: string[]; governance?: SoqlGovernance };
-    const mode: Mode = (requestedMode as Mode) || cfg.mode || "incremental_sync";
+    const cfg = (connector.config ?? {}) as { mode?: Mode; objects?: unknown; governance?: SoqlGovernance };
+    const mode: Mode = request.mode ?? cfg.mode ?? "incremental_sync";
+    if (mode !== "historical_backfill" && mode !== "incremental_sync") {
+      return json({ error: "connector config mode is invalid" }, 400, cors);
+    }
     const gov: SoqlGovernance = { ...DEFAULT_GOV, ...(cfg.governance ?? {}) };
-    const objects = cfg.objects ?? ["Account", "Contact", "Opportunity", "Case", "Task", "Event"];
+    let objects: string[];
+    try {
+      objects = normalizeSalesforceObjects(cfg.objects, DEFAULT_OBJECTS, gov.allowed_objects ?? DEFAULT_GOV.allowed_objects);
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : String(error) }, 400, cors);
+    }
 
     const gate = await shouldAllow(svc, orgId, connector_id);
     if (!gate.allow) {
@@ -122,24 +152,28 @@ interface Ctx { svc: any; orgId: string; connectorId: string; mode: Mode; gov: S
 interface Totals { entities: number; events: number; metrics: number; relationships: number; errors: number; }
 const empty = (): Totals => ({ entities: 0, events: 0, metrics: 0, relationships: 0, errors: 0 });
 function addInto(a: Totals, b: Totals) { a.entities += b.entities; a.events += b.events; a.metrics += b.metrics; a.relationships += b.relationships; a.errors += b.errors; }
-function json(body: any, status: number, cors: Record<string, string>) {
+function json(body: unknown, status: number, cors: Record<string, string>) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 }
 
 async function getCheckpoint(ctx: Ctx, field: string): Promise<string | null> {
   if (ctx.mode === "historical_backfill") return null;
-  const { data } = await ctx.svc.from("connector_sync_checkpoints").select("cursor_value,high_watermark")
-    .eq("connector_id", ctx.connectorId).eq("cursor_field", field).maybeSingle();
-  return data?.cursor_value ?? null;
+  const { data, error } = await ctx.svc.from("connector_sync_checkpoints").select("cursor_value,high_watermark")
+    .eq("organization_id", ctx.orgId).eq("connector_id", ctx.connectorId).eq("cursor_field", field).maybeSingle();
+  if (error) throw new Error(`unable to read Salesforce checkpoint ${field}: ${error.message}`);
+  return validateSalesforceCursor(data?.high_watermark ?? data?.cursor_value ?? null);
 }
 async function setCheckpoint(ctx: Ctx, field: string, value: string): Promise<void> {
-  await ctx.svc.from("connector_sync_checkpoints").upsert({
+  const cursor = validateSalesforceCursor(value);
+  if (!cursor) throw new Error(`refusing to persist empty Salesforce checkpoint ${field}`);
+  const { error } = await ctx.svc.from("connector_sync_checkpoints").upsert({
     organization_id: ctx.orgId, connector_id: ctx.connectorId,
-    cursor_field: field, cursor_value: value,
-    high_watermark: value,                   // CDC-ready
+    cursor_field: field, cursor_value: cursor,
+    high_watermark: cursor,                  // CDC-ready
     change_event_ready: false,               // flip when Streaming/CDC adopted
     updated_at: new Date().toISOString(),
   }, { onConflict: "connector_id,cursor_field" });
+  if (error) throw new Error(`unable to persist Salesforce checkpoint ${field}: ${error.message}`);
 }
 
 /** Execute SOQL via /query, paging /queryMore until done. Validates via assertSoqlSafe. */
@@ -150,19 +184,20 @@ async function* runSoql(ctx: Ctx, soql: string): AsyncGenerator<any[]> {
   const MAX_PAGES = ctx.mode === "historical_backfill" ? 200 : 50;
   while (nextUrl && pages < MAX_PAGES) {
     await preflightWait(ctx.svc, ctx.orgId, ctx.connectorId, VENDOR);
-    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${ctx.tokens.access_token}` } });
+    const res = await fetch(nextUrl, {
+      headers: { Authorization: `Bearer ${ctx.tokens.access_token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const obs = await observeResponse(ctx.svc, { orgId: ctx.orgId, connectorId: ctx.connectorId, vendor: VENDOR, res });
     if (obs.throttled) { await new Promise(r => setTimeout(r, obs.suggestedRetryMs)); continue; }
-    if (!res.ok) {
-      // SOQL errors return a JSON array; we log status + ErrorCode but NOT headers.
-      const txt = await res.text();
-      throw new Error(`Salesforce SOQL ${res.status}: ${txt.slice(0, 300)}`);
-    }
-    const body: any = await res.json();
-    yield body.records ?? [];
-    nextUrl = body.nextRecordsUrl ? `${ctx.tokens.instance_url}${body.nextRecordsUrl}` : null;
+    const rawBody: unknown = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(safeSalesforceHttpError(res.status, rawBody));
+    const page = parseSalesforceQueryPage(rawBody);
+    yield page.records as any[];
+    nextUrl = page.nextRecordsUrl ? `${ctx.tokens.instance_url}${page.nextRecordsUrl}` : null;
     pages++;
   }
+  if (nextUrl) throw new Error(`Salesforce pagination exceeded safety cap (${MAX_PAGES} pages)`);
 }
 
 function whereSince(field: string, cursor: string | null): string {
