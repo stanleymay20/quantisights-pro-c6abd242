@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDecisionOptions, traceabilityFromExecutiveDecision } from "@/lib/decision-options";
+import {
+  buildDecisionOptions,
+  classifyExecutiveDecisionImpact,
+  traceabilityFromExecutiveDecision,
+} from "@/lib/decision-options";
 import { buildTraceability } from "@/lib/evidence-contract";
 
 const verifiedTrace = buildTraceability({
@@ -103,5 +107,53 @@ describe("decision option comparison integrity", () => {
     expect(traceability.isVerifiedSource).toBe(false);
     expect(traceability.dataRowsUsed).toBe(0);
     expect(traceability.limitations).toContain("No observed rows are traceable to this decision");
+  });
+
+  it("treats a linked simulation impact as modeled", () => {
+    const impact = classifyExecutiveDecisionImpact({
+      predictedNetImpact: 150000,
+      decisionSimulationId: "simulation-1",
+      explanationMetadata: { expected_impact: { basis: "Monte Carlo decision simulation" } },
+    });
+
+    expect(impact).toMatchObject({ status: "modeled", value: 150000 });
+    expect(impact.label).toContain("linked decision simulation");
+  });
+
+  it("keeps legacy severity/rule monetary values explicitly heuristic instead of modeled", () => {
+    const impact = classifyExecutiveDecisionImpact({
+      predictedNetImpact: 50000,
+      decisionSimulationId: null,
+      explanationMetadata: {
+        expected_impact: { basis: "Severity and metric-driven estimate from raw insight" },
+      },
+    });
+
+    expect(impact).toMatchObject({ status: "derived", value: 50000 });
+    expect(impact.label).toContain("Heuristic/derived estimate");
+
+    const options = buildDecisionOptions({
+      recommendedAction: "Investigate margin decline",
+      predictedNetImpact: impact.value,
+      predictedImpactStatus: impact.status,
+      predictedImpactLabel: impact.label,
+      confidence: 70,
+      traceability: verifiedTrace,
+    });
+    expect(options[0].impact.status).toBe("derived");
+    expect(options[0].impact.label).toContain("Heuristic/derived estimate");
+  });
+
+  it("keeps missing monetary impact explicitly unmodeled", () => {
+    const impact = classifyExecutiveDecisionImpact({
+      predictedNetImpact: null,
+      decisionSimulationId: null,
+      explanationMetadata: {
+        expected_impact: { basis: "No evidence-backed monetary impact model was available for this insight" },
+      },
+    });
+
+    expect(impact).toMatchObject({ status: "unmodeled", value: null });
+    expect(impact.label).toContain("Not quantified");
   });
 });
