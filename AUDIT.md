@@ -1,88 +1,162 @@
-# Repository Audit
+# Repository Audit — Remediation Status
 
-Audit date: 2026-07-02
+Updated: 2026-08-14
 
-## Scope
+> This document supersedes the 2026-07-02 audit snapshot. The repository has changed substantially since that review; findings that described missing tests, failing lint, mixed lockfiles, or a minimal release gate are no longer current.
 
-Reviewed the Vite/React/TypeScript application, Supabase Edge Functions, configuration, dependency metadata, and standard repository health checks.
+## Current release-quality baseline
 
-## Commands run
+The repository now treats quality and decision integrity as release requirements rather than advisory checks.
 
+The normal CI path includes:
+
+- `npm ci`
 - `npm run lint`
-- `npm run build`
-- `rg -n "(VITE_|SUPABASE|SERVICE_ROLE|SECRET|PASSWORD|API_KEY|anon|TODO|FIXME|console\\.log|dangerouslySetInnerHTML|eval\\()" -g '!node_modules' -g '!dist'`
+- `npm run typecheck`
+- `npm run typecheck:trusted`
+- full Vitest suite
+- evidence-framework tests
+- security-configuration verification
+- production build
+- `npm audit --audit-level=moderate`
 
-## Executive summary
+The production `release-gate` also includes the full certification suite before promotion.
 
-The application currently builds successfully, but linting fails with 82 errors and 19 warnings. The highest-impact issues are weak TypeScript guardrails, unresolved lint failures across app and Supabase function code, mixed package-manager lockfiles, missing automated tests, and production maintainability risks such as an oversized JavaScript bundle and verbose logging in sensitive backend paths.
+A validated Iteration 1 run completed the ordinary CI chain successfully across lint, TypeScript, tests, evidence tests, security verification, build, and dependency audit.
 
-## Findings
+## Remediation completed
 
-### High priority
+### 1. Release and dependency integrity
 
-1. **Lint gate is failing.**
-   - `npm run lint` reports 101 total problems: 82 errors and 19 warnings.
-   - The most common failure is `@typescript-eslint/no-explicit-any`, affecting app components, hooks, pages, and Supabase functions.
-   - Additional errors include empty object interfaces, unnecessary regex escapes, an empty block statement, `prefer-const`, and CommonJS `require()` in `tailwind.config.ts`.
-   - Recommendation: fix lint errors incrementally by module, then keep linting required in CI.
+- npm is the authoritative package-manager path for CI and release validation.
+- Conflicting Bun lockfiles were removed from the release path.
+- The audited transitive Nano ID vulnerability was repaired by regenerating the npm lockfile; the resolved Nano ID version is 3.3.18.
+- Dependency audit is a required CI/release gate rather than an informational check.
+- The tracked local `.env` file was removed; environment-specific secrets/configuration remain outside source control, with example files used for documentation.
 
-2. **TypeScript strictness is disabled.**
-   - `tsconfig.app.json` sets `strict: false`, `noImplicitAny: false`, `noUnusedLocals: false`, and `noUnusedParameters: false`.
-   - The root `tsconfig.json` also disables several safety checks.
-   - Recommendation: keep the current relaxed settings only as a temporary compatibility mode; add a staged plan to enable `strict`, then `noImplicitAny`, then unused checks.
+### 2. Automated testing and evidence gates
 
-3. **No test script or test runner is configured.**
-   - `package.json` contains `dev`, `build`, `build:dev`, `lint`, and `preview`, but no `test` command.
-   - Recommendation: add Vitest/React Testing Library for component and hook coverage, and Deno/Supabase function tests or integration smoke tests for Edge Functions.
+The earlier audit statement that no test runner existed is obsolete. The repository now contains a substantial Vitest suite plus separate evidence/certification tooling, tenant-isolation tooling, and end-to-end utilities.
 
-4. **Generated Supabase client does not guard required environment variables.**
-   - `src/integrations/supabase/client.ts` passes `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY` directly into `createClient`.
-   - Recommendation: validate these values at startup so missing deployment configuration fails with a clear message instead of downstream runtime errors.
+Decision-integrity regressions now cover, among other areas:
 
-### Medium priority
+- approval atomicity and final-state guards;
+- tenant/security boundaries;
+- calibration semantics;
+- decision-outcome measurement;
+- evidence/provenance contracts;
+- diagnostic causality language and structural-break evidence;
+- institutional-memory/precedent behavior;
+- accessibility and executive UX invariants.
 
-5. **The production bundle is large.**
-   - `npm run build` succeeds, but Vite warns that the main JavaScript chunk is larger than 500 kB after minification.
-   - Current output includes a roughly 1.59 MB minified JS bundle and 447 kB gzip bundle.
-   - Recommendation: add route-level lazy loading and consider manual chunks for large libraries such as PDF generation, charts, animation, and Supabase-heavy admin screens.
+### 3. Decision evidence and provenance
 
-6. **Browserslist/caniuse data is stale.**
-   - Build output reports Browserslist data is 13 months old.
-   - Recommendation: run `npx update-browserslist-db@latest` during dependency maintenance and commit the resulting lockfile update.
+The decision-quality gate now fails closed on hard evidence prerequisites. Presentation quality, long prose, or a quantified-looking expected impact cannot compensate for absent observed data or unverified provenance.
 
-7. **Mixed lockfiles can cause non-reproducible installs.**
-   - The repository includes `package-lock.json`, `bun.lock`, and `bun.lockb`.
-   - Recommendation: choose one package manager for contributors and CI. If npm is authoritative, remove Bun lockfiles; if Bun is authoritative, document it and remove `package-lock.json`.
+Decision-grade recommendations require substantive evidence, a confidence basis with observed data, and verified traceability to stable source entities/datasets. Unverified recommendations are explicitly labelled and prevented from passing the decision gate.
 
-8. **Supabase Edge Functions contain broad logging in sensitive workflows.**
-   - Multiple Edge Functions log user IDs, email delivery details, request shapes, and AI-processing progress.
-   - Recommendation: gate verbose logs behind an environment flag, redact user-identifying values where possible, and standardize structured logs.
+### 4. Diagnostic epistemic integrity
 
-9. **Security-sensitive server functionality depends on service-role keys.**
-   - Several Edge Functions correctly read `SUPABASE_SERVICE_ROLE_KEY` from environment variables, but these paths should receive extra review because they bypass row-level security.
-   - Recommendation: add per-function authorization checks, least-privilege RPCs where possible, and integration tests that assert cross-user access is impossible.
+The diagnostic layer no longer treats descriptive or temporal evidence as causal proof.
 
-### Low priority
+Current contracts distinguish:
 
-10. **Fast Refresh warnings indicate mixed component/non-component exports.**
-    - Several UI/component files trigger `react-refresh/only-export-components` warnings.
-    - Recommendation: move constants/helpers/hooks into separate files where feasible.
+- observed/descriptive findings;
+- structural or temporal breaks;
+- driver hypotheses / associated evidence;
+- causal status and evidence level.
 
-11. **README is still the default Lovable template.**
-    - It contains placeholder project identifiers and generic setup guidance.
-    - Recommendation: document required environment variables, package-manager choice, Supabase local development, Edge Function deployment, and verification commands.
+Changepoint detection is integrated as structural-break evidence and is explicitly documented as temporal evidence rather than proof of cause. Trend labels are computed against the KPI's desired direction and are not left to the LLM to override.
 
-12. **Console logging exists in client-side job discovery flows.**
-    - Logs appear in `src/hooks/useJobDiscovery.ts`, `src/hooks/useSavedSearchAutomation.ts`, and `src/components/jobs/JobDiscoveryDialog.tsx`.
-    - Recommendation: remove development logs or replace them with a debug logger disabled in production.
+### 5. Outcome and calibration correctness
 
-## Suggested remediation order
+Manual business success, business impact, probability calibration, and forecast accuracy are now separated semantically.
 
-1. Decide and document the supported package manager.
-2. Add minimal CI for `npm run lint` and `npm run build`.
-3. Fix lint errors that are mechanical and low risk.
-4. Add environment-variable validation for Supabase client initialization.
-5. Add a basic test runner and smoke tests for key pages/hooks.
-6. Split oversized routes and lazy-load heavy dependencies.
-7. Harden Edge Function logging and service-role authorization checks.
-8. Replace the template README with project-specific setup and operations guidance.
+AICIS probability calibration uses a binary adverse-risk-event target. Business/monetary impact is not used as a Brier-score target. Database constraints now enforce:
+
+- binary calibration `actual_value` (`0` or `1`);
+- probability-bounded `predicted_value`;
+- Brier score in `[0,1]`;
+- absolute probability error in `[0,1]`.
+
+Historical invalid calibration values are cleared rather than silently reinterpreted.
+
+### 6. Direction-aware organizational learning
+
+Historical success is no longer inferred from `outcome_delta > 0`.
+
+The learning/prediction path uses the expected outcome direction, so improvements such as lower churn, lower cost, lower mortality, lower fraud, or lower downtime are not misclassified as failures.
+
+Similar-decision precedent accuracy is refreshed from canonical measured `decision_outcomes.accuracy_score` records. Missing accuracy remains unknown instead of being coerced to zero from stale embedding metadata.
+
+### 7. Tenant and privileged-function hardening
+
+User-triggered institutional-memory embedding is tenant-authorized before service-role access. Similar-decision and prediction paths also verify organization membership.
+
+Public-schema privileged-function execution has been hardened so SECURITY DEFINER helpers do not inherit unintended anonymous execution. Trigger-only functions and tenant-scoped privileged RPCs have explicit execution boundaries.
+
+A staging tenant-isolation harness exists with positive own-tenant controls and negative cross-tenant read/write probes. It fails non-zero on leaks, malformed runs, or unexpected API behavior.
+
+### 8. Decision-state governance
+
+Database triggers and sanctioned RPC paths enforce important lifecycle invariants, including approval requirements and final approved/rejected states. Regression coverage protects against direct-update bypasses and migration regressions.
+
+### 9. TypeScript guardrails
+
+The application-wide compatibility configuration remains intentionally relaxed while the codebase is migrated incrementally. However, a separate strict compiler boundary now protects trusted decision/security primitives with:
+
+- `strict: true`;
+- `noImplicitAny: true`;
+- `noUncheckedIndexedAccess: true`;
+- `exactOptionalPropertyTypes: true`.
+
+`npm run typecheck:trusted` is required by CI and the production release gate. The initial strict boundary covers evidence-contract, decision-maturity, and safe-navigation primitives and should be expanded incrementally.
+
+## Remaining work
+
+### A. Expand strict typing beyond the initial trusted kernel
+
+`tsconfig.app.json` still uses relaxed compatibility options outside the trusted kernel. Do not flip the entire repository to strict mode in one change. Expand `tsconfig.trusted.json` iteratively to additional decision-critical modules, fixing each newly exposed error before widening the boundary.
+
+Priority candidates include recommendation generation, cost-of-delay logic, outcome prediction, calibration utilities, and other pure decision-domain modules.
+
+### B. Reduce `@ts-nocheck` in privileged Edge Functions
+
+A number of Supabase Edge Functions still suppress TypeScript checking. Remove these incrementally, starting with functions that:
+
+- use the service-role client;
+- accept user-supplied `organization_id` values;
+- create/update decisions or outcomes;
+- handle connector credentials or privileged external integrations.
+
+Each removal should be accompanied by authorization and regression tests rather than a bulk mechanical deletion.
+
+### C. Configure the staging GitHub Environment
+
+The staging deployment workflow intentionally fails closed unless the GitHub `staging` Environment contains the required deployment credentials, including:
+
+- `SUPABASE_ACCESS_TOKEN`
+- `SUPABASE_DB_PASSWORD`
+
+These are deployment-environment secrets and must not be committed to the repository. Once configured, staging can run migration/deployment verification against the real staging Supabase project.
+
+### D. Run tenant-isolation probes against deployed staging
+
+The tenant-isolation harness requires a real staging/preview Supabase target and service-role credentials for seeding. It should be run after staging deployment once the environment secrets are configured. It should not be replaced with a vacuous offline mock because its purpose is to verify real RLS/API behavior.
+
+### E. Continue warning/maintainability cleanup
+
+Lint is enforced without blocking errors, but non-fatal warnings and legacy `@ts-nocheck` usage remain. Continue reducing these by module without weakening existing release gates.
+
+## Operational note
+
+`main` is currently receiving frequent concurrent edits. CI uses `cancel-in-progress: true`, so a healthy run may be marked cancelled when a newer commit supersedes it. Treat the newest descendant run as authoritative and distinguish supersession from an actual failing step.
+
+## Current remediation priority
+
+1. Keep the existing quality/security gates mandatory.
+2. Configure staging deployment credentials outside source control.
+3. Run the real tenant-isolation harness against staging.
+4. Expand strict TypeScript coverage across the trusted decision kernel.
+5. Remove `@ts-nocheck` from privileged Edge Functions iteratively.
+6. Continue performance/bundle and warning cleanup after decision/security integrity work remains green.
