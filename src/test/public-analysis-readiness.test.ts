@@ -15,10 +15,12 @@ const options = {
 
 describe("public analysis client recovery", () => {
   it("uses stable request and idempotency identifiers", async () => {
-    const fetchImpl = vi.fn(async () => new Response("stream", { status: 200 }));
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("stream", { status: 200 })
+    );
     await requestPublicAnalysis({ ...options, fetchImpl });
 
-    const request = fetchImpl.mock.calls[0][1];
+    const request = fetchImpl.mock.calls[0]?.[1];
     expect(request?.headers).toMatchObject({
       "X-Request-ID": options.requestId,
       "Idempotency-Key": options.requestId,
@@ -43,12 +45,13 @@ describe("public analysis client recovery", () => {
       status: 503,
       headers: { "Retry-After": "0", "Content-Type": "application/json" },
     }));
-
-    await expect(requestPublicAnalysis({ ...options, fetchImpl })).rejects.toMatchObject<Partial<PublicAnalysisError>>({
+    const expectedError = {
       status: 503,
       code: "dependency_error",
       retryable: true,
-    });
+    } satisfies Partial<PublicAnalysisError>;
+
+    await expect(requestPublicAnalysis({ ...options, fetchImpl })).rejects.toMatchObject(expectedError);
   });
 });
 
