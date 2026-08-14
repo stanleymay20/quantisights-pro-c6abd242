@@ -15,7 +15,8 @@ import TraceabilityPanel from "./TraceabilityPanel";
 import SimilarDecisionsPanel from "./SimilarDecisionsPanel";
 import DismissReasonDialog from "./DismissReasonDialog";
 import { useBuildDecisionQueue, type EnrichedDecision } from "@/hooks/useBuildDecisionQueue";
-import { onDecisionApproved, onDecisionDismissed } from "@/lib/decision-lifecycle";
+import { onDecisionDismissed } from "@/lib/decision-lifecycle";
+import { createAndApproveQueueDecision, type QueueApprovalSourceType } from "@/lib/decision-queue-approval";
 import type { Insight } from "@/hooks/useInsights";
 
 export type { EnrichedDecision };
@@ -161,47 +162,31 @@ const DecisionQueue = memo(({
     setApproveTarget(decision);
   }, [toast]);
 
-  // Stage 2: After responsibility acknowledgment, persist
+  // Stage 2: After responsibility acknowledgment, persist atomically on the server.
   const executeApprove = useCallback(async (decision: EnrichedDecision) => {
     setActingOn(decision.id);
     try {
-      if (decision.type === "advisory" && decision.sourceId) {
-        await supabase.from("advisory_instances").update({ status: "in_progress", assigned_to: user?.id }).eq("id", decision.sourceId).eq("organization_id", organizationId);
-      }
-      if (decision.type === "signal" && decision.sourceId) {
-        await supabase.from("insights").update({ is_read: true }).eq("id", decision.sourceId).eq("organization_id", organizationId);
-      }
-      const { data: ledgerRow, error: ledgerError } = await supabase.from("decision_ledger").insert({
-        organization_id: organizationId,
-        recommended_action: decision.recommendation.recommendedAction,
-        chosen_action: decision.recommendation.recommendedAction,
-        decided_by: user?.id ?? null,
-        decided_at: new Date().toISOString(),
-        decision_status: "approved",
-        confidence_at_decision: decision.confidence ?? 50,
-        raw_confidence: decision.rawConfidence ?? null,
-        capped_confidence: decision.cappedConfidence ?? null,
-        confidence_cap_reason: decision.confidenceCapReason ?? null,
-        decision_type: "strategic",
-        decision_context_id: activeContextId ?? null,
-        notes: `Owner: ${decision.recommendation.suggestedOwner} | Due: ${decision.costOfDelayResult.recommendedActionWindowDays}d | Metrics: ${decision.recommendation.successMetrics.join(", ")}`,
-      }).select("id").single();
-      if (ledgerError) throw ledgerError;
+      const sourceType: QueueApprovalSourceType =
+        decision.type === "advisory" ? "advisory" :
+        decision.type === "signal" ? "signal" :
+        null;
 
-      // Lifecycle side effects: audit log + execution plan + outcome
-      if (ledgerRow?.id) {
-        await onDecisionApproved({
-          decisionId: ledgerRow.id,
-          organizationId,
-          userId: user?.id ?? null,
-          recommendedAction: decision.recommendation.recommendedAction,
-          confidence: decision.cappedConfidence ?? decision.confidence ?? 50,
-          datasetId: datasetId ?? null,
-          expectedMetric: decision.recommendation.successMetrics?.[0] ?? null,
-          evaluationWindowDays: decision.costOfDelayResult.recommendedActionWindowDays || 30,
-          suggestedOwner: decision.recommendation.suggestedOwner ?? null,
-        });
-      }
+      await createAndApproveQueueDecision({
+        organizationId,
+        recommendedAction: decision.recommendation.recommendedAction,
+        confidence: decision.cappedConfidence ?? decision.confidence ?? 50,
+        rawConfidence: decision.rawConfidence ?? decision.confidence ?? null,
+        cappedConfidence: decision.cappedConfidence ?? decision.confidence ?? null,
+        confidenceCapReason: decision.confidenceCapReason ?? null,
+        decisionContextId: activeContextId ?? null,
+        notes: `Owner: ${decision.recommendation.suggestedOwner} | Due: ${decision.costOfDelayResult.recommendedActionWindowDays}d | Metrics: ${decision.recommendation.successMetrics.join(", ")}`,
+        datasetId: decision.sourceDatasetId ?? datasetId ?? null,
+        expectedMetric: decision.recommendation.successMetrics?.[0] ?? null,
+        evaluationWindowDays: decision.costOfDelayResult.recommendedActionWindowDays || 30,
+        suggestedOwner: decision.recommendation.suggestedOwner ?? null,
+        sourceType,
+        sourceId: sourceType ? (decision.sourceId ?? null) : null,
+      });
 
       setDecisions(prev => prev.filter(d => d.id !== decision.id));
       setConfirmation({ decisionTitle: decision.title, action: "approved" });
@@ -211,7 +196,7 @@ const DecisionQueue = memo(({
     } finally {
       setActingOn(null);
     }
-  }, [organizationId, user?.id, toast, activeContextId, setDecisions, datasetId]);
+  }, [organizationId, toast, activeContextId, setDecisions, datasetId]);
 
   // Stage 1: Open dismiss reason dialog
   const initiateDismiss = useCallback((decision: EnrichedDecision) => {
