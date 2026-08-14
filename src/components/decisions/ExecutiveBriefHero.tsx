@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { classifyExecutiveDecisionImpact } from "@/lib/decision-options";
 import {
   DEMO_DECISION_ID,
   formatEuro,
@@ -57,6 +58,17 @@ export function ExecutiveBriefHero({ decision, isDemo = false }: ExecutiveBriefH
   const confidence =
     decision.capped_confidence ?? decision.confidence_at_decision ?? decision.raw_confidence;
   const evidenceCount = getEvidenceSignalCount(decision);
+  const impact = classifyExecutiveDecisionImpact({
+    predictedNetImpact: decision.predicted_net_impact,
+    decisionSimulationId: decision.decision_simulation_id,
+    explanationMetadata: decision.explanation_metadata,
+  });
+  const impactDisplay =
+    impact.status === "modeled"
+      ? formatEuro(impact.value)
+      : impact.status === "derived"
+        ? `${formatEuro(impact.value)} · heuristic`
+        : "Not quantified";
 
   return (
     <Card
@@ -89,8 +101,8 @@ export function ExecutiveBriefHero({ decision, isDemo = false }: ExecutiveBriefH
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <HeroStat
             icon={TrendingUp}
-            label="Expected impact"
-            value={formatEuro(decision.predicted_net_impact)}
+            label="Financial impact"
+            value={impactDisplay}
           />
           <div>
             <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -172,3 +184,5 @@ export function ExecutiveBriefEmptyState() {
     </Card>
   );
 }
+
+export default ExecutiveBriefHero;
