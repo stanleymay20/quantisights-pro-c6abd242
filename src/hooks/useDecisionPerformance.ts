@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { getVerifiedAuth, authHeaders } from "@/lib/auth-helpers";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
+import { inferExpectedOutcomeDirection, type ExpectedOutcomeDirection } from "@/lib/outcome-direction";
 
 interface MetricBreakdown {
   metric: string;
@@ -79,12 +80,14 @@ export const scheduleOutcomeEvaluation = async (params: {
   decisionId: string;
   datasetId?: string;
   expectedMetric: string;
-  expectedDirection?: string;
+  expectedDirection?: ExpectedOutcomeDirection;
   expectedChange?: number;
   evaluationWindowDays?: number;
 }) => {
   const auth = await getVerifiedAuth();
   if (!auth) throw new Error("Not authenticated");
+
+  const expectedDirection = params.expectedDirection ?? inferExpectedOutcomeDirection(params.expectedMetric);
 
   const { data, error } = await invokeWithRetry("evaluate-outcomes", {
     body: {
@@ -93,7 +96,7 @@ export const scheduleOutcomeEvaluation = async (params: {
       decision_id: params.decisionId,
       dataset_id: params.datasetId,
       expected_metric: params.expectedMetric,
-      expected_direction: params.expectedDirection || "increase",
+      expected_direction: expectedDirection,
       expected_change: params.expectedChange,
       evaluation_window_days: params.evaluationWindowDays || 30,
     },
