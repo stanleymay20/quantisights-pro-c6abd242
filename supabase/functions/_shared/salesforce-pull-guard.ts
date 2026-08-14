@@ -25,18 +25,15 @@ export function parseSalesforcePullRequest(value: unknown): SalesforcePullReques
   if (!connectorId) throw new Error("connector_id required");
 
   const requestedMode = value.mode;
-  if (
-    requestedMode !== undefined &&
-    requestedMode !== "historical_backfill" &&
-    requestedMode !== "incremental_sync"
-  ) {
-    throw new Error("mode must be historical_backfill or incremental_sync");
+  let mode: SalesforcePullMode | undefined;
+  if (requestedMode !== undefined) {
+    if (requestedMode !== "historical_backfill" && requestedMode !== "incremental_sync") {
+      throw new Error("mode must be historical_backfill or incremental_sync");
+    }
+    mode = requestedMode;
   }
 
-  return {
-    connectorId,
-    ...(requestedMode ? { mode: requestedMode } : {}),
-  };
+  return mode ? { connectorId, mode } : { connectorId };
 }
 
 export function normalizeSalesforceObjects(
