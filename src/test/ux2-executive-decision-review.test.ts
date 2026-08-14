@@ -25,17 +25,21 @@ describe("UX-2 executive decision review experience", () => {
     ].forEach((section) => expect(component).toContain(section));
   });
 
-  it("renders a plain-English AICIS narrative and decision alternatives", () => {
+  it("renders a plain-English AICIS narrative and evidence-safe decision alternatives", () => {
     const component = read("src/components/decisions/ExecutiveDecisionReview.tsx");
+    const optionComponent = read("src/components/decisions/DecisionOptionComparison.tsx");
 
     expect(component).toContain("I analyzed");
     expect(component).toContain("I recommend");
     expect(component).toContain("Confidence is");
     expect(component).toContain("Evidence quality is");
-    expect(component).toContain("Recommended option");
-    expect(component).toContain("Alternative A");
-    expect(component).toContain("Alternative B");
-    expect(component).toContain("No action");
+    expect(component).toContain("DecisionOptionComparison");
+    expect(component).toContain("buildDecisionOptions");
+    expect(component).toContain("traceabilityFromExecutiveDecision");
+    expect(component).not.toContain("Alternative A");
+    expect(component).not.toContain("Alternative B");
+    expect(optionComponent).toContain("Unmodeled");
+    expect(optionComponent).toContain("Only evidence-backed model outputs are shown numerically");
   });
 
   it("shows explicit approval-gating reasons instead of unexplained disabled approval buttons", () => {
