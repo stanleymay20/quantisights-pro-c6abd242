@@ -23,6 +23,7 @@
     "supabase/functions/_shared/connector-invocation-auth.ts",
     "supabase/functions/_shared/connector-isolation.ts",
     "supabase/functions/_shared/connector-throttle.ts",
+    "supabase/functions/_shared/hubspot-pull-guard.ts",
     "supabase/functions/_shared/salesforce-auth.ts",
     "supabase/functions/_shared/salesforce-discovery.ts",
     "supabase/functions/_shared/salesforce-pull-guard.ts",
