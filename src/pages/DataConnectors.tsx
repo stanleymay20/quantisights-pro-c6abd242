@@ -8,6 +8,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { getVerifiedAuth, authHeaders } from "@/lib/auth-helpers";
+import { canUseConnectorInPilot, pilotConnectorBadge, pilotConnectorBlockReason } from "@/lib/pilot-readiness";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -275,7 +276,7 @@ const DataConnectors = () => {
       // 2. Trigger initial sync
       const syncRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/connector-pull`, {
         method: "POST", headers,
-        body: JSON.stringify({ connector_type: selectedType, data_source_id: connectorId, organization_id: currentOrgId, connector_id: connectorId }),
+        body: JSON.stringify({ connector_id: connectorId }),
       });
       const syncData = await syncRes.json();
 
@@ -299,6 +300,14 @@ const DataConnectors = () => {
   };
 
   const handleSelectConnector = (type: ConnectorType) => {
+    if (!canUseConnectorInPilot(type)) {
+      toast({
+        title: "Pilot connector not yet enabled",
+        description: pilotConnectorBlockReason(type) ?? "This connector is not enabled for the paid pilot.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (type === "csv_upload") { navigate("/data-upload"); return; }
     setSelectedType(type);
     const def = CONNECTORS.find(c => c.type === type)!;
@@ -917,7 +926,7 @@ const DataConnectors = () => {
               <div>
                 <div className="mb-8">
                   <h2 className="text-[18px] font-semibold tracking-tight mb-2">Connect Your Data</h2>
-                  <p className="text-muted-foreground">Choose a data source to power your decision intelligence.</p>
+                  <p className="text-muted-foreground">Choose a pilot-certified data source. Salesforce and HubSpot are enabled for live connector pilots; CSV remains available for file intake.</p>
                 </div>
 
                 {/* Existing connections */}
@@ -973,16 +982,26 @@ const DataConnectors = () => {
                         {group.map((conn) => {
                           const Icon = conn.icon;
                           const isBusiness = ["crm","erp","saas"].includes(conn.category);
+                          const pilotEnabled = canUseConnectorInPilot(conn.type);
                           return (
                             <Card
                               key={conn.type}
-                              className="cursor-pointer transition-all hover:border-primary/50 hover:shadow-md"
+                              aria-disabled={!pilotEnabled}
+                              className={pilotEnabled
+                                ? "cursor-pointer transition-all hover:border-primary/50 hover:shadow-md"
+                                : "cursor-not-allowed opacity-60 border-dashed"
+                              }
                               onClick={() => handleSelectConnector(conn.type)}
                             >
                               <CardContent className="p-5">
                                 <div className="flex items-center gap-3 mb-3">
                                   <div className="flex-1 min-w-0">
-                                    <p className="font-semibold text-sm truncate">{conn.label}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-semibold text-sm truncate">{conn.label}</p>
+                                      <Badge variant={pilotEnabled ? "default" : "secondary"} className="text-[10px] whitespace-nowrap">
+                                        {pilotConnectorBadge(conn.type)}
+                                      </Badge>
+                                    </div>
                                     <div className="flex gap-1 mt-0.5 flex-wrap">
                                       {isBusiness && (
                                         <Badge variant="outline" className="text-[10px]">OAuth / API Key</Badge>
@@ -994,6 +1013,9 @@ const DataConnectors = () => {
                                   </div>
                                 </div>
                                 <p className="text-xs text-muted-foreground">{conn.description}</p>
+                                {!pilotEnabled && (
+                                  <p className="text-[10px] text-muted-foreground mt-2">Not enabled for live paid-pilot use yet.</p>
+                                )}
                               </CardContent>
                             </Card>
                           );
