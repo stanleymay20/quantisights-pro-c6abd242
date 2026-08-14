@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildConfidenceBasis,
+  buildTraceability,
   scoreDecisionQuality,
 } from "@/lib/evidence-contract";
 import { generateRecommendation } from "@/lib/decision-recommendation";
@@ -10,6 +11,13 @@ const polishedButDataFree = {
   evidence: ["Confidence: 78% (high confidence)"],
   reasoning: "The narrative is detailed enough to sound persuasive even though no observed rows support it.",
   confidenceBasis: buildConfidenceBasis({ sampleSize: 0, calibrationApplied: false }),
+  traceability: buildTraceability({
+    datasetId: null,
+    sourceEntityId: null,
+    dataRowsUsed: 0,
+    metricTypes: ["revenue"],
+    modelUsed: "Heuristic rule-based engine",
+  }),
   assumptions: ["The apparent trend continues"],
   limitations: ["No measured data supplied"],
   recommendation: "Investigate the metric immediately, assign an owner, and monitor the KPI against a baseline every week.",
@@ -27,6 +35,7 @@ describe("decision-quality hard evidence gate", () => {
     expect(score.hardGateFailures).toContain("no observed data points");
     expect(score.hardGateFailures).toContain("no measurable data coverage");
     expect(score.hardGateFailures).toContain("no substantive evidence");
+    expect(score.hardGateFailures).toContain("unverified source traceability");
   });
 
   it("reports zero coverage when zero observations are available", () => {
@@ -48,15 +57,40 @@ describe("decision-quality hard evidence gate", () => {
 
     expect(recommendation.isDecisionGrade).toBe(false);
     expect(recommendation.qualityScore.hardGateFailures).toContain("no observed data points");
+    expect(recommendation.qualityScore.hardGateFailures).toContain("unverified source traceability");
     expect(recommendation.recommendedAction).toContain("Not decision-grade");
   });
 
-  it("still allows a genuinely evidenced block to pass", () => {
+  it("blocks observed data when its source identity cannot be verified", () => {
+    const recommendation = generateRecommendation({
+      signalType: "signal",
+      metricType: "revenue",
+      severity: "high",
+      confidence: 80,
+      message: "Revenue declined 12% over the observed period",
+      sampleSize: 45,
+      datasetId: "dataset-123",
+      // Deliberately missing sourceEntityId.
+    });
+
+    expect(recommendation.traceability.isVerifiedSource).toBe(false);
+    expect(recommendation.isDecisionGrade).toBe(false);
+    expect(recommendation.qualityScore.hardGateFailures).toContain("unverified source traceability");
+  });
+
+  it("still allows a genuinely evidenced and traceable block to pass", () => {
     const score = scoreDecisionQuality({
       observation: "Revenue declined 15% over 45 observed daily measurements across all segments.",
       evidence: ["45 daily measurements", "Revenue: €2.1M to €1.78M", "All four segments declined"],
       reasoning: "The measured multi-segment decline is persistent across the observed period.",
       confidenceBasis: buildConfidenceBasis({ sampleSize: 45, calibrationApplied: true }),
+      traceability: buildTraceability({
+        datasetId: "dataset-123",
+        sourceEntityId: "insight-456",
+        dataRowsUsed: 45,
+        metricTypes: ["revenue"],
+        modelUsed: "Calibrated statistical model",
+      }),
       assumptions: ["Historical measurement definitions remained consistent"],
       limitations: ["No causal attribution established"],
       recommendation: "Investigate candidate drivers and monitor revenue weekly against the measured baseline.",
