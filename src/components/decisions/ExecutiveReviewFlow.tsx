@@ -17,8 +17,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
 import type { ExplanationMetadata } from "@/components/dashboard/ExplainDecisionPanel";
+import DecisionOptionComparison from "@/components/decisions/DecisionOptionComparison";
+import {
+  buildDecisionOptions,
+  classifyExecutiveDecisionImpact,
+  traceabilityFromExecutiveDecision,
+} from "@/lib/decision-options";
 import {
   getExecutiveApprovalChecklist,
 } from "@/components/decisions/executive-decision-review-utils";
@@ -75,42 +80,6 @@ function ReviewSection({
   );
 }
 
-function AlternativeOption({
-  name,
-  benefit,
-  risk,
-  recommended = false,
-}: {
-  name: string;
-  benefit: string;
-  risk: string;
-  recommended?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border p-3",
-        recommended ? "border-primary/40 bg-primary/[0.03]" : "border-border/50",
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold">{name}</p>
-        {recommended && <Badge className="text-[10px]">Recommended</Badge>}
-      </div>
-      <dl className="mt-2 space-y-1.5 text-xs">
-        <div>
-          <dt className="font-semibold text-muted-foreground">Benefit</dt>
-          <dd>{benefit}</dd>
-        </div>
-        <div>
-          <dt className="font-semibold text-muted-foreground">Risk</dt>
-          <dd>{risk}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
 /**
  * UX-2 linear executive review surface: eight plain-English sections ending in
  * a checklist-gated Approve / Reject action. Raw JSON only appears inside the
@@ -134,6 +103,31 @@ export default function ExecutiveReviewFlow({
   const dataGates = useMemo(() => getExecutiveApprovalChecklist(decision), [decision]);
   const confidence =
     decision.capped_confidence ?? decision.confidence_at_decision ?? decision.raw_confidence;
+  const traceability = useMemo(
+    () => traceabilityFromExecutiveDecision({ id: decision.id, explanationMetadata: decision.explanation_metadata }),
+    [decision],
+  );
+  const impactClassification = useMemo(
+    () => classifyExecutiveDecisionImpact({
+      predictedNetImpact: decision.predicted_net_impact,
+      decisionSimulationId: decision.decision_simulation_id,
+      explanationMetadata: decision.explanation_metadata,
+    }),
+    [decision],
+  );
+  const options = useMemo(
+    () => buildDecisionOptions({
+      recommendedAction: decision.recommended_action || "Review the pending recommendation",
+      predictedNetImpact: impactClassification.value,
+      predictedImpactStatus: impactClassification.status,
+      predictedImpactLabel: impactClassification.label,
+      confidence,
+      assumptions: metadata?.assumptions ?? [],
+      riskIfWrong: risks[0] ?? null,
+      traceability,
+    }),
+    [confidence, decision.recommended_action, impactClassification, metadata?.assumptions, risks, traceability],
+  );
   const evidenceCount = getEvidenceSignalCount(decision);
   const riskLevel = getExecutiveRiskLevel(decision);
   const checklistComplete = isReviewChecklistComplete(checklist);
@@ -164,7 +158,7 @@ export default function ExecutiveReviewFlow({
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <p className="flex items-center gap-2 font-semibold">
             <TrendingUp className="h-4 w-4 text-primary" />
-            {formatEuro(decision.predicted_net_impact)}
+            {formatEuro(impactClassification.value)} · {impactClassification.status}
           </p>
           <p className="flex items-center gap-2">
             <Gauge className="h-4 w-4 text-primary" />
@@ -263,51 +257,29 @@ export default function ExecutiveReviewFlow({
       </ReviewSection>
 
       <ReviewSection step={4} title="Alternative Actions">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <AlternativeOption
-            name="Recommended option"
-            benefit="Fastest path to capture the projected impact while evidence is current."
-            risk="Execution risk if the supporting evidence is misread."
-            recommended
-          />
-          <AlternativeOption
-            name="Alternative A — smaller pilot"
-            benefit="Run a controlled, narrower intervention first."
-            risk="Slower impact and a possible missed timing window."
-          />
-          <AlternativeOption
-            name="Alternative B — escalate to governance"
-            benefit="Adds a governance review before execution."
-            risk="Adds delay and reduces responsiveness."
-          />
-          <AlternativeOption
-            name="No action"
-            benefit="Avoids immediate execution cost."
-            risk="The risk or opportunity remains unmanaged."
-          />
-        </div>
+        <DecisionOptionComparison options={options} />
       </ReviewSection>
 
       <ReviewSection step={5} title="Business Impact">
         <div className="grid gap-3 sm:grid-cols-3">
           <div>
-            <p className="text-xs font-semibold text-muted-foreground">Expected financial impact</p>
-            <p className="mt-1 text-base font-semibold">
-              {formatEuro(decision.predicted_net_impact)}
-            </p>
+            <p className="text-xs font-semibold text-muted-foreground">Financial impact</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <p className="text-base font-semibold">{formatEuro(impactClassification.value)}</p>
+              <Badge variant="outline" className="text-[10px] capitalize">{impactClassification.status}</Badge>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{impactClassification.label}</p>
           </div>
           <div>
             <p className="text-xs font-semibold text-muted-foreground">Probability of positive ROI</p>
-            <p className="mt-1 text-base font-semibold">
-              {formatPercent(decision.predicted_roi_probability)}
-            </p>
+            <p className="mt-1 text-base font-semibold">{formatPercent(decision.predicted_roi_probability)}</p>
           </div>
           <div>
             <p className="text-xs font-semibold text-muted-foreground">Impact basis</p>
             <p className="mt-1">
               {metadata?.expected_impact?.range
                 ? `${metadata.expected_impact.range}${metadata.expected_impact.basis ? ` — ${metadata.expected_impact.basis}` : ""}`
-                : "Estimated from decision-time predictions; measured after execution."}
+                : impactClassification.label}
             </p>
           </div>
         </div>
