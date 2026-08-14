@@ -3,6 +3,9 @@ name: Deploy Supabase Production
 # Production promotion is deliberately manual. Configure the `production`
 # GitHub Environment with required reviewers and environment-scoped secrets:
 # SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD.
+#
+# The exact commit being promoted must pass the repository release gate in this
+# workflow before any production migration or Edge Function deployment begins.
 
 on:
   workflow_dispatch:
@@ -19,7 +22,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: production
     permissions:
       contents: read
@@ -52,6 +55,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Run full production release gate
+        run: npm run release-gate
 
       - name: Install Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
