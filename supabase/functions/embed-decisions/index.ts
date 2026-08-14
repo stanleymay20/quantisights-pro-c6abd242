@@ -1,13 +1,13 @@
 /**
  * embed-decisions — Batch embed decisions, outcomes, insights, and advisories
  * into vector store for institutional memory / RAG.
- * 
+ *
  * Triggered after:
  * - Decision approval (via decision lifecycle)
  * - Outcome evaluation completion
  * - Insight generation
  * - Advisory creation
- * 
+ *
  * Modes: "decisions" | "outcomes" | "insights" | "advisories" | "all" | "specific"
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -23,14 +23,22 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Accept service-role calls (from cron/other functions) or authenticated users
+    // Accept exact service-role calls (from trusted functions/cron) or authenticated users.
+    // Never use substring matching for credentials.
     const authHeader = req.headers.get("authorization");
+    const isServiceRole = authHeader === `Bearer ${serviceKey}`;
     const svc = createClient(supabaseUrl, serviceKey);
+    let authenticatedUserId: string | null = null;
 
-    // If not service-role, verify user auth
-    if (!authHeader?.includes(serviceKey)) {
+    if (!isServiceRole) {
+      if (!authHeader?.startsWith("Bearer ")) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-        global: { headers: { Authorization: authHeader || "" } },
+        global: { headers: { Authorization: authHeader } },
       });
       const { data: { user }, error } = await userClient.auth.getUser();
       if (error || !user) {
@@ -38,6 +46,7 @@ serve(async (req) => {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      authenticatedUserId = user.id;
     }
 
     const body = await req.json();
@@ -47,6 +56,20 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "organization_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // User-triggered requests must be tenant-scoped before any service-role read/write.
+    // Service-role callers are trusted internal callers and are not membership-bound.
+    if (!isServiceRole) {
+      const { data: isMember, error: membershipError } = await svc.rpc("is_org_member", {
+        _user_id: authenticatedUserId!,
+        _org_id: organization_id,
+      });
+      if (membershipError || !isMember) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     let embedded = 0;
