@@ -7,6 +7,7 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
 const migration = read("supabase/migrations/20260814193000_atomic_dashboard_decision_approval.sql");
 const helper = read("src/lib/decision-queue-approval.ts");
 const queue = read("src/components/dashboard/DecisionQueue.tsx");
+const modifyDialog = read("src/components/dashboard/ModifyDecisionDialog.tsx");
 
 describe("dashboard decision approval atomicity", () => {
   it("creates queue decisions pending and delegates final state to approve_decision in one transaction", () => {
@@ -44,6 +45,17 @@ describe("dashboard decision approval atomicity", () => {
     expect(approvalBlock).not.toContain('.from("decision_ledger")');
     expect(approvalBlock).toContain("sourceType");
     expect(approvalBlock).toContain("sourceId");
+  });
+
+  it("modified decisions use the same atomic approval helper instead of a second browser approval path", () => {
+    expect(modifyDialog).toContain("createAndApproveQueueDecision");
+    expect(modifyDialog).not.toContain("onDecisionApproved(");
+    expect(modifyDialog).not.toContain('decision_status: "approved"');
+    expect(modifyDialog).not.toContain('.from("decision_ledger")');
+    expect(modifyDialog).not.toContain('.from("advisory_instances")');
+    expect(modifyDialog).not.toContain('.from("insights")');
+    expect(modifyDialog).toContain("sourceType");
+    expect(modifyDialog).toContain("sourceId");
   });
 
   it("runs embeddings and prediction only after the durable atomic approval response", () => {
