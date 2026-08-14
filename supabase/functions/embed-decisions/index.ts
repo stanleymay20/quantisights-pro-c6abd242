@@ -23,12 +23,14 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Accept service-role calls (from cron/other functions) or authenticated users
+    // Accept exact service-role bearer calls (from trusted cron/edge functions)
+    // or authenticated user calls. Never use substring matching for credentials.
     const authHeader = req.headers.get("authorization");
+    const isServiceRoleCall = authHeader === `Bearer ${serviceKey}`;
     const svc = createClient(supabaseUrl, serviceKey);
+    let userId: string | null = null;
 
-    // If not service-role, verify user auth
-    if (!authHeader?.includes(serviceKey)) {
+    if (!isServiceRoleCall) {
       const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
         global: { headers: { Authorization: authHeader || "" } },
       });
@@ -38,6 +40,7 @@ serve(async (req) => {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      userId = user.id;
     }
 
     const body = await req.json();
@@ -47,6 +50,21 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "organization_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Service-role access is trusted internal traffic. Every user-initiated call
+    // must prove membership in the requested tenant before any service-role read
+    // or write occurs, otherwise a valid user could target another organization.
+    if (!isServiceRoleCall) {
+      const { data: isMember, error: membershipError } = await svc.rpc("is_org_member", {
+        _user_id: userId,
+        _org_id: organization_id,
+      });
+      if (membershipError || !isMember) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     let embedded = 0;
