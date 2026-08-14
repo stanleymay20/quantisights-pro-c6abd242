@@ -18,9 +18,10 @@ describe("PHASE 2 — Evidence Contract Enforcement", () => {
       confidence: 70,
       message: "Revenue declined 15% across all segments in Q4",
       sampleSize: 30,
+      datasetId: "ds-revenue",
+      sourceEntityId: "insight-revenue-q4",
     });
 
-    // Required evidence contract fields
     expect(rec.whatHappened).toBeTruthy();
     expect(rec.whyItMatters).toBeTruthy();
     expect(rec.recommendedAction).toBeTruthy();
@@ -32,6 +33,7 @@ describe("PHASE 2 — Evidence Contract Enforcement", () => {
     expect(rec.evidenceBasis.length).toBeGreaterThan(0);
     expect(rec.confidenceBasis).toBeDefined();
     expect(rec.traceability).toBeDefined();
+    expect(rec.traceability.isVerifiedSource).toBe(true);
     expect(rec.qualityScore).toBeDefined();
     expect(rec.sections.length).toBeGreaterThanOrEqual(3);
   });
@@ -41,14 +43,11 @@ describe("PHASE 2 — Evidence Contract Enforcement", () => {
       signalType: "proactive",
       severity: "low",
       confidence: 15,
-      // Minimal input — no message, no sample size
     });
 
-    // Must either be non-decision-grade or have a low quality score
-    if (!rec.isDecisionGrade) {
-      expect(rec.decisionGateMessage).toBeTruthy();
-      expect(rec.recommendedAction).toContain("Not decision-grade");
-    }
+    expect(rec.isDecisionGrade).toBe(false);
+    expect(rec.decisionGateMessage).toBeTruthy();
+    expect(rec.recommendedAction).toContain("Not decision-grade");
   });
 });
 
@@ -86,7 +85,6 @@ describe("PHASE 4 — Cost of Delay Reform", () => {
       confidence: 70,
       revenue: 5_000_000,
     });
-    // Revenue exposure model now derives financial estimate from revenue
     expect(result.estimatedDelayCost).toContain("€");
     expect(result.estimatedDelayCost).toContain("/week");
   });
@@ -126,9 +124,10 @@ describe("PHASE 5 — Command Center / Executive Verdict Integrity", () => {
       confidence: 80,
       message: "Critical churn spike to 18% — immediate retention risk",
       sampleSize: 25,
+      datasetId: "ds-churn",
+      sourceEntityId: "insight-churn",
     });
 
-    // Each section must have classification and content
     rec.sections.forEach((section) => {
       expect([
         "OBSERVED_FACT",
@@ -140,7 +139,6 @@ describe("PHASE 5 — Command Center / Executive Verdict Integrity", () => {
       expect(section.content).toBeTruthy();
     });
 
-    // Must separate fact from recommendation
     const classifications = rec.sections.map((s) => s.classification);
     expect(classifications).toContain("AI_RECOMMENDATION");
   });
@@ -161,15 +159,11 @@ describe("PHASE 5 — Command Center / Executive Verdict Integrity", () => {
 });
 
 describe("PHASE 7 — Visualization Honesty (Code-Level)", () => {
-  // These tests verify the data pipeline contracts, not the DOM
-
   it("Cost of Delay MUST NOT produce fabricated currency without revenue OR predictedNetImpact", () => {
-    // No revenue AND no predictedNetImpact → relative score only
     for (const sev of ["critical", "high", "medium", "low"] as const) {
       const result = computeCostOfDelay({
         severity: sev,
         confidence: 80,
-        // NO revenue, NO predictedNetImpact
       });
       expect(result.estimatedDelayCost).not.toContain("€");
     }
@@ -181,15 +175,15 @@ describe("PHASE 7 — Visualization Honesty (Code-Level)", () => {
       confidence: 80,
       revenue: 10_000_000,
     });
-    // Revenue exposure model derives a financial estimate
     expect(result.estimatedDelayCost).toContain("€");
   });
 });
 
 describe("PHASE 8 — Traceability System", () => {
-  it("buildTraceability MUST produce complete traceability record", () => {
+  it("buildTraceability MUST produce a verified record only with dataset, source entity and rows", () => {
     const trace = buildTraceability({
       datasetId: "ds-123",
+      sourceEntityId: "insight-456",
       dataRowsUsed: 500,
       metricTypes: ["revenue", "cost"],
       modelUsed: "Statistical inference",
@@ -197,6 +191,9 @@ describe("PHASE 8 — Traceability System", () => {
     });
 
     expect(trace.sourceDataset).toBe("ds-123");
+    expect(trace.sourceDatasetId).toBe("ds-123");
+    expect(trace.sourceEntityId).toBe("insight-456");
+    expect(trace.isVerifiedSource).toBe(true);
     expect(trace.dataRowsUsed).toBe(500);
     expect(trace.metricTransformationPath).toContain("revenue");
     expect(trace.modelOrHeuristic).toBe("Statistical inference");
@@ -204,22 +201,24 @@ describe("PHASE 8 — Traceability System", () => {
     expect(trace.limitations.length).toBeGreaterThan(0);
   });
 
-  it("every recommendation MUST include traceability", () => {
+  it("missing provenance is explicit and cannot pass the decision gate", () => {
     const rec = generateRecommendation({
       signalType: "signal",
       severity: "medium",
       confidence: 55,
-      message: "Metric shift detected",
+      message: "Metric shift detected across the observed window",
+      sampleSize: 30,
     });
     expect(rec.traceability).toBeDefined();
-    expect(rec.traceability.sourceDataset).toBeTruthy();
-    expect(rec.traceability.generatedAt).toBeTruthy();
-    expect(rec.traceability.modelOrHeuristic).toBeTruthy();
+    expect(rec.traceability.sourceDataset).toBe("Unverified source");
+    expect(rec.traceability.isVerifiedSource).toBe(false);
+    expect(rec.isDecisionGrade).toBe(false);
+    expect(rec.qualityScore.hardGateFailures).toContain("unverified source traceability");
   });
 });
 
 describe("PHASE 9 — Decision Quality Score", () => {
-  it("full evidence block MUST score grade A or B", () => {
+  it("full verified evidence block MUST score grade A or B", () => {
     const score = scoreDecisionQuality({
       observation: "Revenue declined 15% over 3 months across all 4 segments",
       evidence: [
@@ -228,15 +227,22 @@ describe("PHASE 9 — Decision Quality Score", () => {
         "Accelerating decline rate",
       ],
       reasoning:
-        "Sustained multi-segment decline suggests structural issue, not seasonal variation",
+        "Sustained multi-segment decline is a measured pattern that warrants investigation of competing drivers",
       confidenceBasis: buildConfidenceBasis({
         sampleSize: 45,
         calibrationApplied: true,
       }),
-      assumptions: ["Trend continues without intervention"],
+      traceability: buildTraceability({
+        datasetId: "ds-revenue",
+        sourceEntityId: "insight-revenue",
+        dataRowsUsed: 45,
+        metricTypes: ["revenue"],
+        modelUsed: "Calibrated statistical model",
+      }),
+      assumptions: ["Trend continues without intervention", "Causality is not established"],
       limitations: [],
       recommendation:
-        "Run diagnostic engine for root cause, monitor revenue KPI weekly",
+        "Run diagnostic engine to investigate candidate drivers and monitor revenue KPI weekly",
       expectedImpact:
         "Prevent further 5-10% decline (~€89K-€178K quarterly impact)",
       riskIfWrong:
@@ -260,6 +266,7 @@ describe("PHASE 9 — Decision Quality Score", () => {
     });
     expect(score.overall).toBeGreaterThan(0);
     expect(score.overall).toBeLessThan(80);
+    expect(score.isDecisionGrade).toBe(false);
   });
 });
 
@@ -268,9 +275,7 @@ describe("PHASE 10 — Fail-Closed Acceptance Tests", () => {
     const result = computeCostOfDelay({
       severity: "critical",
       confidence: 90,
-      // NO revenue AND NO predictedNetImpact
     });
-    // MUST NOT contain currency symbols
     expect(result.estimatedDelayCost).not.toMatch(/[€$£¥]/);
   });
 
@@ -281,7 +286,6 @@ describe("PHASE 10 — Fail-Closed Acceptance Tests", () => {
       confidence: 75,
       message: "Test signal",
     });
-    // Confidence basis must ALWAYS be present
     expect(rec.confidenceBasis).toBeDefined();
     expect(rec.confidenceBasis.label).toBeTruthy();
     expect(typeof rec.confidenceBasis.sampleSize).toBe("number");
@@ -294,34 +298,32 @@ describe("PHASE 10 — Fail-Closed Acceptance Tests", () => {
       severity: "low",
       confidence: 10,
     });
-    // Low-evidence recommendations must either be non-decision-grade
-    // or have honest quality scores
     expect(rec.qualityScore.overall).toBeLessThan(80);
+    expect(rec.isDecisionGrade).toBe(false);
   });
 
-  it("FAIL: executive summary generated without traceability", () => {
+  it("FAIL: observed rows without source provenance cannot become an executive verdict", () => {
     const rec = generateRecommendation({
       signalType: "advisory",
       severity: "critical",
       confidence: 85,
-      message: "Major risk event detected",
+      message: "Major risk event detected across the observed window",
       sampleSize: 50,
     });
-    // Traceability must always be present
     expect(rec.traceability).toBeDefined();
-    expect(rec.traceability.sourceDataset).toBeTruthy();
-    expect(rec.traceability.modelOrHeuristic).toBeTruthy();
-    expect(rec.traceability.generatedAt).toBeTruthy();
+    expect(rec.traceability.isVerifiedSource).toBe(false);
+    expect(rec.traceability.sourceDataset).toBe("Unverified source");
+    expect(rec.isDecisionGrade).toBe(false);
+    expect(rec.qualityScore.hardGateFailures).toContain("unverified source traceability");
   });
 
   it("FAIL: generic advisory text must not pass quality gate", () => {
-    // A recommendation with zero specificity should score low
     const rec = generateRecommendation({
       signalType: "proactive",
       severity: "low",
       confidence: 20,
-      // No message, no metric type, no category — pure generic
     });
     expect(rec.qualityScore.grade).not.toBe("A");
+    expect(rec.isDecisionGrade).toBe(false);
   });
 });
