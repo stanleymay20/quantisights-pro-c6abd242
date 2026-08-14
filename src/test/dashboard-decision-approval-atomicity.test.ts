@@ -26,20 +26,22 @@ describe("dashboard decision approval atomicity", () => {
     expect(migration).toContain("GET DIAGNOSTICS v_source_rows = ROW_COUNT");
   });
 
-  it("dashboard uses the atomic client instead of inserting an approved ledger row", () => {
+  it("active dashboard queue uses the atomic client instead of inserting an approved ledger row", () => {
     expect(queue).toContain("createAndApproveQueueDecision");
     expect(queue).not.toContain("onDecisionApproved(");
     expect(queue).not.toContain('decision_status: "approved"');
-    expect(queue).not.toContain('.from("decision_ledger")\n        .insert({');
   });
 
   it("does not pre-resolve advisory or insight sources before approval", () => {
-    const approveStart = queue.indexOf("const handleConfirmApprove");
-    const dismissStart = queue.indexOf("const handleConfirmDismiss");
-    const approvalBlock = queue.slice(approveStart, dismissStart);
+    const approveStart = queue.indexOf("const executeApprove");
+    const dismissStart = queue.indexOf("const initiateDismiss");
+    expect(approveStart).toBeGreaterThan(-1);
+    expect(dismissStart).toBeGreaterThan(approveStart);
 
+    const approvalBlock = queue.slice(approveStart, dismissStart);
     expect(approvalBlock).not.toContain('.from("advisory_instances")');
     expect(approvalBlock).not.toContain('.from("insights")');
+    expect(approvalBlock).not.toContain('.from("decision_ledger")');
     expect(approvalBlock).toContain("sourceType");
     expect(approvalBlock).toContain("sourceId");
   });
