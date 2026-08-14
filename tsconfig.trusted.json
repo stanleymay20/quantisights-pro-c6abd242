@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true
+  },
+  "files": [
+    "src/lib/evidence-contract.ts",
+    "src/lib/decision-maturity.ts",
+    "src/lib/safe-navigation.ts"
+  ],
+  "include": []
+}
