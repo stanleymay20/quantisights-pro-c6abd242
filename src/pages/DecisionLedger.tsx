@@ -387,16 +387,9 @@ const DecisionLedgerPage = () => {
       return;
     }
 
-    // Compute derived fields upfront
-    if (updates.execution_status === "completed") {
-      const conf = decision.confidence_at_decision || decision.capped_confidence || 50;
-      const hasOutcome = decision.outcome_delta !== null;
-      const outcomePositive = (decision.outcome_delta || 0) >= 0;
-      const calibrationError = Math.abs(conf - (outcomePositive ? 100 : 0));
-      const predictionAccuracy = hasOutcome ? Math.max(0, 100 - calibrationError) : null;
-      updates.calibration_error = calibrationError;
-      updates.prediction_accuracy_score = predictionAccuracy;
-    }
+    // Calibration and prediction accuracy are outcome-lifecycle fields.
+    // Do not infer success from the sign of outcome_delta here: lower-is-better
+    // KPIs require direction-aware evaluation after measured outcome data arrives.
 
     // ── OPTIMISTIC UPDATE: reflect change instantly ──
     const previousDecisions = [...decisions];
