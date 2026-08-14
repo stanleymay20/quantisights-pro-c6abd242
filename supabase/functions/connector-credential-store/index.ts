@@ -1,20 +1,9 @@
 /**
  * connector-credential-store
  *
- * Receives per-connector credentials from the frontend, stores them encrypted
- * in Supabase Vault (via get_connector_secret / upsert_vault_secret RPCs),
- * creates / updates the data_connectors record, and schedules recurring syncs.
- *
- * Called by the DataConnectors UI after the user fills in their credentials.
- * Returns { connector_id, vault_keys } so the frontend can immediately trigger
- * an initial sync via connector-pull.
- *
- * Security:
- *  - Requires a valid user JWT (Authorization header).
- *  - Only writes to the caller's organization.
- *  - Never logs credential values — only vault key names.
- *  - Fails closed if Vault cannot persist a credential; secrets are never
- *    downgraded into ordinary connector config storage.
+ * Paid-pilot provisioning for certified external connectors. Credentials are
+ * stored in Vault and provisioning fails closed unless the connector, linked
+ * data source, schedule, and audit record are all created successfully.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -24,6 +13,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const PILOT_CONNECTOR_TYPES = new Set(["salesforce", "hubspot"]);
 type ScheduleKind = "manual" | "every_5_min" | "hourly" | "daily";
 
 interface CredentialStoreRequest {
@@ -66,7 +56,7 @@ function parseScheduleKind(value: unknown): ScheduleKind | null {
 function parseRequestBody(value: unknown): CredentialStoreRequest | null {
   if (!isRecord(value)) return null;
   const organizationId = typeof value.organization_id === "string" ? value.organization_id.trim() : "";
-  const connectorType = typeof value.connector_type === "string" ? value.connector_type.trim() : "";
+  const connectorType = typeof value.connector_type === "string" ? value.connector_type.trim().toLowerCase() : "";
   const name = typeof value.name === "string" ? value.name.trim() : "";
   const credentials = stringMap(value.credentials);
   const config = value.config === undefined ? {} : isRecord(value.config) ? value.config : null;
@@ -97,7 +87,6 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Connector credential service unavailable" }, 503);
   }
 
-  // Authenticate the calling user
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return json({ error: "Authorization header required" }, 401);
 
@@ -110,62 +99,90 @@ Deno.serve(async (req: Request) => {
   const svc = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
   try {
-    const rawBody: unknown = await req.json().catch(() => null);
-    const body = parseRequestBody(rawBody);
+    const body = parseRequestBody(await req.json().catch(() => null));
     if (!body) {
       return json({
         error: "organization_id, connector_type, name, non-empty string credentials, valid config, and schedule_kind are required",
       }, 400);
     }
 
-    const {
-      organization_id,
-      connector_type,
-      name,
-      credentials,
-      config,
-      schedule_kind,
-    } = body;
+    const { organization_id, connector_type, name, credentials, config, schedule_kind } = body;
 
-    // Verify caller belongs to this org
-    const { data: membership } = await svc
+    if (!PILOT_CONNECTOR_TYPES.has(connector_type)) {
+      return json({ error: "This connector is not enabled for the paid pilot" }, 409);
+    }
+
+    const { data: membership, error: membershipError } = await svc
       .from("organization_members")
       .select("role")
       .eq("organization_id", organization_id)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (membershipError) {
+      console.error("connector membership lookup failed:", membershipError.message);
+      return json({ error: "Unable to verify organization membership" }, 503);
+    }
     if (!membership) return json({ error: "Not a member of this organization" }, 403);
     if (!["owner", "admin"].includes(membership.role)) {
       return json({ error: "Only owners and admins can add connectors" }, 403);
     }
 
-    // Generate a unique ID for this connector record
     const connectorId = crypto.randomUUID();
-
-    // Store every credential in Vault under a namespaced key. Never persist a
-    // credential value in data_connectors.config if Vault is unavailable.
     const vaultKeys: Record<string, string> = {};
-    for (const [field, value] of Object.entries(credentials)) {
+    let dataSourceId: string | null = null;
+    let connectorCreated = false;
+    let scheduleCreated = false;
+
+    const rollback = async () => {
+      if (scheduleCreated) {
+        const { error } = await svc.from("connector_sync_schedules")
+          .delete()
+          .eq("connector_id", connectorId)
+          .eq("organization_id", organization_id);
+        if (error) console.error("connector rollback schedule delete failed:", error.message);
+      }
+      if (dataSourceId) {
+        const { error } = await svc.from("data_sources")
+          .delete()
+          .eq("id", dataSourceId)
+          .eq("organization_id", organization_id);
+        if (error) console.error("connector rollback data source delete failed:", error.message);
+      }
+      if (connectorCreated) {
+        const { error } = await svc.from("data_connectors")
+          .delete()
+          .eq("id", connectorId)
+          .eq("organization_id", organization_id);
+        if (error) console.error("connector rollback connector delete failed:", error.message);
+      }
+      for (const vaultKey of Object.values(vaultKeys)) {
+        const { error } = await svc.rpc("delete_vault_secret", { _name: vaultKey });
+        if (error) console.error("connector rollback Vault delete failed:", error.message);
+      }
+    };
+
+    for (const [field, rawValue] of Object.entries(credentials)) {
+      const value = rawValue.trim();
       if (!value) continue;
       const vaultKeyName = `connector_${connectorId}_${field}`;
-      const { error: vErr } = await svc.rpc("upsert_vault_secret", {
+      const { error: vaultError } = await svc.rpc("upsert_vault_secret", {
         _name: vaultKeyName,
         _value: value,
         _description: `${connector_type} connector credential: ${field}`,
       });
-      if (vErr) {
-        console.error(`Vault write failed for credential field ${field}:`, vErr.message);
-        return json({ error: `Unable to securely store connector credential: ${field}` }, 503);
+      if (vaultError) {
+        console.error(`Vault write failed for credential field ${field}:`, vaultError.message);
+        await rollback();
+        return json({ error: "Unable to securely store connector credentials" }, 503);
       }
       vaultKeys[field] = vaultKeyName;
     }
 
     if (Object.keys(vaultKeys).length === 0) {
+      await rollback();
       return json({ error: "No non-empty connector credentials were provided" }, 400);
     }
 
-    // Build the data_connectors record aligned with existing schema. The config
-    // contains only non-sensitive connector settings and Vault key references.
     const connectorRecord: Record<string, unknown> = {
       id: connectorId,
       organization_id,
@@ -185,24 +202,15 @@ Deno.serve(async (req: Request) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { error: insertErr } = await svc
-      .from("data_connectors")
-      .upsert(connectorRecord, { onConflict: "id" });
-
-    if (insertErr) {
-      // If enum type validation fails, fall back to 'rest_api' as the stored type
-      // and keep the real type in config.connector_type_detail.
-      const fallbackRecord = {
-        ...connectorRecord,
-        connector_type: "rest_api",
-        config: { ...connectorRecord.config as Record<string, unknown>, connector_type_detail: connector_type },
-      };
-      const { error: fbErr } = await svc.from("data_connectors").upsert(fallbackRecord, { onConflict: "id" });
-      if (fbErr) return json({ error: `Failed to save connector: ${fbErr.message}` }, 500);
+    const { error: connectorError } = await svc.from("data_connectors").insert(connectorRecord);
+    if (connectorError) {
+      console.error("connector record creation failed:", connectorError.message);
+      await rollback();
+      return json({ error: "Unable to create connector" }, 500);
     }
+    connectorCreated = true;
 
-    // Create a data_sources record (used by the sync pipeline)
-    const { data: ds } = await svc
+    const { data: dataSource, error: dataSourceError } = await svc
       .from("data_sources")
       .insert({
         organization_id,
@@ -214,44 +222,67 @@ Deno.serve(async (req: Request) => {
       })
       .select("id")
       .single();
+    if (dataSourceError || !dataSource?.id) {
+      console.error("connector data source creation failed:", dataSourceError?.message ?? "missing data source id");
+      await rollback();
+      return json({ error: "Unable to create connector data source" }, 500);
+    }
+    dataSourceId = String(dataSource.id);
 
-    const dataSourceId = ds?.id ?? null;
-
-    // Link connector to data source
-    if (dataSourceId) {
-      await svc.from("data_connectors")
-        .update({ data_source_id: dataSourceId })
-        .eq("id", connectorId);
+    const { error: linkError } = await svc.from("data_connectors")
+      .update({ data_source_id: dataSourceId })
+      .eq("id", connectorId)
+      .eq("organization_id", organization_id);
+    if (linkError) {
+      console.error("connector data source link failed:", linkError.message);
+      await rollback();
+      return json({ error: "Unable to link connector data source" }, 500);
     }
 
-    // Schedule recurring syncs
-    const NEXT_INTERVAL_MS: Record<ScheduleKind, number> = {
+    const intervalMs: Record<ScheduleKind, number> = {
       manual: 0,
       every_5_min: 5 * 60 * 1000,
       hourly: 60 * 60 * 1000,
       daily: 24 * 60 * 60 * 1000,
     };
-    const intervalMs = NEXT_INTERVAL_MS[schedule_kind];
-    const nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+    const nextRunAt = schedule_kind === "manual"
+      ? null
+      : new Date(Date.now() + intervalMs[schedule_kind]).toISOString();
 
-    await svc.from("connector_sync_schedules").insert({
+    const { error: scheduleError } = await svc.from("connector_sync_schedules").insert({
       organization_id,
       connector_id: connectorId,
       schedule_kind,
       next_run_at: nextRunAt,
       created_at: new Date().toISOString(),
-    }).then(() => {}); // Non-fatal if table doesn't exist yet
+    });
+    if (scheduleError) {
+      console.error("connector schedule creation failed:", scheduleError.message);
+      await rollback();
+      return json({ error: "Unable to schedule connector sync" }, 500);
+    }
+    scheduleCreated = true;
 
-    // Audit log contains Vault field names only, never credential values.
-    await svc.from("audit_log").insert({
+    const { error: auditError } = await svc.from("audit_log").insert({
       organization_id,
       actor_type: "user",
       actor_id: user.id,
       action_type: "connector_created",
       resource_type: "data_connector",
       resource_id: connectorId,
-      payload: { connector_type, name, vault_fields: Object.keys(vaultKeys) },
-    }).then(() => {});
+      payload: {
+        connector_type,
+        name,
+        data_source_id: dataSourceId,
+        schedule_kind,
+        vault_fields: Object.keys(vaultKeys),
+      },
+    });
+    if (auditError) {
+      console.error("connector audit creation failed:", auditError.message);
+      await rollback();
+      return json({ error: "Unable to complete audited connector provisioning" }, 500);
+    }
 
     return json({
       success: true,
@@ -260,8 +291,8 @@ Deno.serve(async (req: Request) => {
       vault_keys: Object.keys(vaultKeys),
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("connector-credential-store error:", msg);
-    return json({ error: "Failed to securely store connector credentials" }, 500);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("connector-credential-store error:", message);
+    return json({ error: "Failed to securely provision connector" }, 500);
   }
 });
