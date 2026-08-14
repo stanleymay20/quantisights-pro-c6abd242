@@ -59,7 +59,6 @@ export function useBuildDecisionQueue({
   const [decisions, setDecisions] = useState<EnrichedDecision[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Debounce ref
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const highSeverityInsights = useMemo(
@@ -85,7 +84,6 @@ export function useBuildDecisionQueue({
     const queue: EnrichedDecision[] = [];
     const now = new Date().toISOString();
 
-    // Track advisory source signal IDs for deduplication
     const advisorySourceSignalIds = new Set<string>();
 
     // 1. Open advisories (dataset-scoped — skip if no dataset to prevent cross-workspace leakage)
@@ -103,7 +101,6 @@ export function useBuildDecisionQueue({
     }
 
     advisories?.forEach(adv => {
-      // Track for dedup (advisory IDs could match signal IDs if spawned from them)
       if (adv.id) advisorySourceSignalIds.add(adv.id);
 
       const sev = adv.priority === "critical" ? "critical" : adv.priority === "high" ? "high" : "medium";
@@ -129,6 +126,7 @@ export function useBuildDecisionQueue({
         message: adv.title,
         sampleSize: undefined,
         datasetId: adv.dataset_id ?? datasetId,
+        sourceEntityId: adv.id,
         orgIdentity: orgIdentityContext,
       });
 
@@ -185,7 +183,8 @@ export function useBuildDecisionQueue({
           category: insight.category,
           sampleSize: insight.sample_size ?? undefined,
           calibrationApplied: hasCappedConf,
-          datasetId: datasetId,
+          datasetId,
+          sourceEntityId: insight.id,
           orgIdentity: orgIdentityContext,
         });
 
@@ -241,6 +240,7 @@ export function useBuildDecisionQueue({
           message: dec.recommended_action,
           category: dec.decision_type,
           sampleSize: 0,
+          sourceEntityId: dec.id,
           orgIdentity: orgIdentityContext,
         });
 
@@ -304,7 +304,7 @@ export function useBuildDecisionQueue({
         rawConfidence: heuristicConf,
         cappedConfidence: null,
         confidenceCapReason: "Heuristic confidence: threshold-based proactive signal, not model-derived",
-        sampleSize: 0, // No sample — heuristic
+        sampleSize: 0,
       });
     }
 
@@ -344,7 +344,7 @@ export function useBuildDecisionQueue({
         rawConfidence: calibrationScore,
         cappedConfidence: null,
         confidenceCapReason: null,
-        sampleSize: 0, // No sample — calibration metric
+        sampleSize: 0,
       });
     }
 
@@ -358,7 +358,6 @@ export function useBuildDecisionQueue({
         const ethicalConflict = alignment.factors.some(f => f.startsWith("⚠"));
         item.missionAlignment = { ...alignment, ethicalConflict };
 
-        // Boost CoD score for strongly aligned decisions (org priorities match)
         if (alignment.score >= 75) {
           item.costOfDelayResult = {
             ...item.costOfDelayResult,
@@ -367,7 +366,6 @@ export function useBuildDecisionQueue({
           };
         }
 
-        // Demote misaligned decisions & flag ethical conflicts
         if (alignment.score < 25 || ethicalConflict) {
           item.costOfDelayResult = {
             ...item.costOfDelayResult,
@@ -376,16 +374,13 @@ export function useBuildDecisionQueue({
           };
         }
 
-        // Adjust urgency based on risk appetite alignment
         if (identity.risk_appetite === "conservative" && item.urgency === "medium" && alignment.score >= 60) {
-          // Conservative orgs should pay more attention to moderate risks that align with their mission
           item.costOfDelayResult = {
             ...item.costOfDelayResult,
             score: Math.min(100, item.costOfDelayResult.score + 5),
           };
         }
         if (identity.decision_speed_preference === "rapid" || identity.decision_speed_preference === "agile") {
-          // Reduce action window for fast-moving orgs
           item.costOfDelayResult = {
             ...item.costOfDelayResult,
             recommendedActionWindowDays: Math.max(1, item.costOfDelayResult.recommendedActionWindowDays - 2),
@@ -395,7 +390,6 @@ export function useBuildDecisionQueue({
     }
 
     queue.sort((a, b) => {
-      // Ethical conflicts always sort last (flag, don't auto-act)
       const aEthical = a.missionAlignment?.ethicalConflict ? 1 : 0;
       const bEthical = b.missionAlignment?.ethicalConflict ? 1 : 0;
       if (aEthical !== bEthical) return aEthical - bEthical;
@@ -411,7 +405,6 @@ export function useBuildDecisionQueue({
     setLoading(false);
   }, [organizationId, highSeverityInsights, churnRate, revenue, pendingDecisions, calibrationScore, datasetId, identity, orgIdentityContext]);
 
-  // Debounced effect — 200ms
   useEffect(() => {
     if (!organizationId) return;
     if (timerRef.current) clearTimeout(timerRef.current);
