@@ -4,11 +4,13 @@
  * Stored on `data_connectors.config` jsonb for Snowflake, BigQuery, and S3.
  */
 
+type PeriodGrain = "day" | "week" | "month" | "quarter";
+
 export interface WarehouseMapping {
   metric_key_column: string;
   value_column: string;
   period_column: string;
-  period_grain?: "day" | "week" | "month" | "quarter";
+  period_grain?: PeriodGrain;
   unit_column?: string;
   dimension_columns?: string[];
   entity_external_id_column?: string;
@@ -43,12 +45,7 @@ export interface S3Config {
 }
 
 const REQUIRED_MAPPING = ["metric_key_column", "value_column", "period_column"] as const;
-const PERIOD_GRAINS = new Set<WarehouseMapping["period_grain"]>([
-  "day",
-  "week",
-  "month",
-  "quarter",
-]);
+const PERIOD_GRAINS = new Set<PeriodGrain>(["day", "week", "month", "quarter"]);
 const MAX_QUERY_ROWS = 50_000;
 const DEFAULT_QUERY_ROWS = 10_000;
 const OUTER_LIMIT_PATTERN = /\blimit\s+(\d+)(?=\s*(?:offset\s+\d+\s*)?;?\s*$)/i;
@@ -64,6 +61,10 @@ function nonEmptyString(value: unknown): string | null {
 function optionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return value == null ? undefined : nonEmptyString(value) ?? undefined;
+}
+
+function isPeriodGrain(value: unknown): value is PeriodGrain {
+  return typeof value === "string" && PERIOD_GRAINS.has(value as PeriodGrain);
 }
 
 export function validateMapping(
@@ -83,7 +84,7 @@ export function validateMapping(
   }
 
   const periodGrain = value.period_grain;
-  if (periodGrain != null && !PERIOD_GRAINS.has(periodGrain as WarehouseMapping["period_grain"])) {
+  if (periodGrain != null && !isPeriodGrain(periodGrain)) {
     return { ok: false, reason: "mapping.period_grain invalid" };
   }
 
@@ -105,7 +106,7 @@ export function validateMapping(
     value_column: required.value_column,
     period_column: required.period_column,
   };
-  if (periodGrain != null) mapping.period_grain = periodGrain as WarehouseMapping["period_grain"];
+  if (isPeriodGrain(periodGrain)) mapping.period_grain = periodGrain;
   const unitColumn = optionalString(value, "unit_column");
   const entityExternalIdColumn = optionalString(value, "entity_external_id_column");
   const entityType = optionalString(value, "entity_type");
