@@ -1,11 +1,12 @@
 /**
  * similar-decisions — Hybrid retrieval: deterministic + neural fallback.
- * 
+ *
  * v3: When deterministic retrieval yields only weak matches, triggers neural
  * embedding via Lovable AI to extract semantic concepts and re-search.
  * Compares both result sets and returns the stronger one.
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { generateEmbedding, searchSimilar } from "../_shared/embeddings.ts";
@@ -17,6 +18,11 @@ import { generateNeuralEmbedding } from "../_shared/neural-fallback.ts";
 
 type MatchTier = "strong" | "moderate" | "weak";
 type RetrievalSource = "deterministic" | "neural_fallback";
+
+type CanonicalOutcome = {
+  success: 0 | 1;
+  accuracy: number | null;
+};
 
 const DOMAIN_CATEGORIES: Record<string, string[]> = {
   sales: ["sales", "revenue", "pipeline", "deal", "acv", "quota", "enterprise", "account", "ae", "booking"],
@@ -72,6 +78,19 @@ function buildMatchRationale(
     return `${prefix}Moderate match (${simPct}%) — ${reason}`;
   }
   return `${prefix}Weak match (${simPct}%) — limited overlap${queryCategory !== matchCategory ? `, different domain (${matchCategory} vs ${queryCategory})` : ""}`;
+}
+
+function canonicalOutcomeFromStatus(status: unknown): 0 | 1 | null {
+  switch (String(status ?? "").toLowerCase()) {
+    case "success":
+    case "partial_success":
+      return 1;
+    case "negative_outcome":
+    case "no_effect":
+      return 0;
+    default:
+      return null;
+  }
 }
 
 interface EnrichedResult {
@@ -216,23 +235,55 @@ serve(async (req) => {
     // ═══════════════════════════════════════════════════
     // HISTORICAL PERFORMANCE (from strong/moderate only)
     // ═══════════════════════════════════════════════════
+    // Embedding metadata can be stale and raw outcome_delta direction is not a
+    // universal success signal. Resolve the latest canonical outcome evaluation
+    // for each precedent directly from decision_outcomes.
     const outcomes = finalResults.filter(r => r.entity_type === "outcome" && r.match_tier !== "weak");
     let historicalSuccessRate: number | null = null;
     let avgAccuracy: number | null = null;
     let confidenceAdjustment = 0;
 
-    if (outcomes.length >= 2) {
-      const successCount = outcomes.filter(r => {
-        const delta = (r.metadata as any)?.outcome_delta;
-        return delta != null && delta > 0;
-      }).length;
-      historicalSuccessRate = Math.round((successCount / outcomes.length) * 100);
+    if (outcomes.length > 0) {
+      const svc = createClient(supabaseUrl, serviceKey);
+      const { data: evaluatedRows, error: evaluatedError } = await svc
+        .from("decision_outcomes")
+        .select("decision_id, outcome_status, accuracy_score, evaluation_date")
+        .eq("organization_id", organization_id)
+        .in("decision_id", outcomes.map(r => r.entity_id))
+        .in("outcome_status", ["success", "partial_success", "no_effect", "negative_outcome"])
+        .not("evaluation_date", "is", null)
+        .order("evaluation_date", { ascending: false })
+        .limit(100);
 
-      const accuracies = outcomes
-        .map(r => (r.metadata as any)?.accuracy_score)
-        .filter((a): a is number => a != null);
+      if (evaluatedError) throw new Error(`canonical outcome lookup failed: ${evaluatedError.message}`);
+
+      const canonicalByDecision = new Map<string, CanonicalOutcome>();
+      for (const row of evaluatedRows ?? []) {
+        const decisionId = row.decision_id as string;
+        if (canonicalByDecision.has(decisionId)) continue; // latest row wins
+        const success = canonicalOutcomeFromStatus(row.outcome_status);
+        if (success == null) continue;
+        const numericAccuracy = Number(row.accuracy_score);
+        canonicalByDecision.set(decisionId, {
+          success,
+          accuracy: Number.isFinite(numericAccuracy) ? numericAccuracy : null,
+        });
+      }
+
+      const canonicalOutcomes = outcomes
+        .map(result => canonicalByDecision.get(result.entity_id))
+        .filter((value): value is CanonicalOutcome => value != null);
+
+      if (canonicalOutcomes.length >= 2) {
+        const successCount = canonicalOutcomes.filter(value => value.success === 1).length;
+        historicalSuccessRate = Math.round((successCount / canonicalOutcomes.length) * 100);
+      }
+
+      const accuracies = canonicalOutcomes
+        .map(value => value.accuracy)
+        .filter((value): value is number => value != null);
       if (accuracies.length > 0) {
-        avgAccuracy = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length);
+        avgAccuracy = Math.round(accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length);
         if (hasStrongMatch) {
           if (avgAccuracy < 50) confidenceAdjustment = -10;
           else if (avgAccuracy < 70) confidenceAdjustment = -5;
