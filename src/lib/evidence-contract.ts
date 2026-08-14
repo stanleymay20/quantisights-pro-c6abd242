@@ -2,7 +2,8 @@
  * Evidence Contract — Enterprise Decision Intelligence Foundation.
  *
  * Every insight, advisory, or recommendation MUST carry an evidence block.
- * If any element is missing, the recommendation is automatically downgraded.
+ * If a decision-critical prerequisite is missing, presentation quality cannot
+ * compensate for it: the recommendation is automatically downgraded.
  *
  * This is the single source of truth for decision output integrity.
  */
@@ -46,7 +47,7 @@ export interface ConfidenceBasis {
 }
 
 export interface DecisionQualityScore {
-  /** 0-100 composite score */
+  /** 0-100 composite score. This measures quality only after hard prerequisites. */
   overall: number;
   dimensions: {
     evidenceStrength: number;        // 0-25
@@ -56,16 +57,30 @@ export interface DecisionQualityScore {
     monitoringClarity: number;       // 0-10
   };
   grade: "A" | "B" | "C" | "D" | "F";
-  /** If grade < C, recommendations should be downgraded */
+  /** A recommendation is decision-grade only if score AND hard gates pass. */
   isDecisionGrade: boolean;
+  /** Non-negotiable evidence prerequisites that failed. */
+  hardGateFailures: string[];
   /** Reason for downgrade if applicable */
   downgradeReason: string | null;
 }
 
+function substantiveEvidenceItems(items: string[] | undefined): string[] {
+  return (items ?? []).filter(item => {
+    const normalized = item.trim();
+    if (!normalized) return false;
+    // A confidence label describes certainty; it is not evidence for the claim.
+    return !/^confidence\s*:/i.test(normalized);
+  });
+}
+
 /**
  * Score a decision output for quality.
- * If the score is below threshold, the output should be labeled as
- * "preliminary" or blocked from presentation as intelligence.
+ *
+ * HARD-GATE PRINCIPLE:
+ * A long recommendation, quantified-looking expected impact, or polished prose
+ * must never turn zero observed data into decision-grade intelligence. Hard
+ * evidence prerequisites are evaluated separately from the weighted score.
  */
 export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): DecisionQualityScore {
   let evidenceStrength = 0;
@@ -74,10 +89,26 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
   let actionability = 0;
   let monitoringClarity = 0;
 
+  const substantiveEvidence = substantiveEvidenceItems(evidence.evidence);
+  const hardGateFailures: string[] = [];
+
+  if (!evidence.observation?.trim()) hardGateFailures.push("no observed finding");
+  if (substantiveEvidence.length === 0) hardGateFailures.push("no substantive evidence");
+  if (!evidence.confidenceBasis) {
+    hardGateFailures.push("no confidence basis");
+  } else {
+    if (!Number.isFinite(evidence.confidenceBasis.sampleSize) || evidence.confidenceBasis.sampleSize <= 0) {
+      hardGateFailures.push("no observed data points");
+    }
+    if (!Number.isFinite(evidence.confidenceBasis.dataCoverage) || evidence.confidenceBasis.dataCoverage <= 0) {
+      hardGateFailures.push("no measurable data coverage");
+    }
+  }
+
   // Evidence Strength (0-25)
   if (evidence.observation && evidence.observation.length > 20) evidenceStrength += 5;
-  if (evidence.evidence && evidence.evidence.length > 0) {
-    evidenceStrength += Math.min(10, evidence.evidence.length * 3);
+  if (substantiveEvidence.length > 0) {
+    evidenceStrength += Math.min(10, substantiveEvidence.length * 3);
   }
   if (evidence.reasoning && evidence.reasoning.length > 30) evidenceStrength += 5;
   if (evidence.assumptions && evidence.assumptions.length > 0) evidenceStrength += 5;
@@ -99,8 +130,8 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
 
   // Economic Grounding (0-25)
   if (evidence.expectedImpact) {
-    if (/\d/.test(evidence.expectedImpact)) economicGrounding += 15; // has numbers
-    else economicGrounding += 5; // qualitative only
+    if (/\d/.test(evidence.expectedImpact)) economicGrounding += 15;
+    else economicGrounding += 5;
   }
   if (evidence.riskIfWrong && evidence.riskIfWrong.length > 10) economicGrounding += 10;
 
@@ -109,8 +140,6 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
   if (evidence.limitations && evidence.limitations.length > 0) actionability += 5;
 
   // Monitoring Clarity (0-10)
-  // Structural check: successMetrics array presence (from StructuredRecommendation),
-  // plus keyword fallback for standalone evidence blocks
   const evidenceRecord = evidence as Record<string, unknown>;
   if (evidenceRecord.successMetrics && Array.isArray(evidenceRecord.successMetrics) && evidenceRecord.successMetrics.length > 0) {
     monitoringClarity += 10;
@@ -122,23 +151,34 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
 
   const overall = evidenceStrength + confidenceReliability + economicGrounding + actionability + monitoringClarity;
 
-  const grade: DecisionQualityScore["grade"] =
+  const scoreGrade: DecisionQualityScore["grade"] =
     overall >= 80 ? "A" :
     overall >= 65 ? "B" :
     overall >= 45 ? "C" :
     overall >= 25 ? "D" : "F";
 
-  const isDecisionGrade = overall >= 45; // C or above
+  // A hard evidence failure caps the visible grade below decision-grade. This
+  // prevents an A/B/C badge from contradicting the fail-closed gate.
+  const grade: DecisionQualityScore["grade"] = hardGateFailures.length > 0
+    ? (overall >= 25 ? "D" : "F")
+    : scoreGrade;
+
+  const isDecisionGrade = overall >= 45 && hardGateFailures.length === 0;
 
   let downgradeReason: string | null = null;
   if (!isDecisionGrade) {
     const missing: string[] = [];
     if (!evidence.observation) missing.push("observation");
-    if (!evidence.evidence || evidence.evidence.length === 0) missing.push("evidence");
+    if (substantiveEvidence.length === 0) missing.push("evidence");
     if (!evidence.confidenceBasis) missing.push("confidence basis");
     if (!evidence.expectedImpact) missing.push("expected impact");
     if (!evidence.riskIfWrong) missing.push("risk assessment");
-    downgradeReason = `Insufficient decision quality (${overall}/100). Missing: ${missing.join(", ")}.`;
+
+    const gateText = hardGateFailures.length > 0
+      ? ` Hard gate failures: ${hardGateFailures.join(", ")}.`
+      : "";
+    const missingText = missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "";
+    downgradeReason = `Insufficient decision quality (${overall}/100, Grade ${grade}).${gateText}${missingText}`;
   }
 
   return {
@@ -152,6 +192,7 @@ export function scoreDecisionQuality(evidence: Partial<EvidenceBlock>): Decision
     },
     grade,
     isDecisionGrade,
+    hardGateFailures,
     downgradeReason,
   };
 }
@@ -167,17 +208,17 @@ export function buildConfidenceBasis(opts: {
   calibrationApplied?: boolean;
   isHeuristic?: boolean;
 }): ConfidenceBasis {
-  // When explicit dimensions aren't provided, infer coverage from sample size
-  // to avoid a silent 0% that penalizes the score
   let coverage: number;
-  if (opts.totalExpectedDimensions && opts.presentDimensions) {
+  if (opts.sampleSize <= 0) {
+    coverage = 0;
+  } else if (opts.totalExpectedDimensions && opts.presentDimensions) {
     coverage = Math.round((opts.presentDimensions / opts.totalExpectedDimensions) * 100);
   } else if (opts.sampleSize >= 30) {
-    coverage = 80; // robust data implies reasonable coverage
+    coverage = 80;
   } else if (opts.sampleSize >= 12) {
-    coverage = 50; // moderate
+    coverage = 50;
   } else {
-    coverage = 20; // limited
+    coverage = 20;
   }
 
   const signalStrength: ConfidenceBasis["signalStrength"] =
@@ -187,7 +228,9 @@ export function buildConfidenceBasis(opts: {
   const isHeuristic = opts.isHeuristic ?? (opts.sampleSize < 12);
 
   let label: string;
-  if (isHeuristic) {
+  if (opts.sampleSize <= 0) {
+    label = "Heuristic estimate (0 observed data points, 0% coverage)";
+  } else if (isHeuristic) {
     label = `Heuristic estimate (${opts.sampleSize} data points, ${coverage}% coverage)`;
   } else if (opts.calibrationApplied) {
     label = `Calibrated model (${opts.sampleSize} points, ${coverage}% coverage)`;
