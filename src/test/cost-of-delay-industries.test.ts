@@ -192,7 +192,7 @@ describe("Decision Recommendation — Cross-Industry Actions", () => {
 
   it("downtime triggers incident response", () => {
     const r = generateRecommendation(recInput({ metricType: "downtime", message: "Production line downtime exceeded threshold this week" }));
-    expect(r.recommendedAction.toLowerCase()).toContain("root cause");
+    expect(r.recommendedAction.toLowerCase()).toContain("root-cause");
   });
 
   it("defect triggers Pareto analysis", () => {
