@@ -107,7 +107,7 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
           disabled={!!submitting}
           onClick={() => submit("negative")}
         >
-          {submitting === "negative" ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle2 className="w-3 h-3" />}
+          {submitting === "negative" ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
           No
         </Button>
         <button
