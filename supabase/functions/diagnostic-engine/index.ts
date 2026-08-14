@@ -5,6 +5,7 @@ import type { AdaptiveConfidenceMeta } from "../_shared/adaptive-confidence.ts";
 import { enforceDatasetContract } from "../_shared/dataset-contract.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { detectChangepoints, type ChangepointEvidence } from "../_shared/changepoint.ts";
+import { inferExpectedOutcomeDirection, type ExpectedOutcomeDirection } from "../_shared/outcome-direction.ts";
 
 interface MetricRow {
   metric_type: string;
@@ -24,7 +25,8 @@ interface MetricStats {
   std_dev: number;
   volatility_pct: number;
   slope_normalized_pct: number;
-  trend_direction: string;
+  expected_direction: ExpectedOutcomeDirection;
+  trend_direction: "improving" | "declining" | "stable" | "volatile";
   min: number;
   max: number;
   date_range: string;
@@ -46,6 +48,7 @@ interface DiagnosticResult {
   causal_status: CausalStatus;
   evidence_level: EvidenceLevel;
   structural_breaks: ChangepointEvidence[];
+  expected_direction: ExpectedOutcomeDirection;
   trend_direction: "improving" | "declining" | "stable" | "volatile";
   change_pct: number;
   recommendation: string;
@@ -101,9 +104,13 @@ function sanitizeCausalLanguage(value: unknown): string {
 }
 
 function driverHypothesis(value: unknown, stat: MetricStats | undefined): string {
-  const sanitized = sanitizeCausalLanguage(value);
+  const sanitized = sanitizeCausalLanguage(value)
+    .replace(/^driver hypothesis\s*\(causality not established\)\s*:\s*/i, "")
+    .replace(/^driver hypothesis\s*:\s*/i, "")
+    .replace(/^candidate driver\s*:\s*/i, "")
+    .trim();
   const fallback = stat
-    ? `Observed slope ${stat.slope_normalized_pct.toFixed(1)}%, volatility ${stat.volatility_pct.toFixed(0)}%, and ${stat.structural_breaks.length} detected structural break(s).`
+    ? `Observed slope ${stat.slope_normalized_pct.toFixed(1)}%, desired direction ${stat.expected_direction}, volatility ${stat.volatility_pct.toFixed(0)}%, and ${stat.structural_breaks.length} detected structural break(s).`
     : "Available evidence is descriptive only.";
   return `Driver hypothesis (causality not established): ${sanitized || fallback}`;
 }
@@ -111,7 +118,9 @@ function driverHypothesis(value: unknown, stat: MetricStats | undefined): string
 function associatedEvidence(values: unknown, stat: MetricStats | undefined): string[] {
   const raw = Array.isArray(values) ? values : [];
   const factors = raw
-    .map(value => sanitizeCausalLanguage(value))
+    .map(value => sanitizeCausalLanguage(value)
+      .replace(/^associated evidence\s*\(not causal\)\s*:\s*/i, "")
+      .trim())
     .filter(Boolean)
     .map(value => `Associated evidence (not causal): ${value}`);
 
@@ -119,10 +128,29 @@ function associatedEvidence(values: unknown, stat: MetricStats | undefined): str
   if (!stat) return ["Associated evidence (not causal): insufficient statistical detail"];
 
   return [
-    `Associated evidence (not causal): ${stat.trend_direction} trend over ${stat.data_points} observations`,
+    `Associated evidence (not causal): ${stat.trend_direction} trend relative to desired ${stat.expected_direction} direction over ${stat.data_points} observations`,
     `Associated evidence (not causal): ${stat.volatility_pct.toFixed(0)}% coefficient of variation`,
     ...stat.segment_shifts.slice(0, 3).map(shift => `Associated evidence (not causal): segment shift ${shift}`),
   ];
+}
+
+function classifyTrend(
+  metricType: string,
+  slopeNormalizedPct: number,
+  volatilityPct: number,
+): { expectedDirection: ExpectedOutcomeDirection; trendDirection: MetricStats["trend_direction"] } {
+  const expectedDirection = inferExpectedOutcomeDirection(metricType);
+  if (volatilityPct > 30) return { expectedDirection, trendDirection: "volatile" };
+  if (Math.abs(slopeNormalizedPct) <= 5) return { expectedDirection, trendDirection: "stable" };
+
+  const movingInDesiredDirection = expectedDirection === "decrease"
+    ? slopeNormalizedPct < -5
+    : slopeNormalizedPct > 5;
+
+  return {
+    expectedDirection,
+    trendDirection: movingInDesiredDirection ? "improving" : "declining",
+  };
 }
 
 /** Compute pure statistics and temporal structural-break evidence for each metric. */
@@ -164,11 +192,7 @@ function computeStats(metrics: MetricRow[]): { stats: MetricStats[]; skippedMetr
     }
     const slope = denominator !== 0 ? numerator / denominator : 0;
     const slopeNorm = mean !== 0 ? (slope / Math.abs(mean)) * 100 : 0;
-
-    let trendDirection = "stable";
-    if (volatility > 30) trendDirection = "volatile";
-    else if (slopeNorm > 5) trendDirection = "improving";
-    else if (slopeNorm < -5) trendDirection = "declining";
+    const { expectedDirection, trendDirection } = classifyTrend(type, slopeNorm, volatility);
 
     const segmentBreakdown: Record<string, number[]> = {};
     for (const row of sorted) {
@@ -199,6 +223,7 @@ function computeStats(metrics: MetricRow[]): { stats: MetricStats[]; skippedMetr
       std_dev: Number(stdDev.toFixed(4)),
       volatility_pct: Number(volatility.toFixed(2)),
       slope_normalized_pct: Number(slopeNorm.toFixed(2)),
+      expected_direction: expectedDirection,
       trend_direction: trendDirection,
       min: Number(values.reduce((a, b) => a < b ? a : b, values[0]).toFixed(4)),
       max: Number(values.reduce((a, b) => a > b ? a : b, values[0]).toFixed(4)),
@@ -279,7 +304,7 @@ For EACH metric return ONLY a JSON array using this compatibility schema:
     "severity": "critical" | "warning" | "info",
     "root_cause": "Driver hypothesis only. Begin with 'Driver hypothesis (causality not established):' and describe what should be investigated, not what caused the outcome.",
     "causal_factors": ["Associated evidence only; each item must avoid causal language and cite slope, volatility, segment shifts, or structural breaks"],
-    "trend_direction": "improving" | "declining" | "stable" | "volatile",
+    "trend_direction": "COPY the computed trend_direction from the matching metric statistics exactly; do not reinterpret it",
     "change_pct": <number from period_change_pct>,
     "recommendation": "Actionable next step to investigate/monitor the pattern without assuming causality",
     "raw_confidence": <60-90 based on data quality>
@@ -288,7 +313,8 @@ For EACH metric return ONLY a JSON array using this compatibility schema:
 
 Rules:
 - Be domain-agnostic.
-- Reference ACTUAL values, percentages, dates, changepoints, and data-point counts from the supplied statistics.
+- Reference ACTUAL values, percentages, dates, changepoints, expected_direction, and data-point counts from the supplied statistics.
+- trend_direction is already direction-aware: for lower-is-better metrics such as churn/cost/risk, a negative slope may correctly be labeled improving. Preserve it exactly.
 - Critical: |period_change_pct| > 10%, volatility > 40%, or material structural instability.
 - Warning: |period_change_pct| 5-10%, volatility 25-40%, or an emerging structural break.
 - Info: otherwise stable/low-volatility evidence.
@@ -344,15 +370,16 @@ function fallbackDiagnostics(stats: MetricStats[]): any[] {
     } else if (severity === "warning") {
       recommendation = `Monitor ${stat.metric_type.replace(/_/g, " ")} closely and investigate candidate drivers around segment shifts or structural-break dates before committing to an intervention.`;
     } else {
-      recommendation = `${stat.metric_type.replace(/_/g, " ")} is statistically stable under the current descriptive checks. Continue monitoring and escalate only if new break or variance evidence appears.`;
+      recommendation = `${stat.metric_type.replace(/_/g, " ")} is ${stat.trend_direction} relative to its desired ${stat.expected_direction} direction under the current descriptive checks. Continue monitoring and escalate only if new break or variance evidence appears.`;
     }
 
     return {
       metric_type: stat.metric_type,
-      diagnosis: `${stat.metric_type.replace(/_/g, " ")} changed ${stat.period_change_pct > 0 ? "+" : ""}${stat.period_change_pct.toFixed(1)}% (latest: ${stat.latest_value}, mean: ${stat.mean.toFixed(2)}). Trend is ${stat.trend_direction} with ${stat.volatility_pct.toFixed(0)}% volatility across ${stat.data_points} observations.${breakSummary}`,
+      diagnosis: `${stat.metric_type.replace(/_/g, " ")} changed ${stat.period_change_pct > 0 ? "+" : ""}${stat.period_change_pct.toFixed(1)}% (latest: ${stat.latest_value}, mean: ${stat.mean.toFixed(2)}). Trend is ${stat.trend_direction} relative to desired direction ${stat.expected_direction}, with ${stat.volatility_pct.toFixed(0)}% volatility across ${stat.data_points} observations.${breakSummary}`,
       severity,
-      root_cause: `Driver hypothesis (causality not established): The observed pattern is statistically associated with a ${stat.slope_normalized_pct.toFixed(1)}% normalized slope, ${stat.volatility_pct.toFixed(0)}% volatility${stat.segment_shifts.length > 0 ? `, and segment divergence (${stat.segment_shifts.join(", ")})` : ""}. These features identify where to investigate; they do not identify a cause.`,
+      root_cause: `Driver hypothesis (causality not established): The observed pattern is statistically associated with a ${stat.slope_normalized_pct.toFixed(1)}% normalized slope, desired direction ${stat.expected_direction}, ${stat.volatility_pct.toFixed(0)}% volatility${stat.segment_shifts.length > 0 ? `, and segment divergence (${stat.segment_shifts.join(", ")})` : ""}. These features identify where to investigate; they do not identify a cause.`,
       causal_factors: associatedEvidence([], stat),
+      expected_direction: stat.expected_direction,
       trend_direction: stat.trend_direction,
       change_pct: stat.period_change_pct,
       recommendation,
@@ -467,6 +494,8 @@ Frame diagnoses through this context, but do not let business context upgrade st
       const volatility = matchingStat?.volatility_pct || 0;
       const structuralBreaks = matchingStat?.structural_breaks ?? [];
       const level = evidenceLevel(matchingStat);
+      const expectedDirection = matchingStat?.expected_direction ?? inferExpectedOutcomeDirection(interpreted.metric_type);
+      const computedTrend = matchingStat?.trend_direction ?? "stable";
 
       if (sampleSize < 8) {
         const meta = await applyAdaptiveConfidenceWithFetch(
@@ -484,7 +513,8 @@ Frame diagnoses through this context, but do not let business context upgrade st
           causal_status: "not_established" as const,
           evidence_level: "descriptive" as const,
           structural_breaks: structuralBreaks,
-          trend_direction: (matchingStat?.trend_direction as DiagnosticResult["trend_direction"]) || "stable",
+          expected_direction: expectedDirection,
+          trend_direction: computedTrend,
           change_pct: Number((matchingStat?.period_change_pct || 0).toFixed(1)),
           recommendation: "Collect more historical data before using this metric for diagnostic decision support.",
           ...applyMeta(meta),
@@ -509,7 +539,9 @@ Frame diagnoses through this context, but do not let business context upgrade st
         causal_status: "not_established" as const,
         evidence_level: level,
         structural_breaks: structuralBreaks,
-        trend_direction: interpreted.trend_direction || matchingStat?.trend_direction || "stable",
+        expected_direction: expectedDirection,
+        // Computed direction-aware trend is authoritative; the LLM cannot override it.
+        trend_direction: computedTrend,
         change_pct: normalizedChangePct,
         recommendation: sanitizeCausalLanguage(interpreted.recommendation || "Investigate candidate drivers and validate competing explanations."),
         ...applyMeta(meta),
@@ -530,7 +562,7 @@ Frame diagnoses through this context, but do not let business context upgrade st
       skipped_metrics: skippedMetrics,
       adaptive_calibration_applied: diagnostics.some(diagnostic => diagnostic.adaptive_calibration_applied),
       causal_status: "not_established",
-      diagnostic_method: "descriptive statistics + regression trend + segment shifts + deterministic changepoint detection",
+      diagnostic_method: "descriptive statistics + KPI-direction-aware regression trend + segment shifts + deterministic changepoint detection",
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
