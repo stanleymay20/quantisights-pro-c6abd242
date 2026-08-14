@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { classifyExecutiveDecisionImpact } from "@/lib/decision-options";
 import {
   OUTCOME_REVIEW_WINDOW_DAYS,
   formatEuro,
@@ -66,6 +67,15 @@ export default function OutcomePredictionPanel({
   const followUp = getFollowUpReviewDate(decision);
   const risks = getReviewRisks(decision);
   const decidedAt = decision.decided_at ? new Date(decision.decided_at) : null;
+  const impactClassification = classifyExecutiveDecisionImpact({
+    predictedNetImpact: decision.predicted_net_impact,
+    decisionSimulationId: decision.decision_simulation_id,
+    explanationMetadata: decision.explanation_metadata,
+  });
+  const financialTarget = impactClassification.status === "modeled";
+  const measuredKpiDelta = measured && decision.outcome_delta != null
+    ? `Measured KPI delta so far: ${decision.outcome_delta}`
+    : null;
 
   return (
     <Card data-testid="outcome-prediction-panel">
@@ -114,13 +124,9 @@ export default function OutcomePredictionPanel({
           />
           <OutcomeStat
             icon={Gauge}
-            label="Expected financial impact"
-            value={formatEuro(decision.predicted_net_impact)}
-            detail={
-              measured && decision.outcome_delta != null
-                ? `Measured delta so far: ${formatEuro(decision.outcome_delta)}`
-                : undefined
-            }
+            label="Financial impact"
+            value={formatEuro(impactClassification.value)}
+            detail={`${impactClassification.label}${measuredKpiDelta ? ` · ${measuredKpiDelta}` : ""}`}
           />
           <OutcomeStat
             icon={CalendarClock}
@@ -153,14 +159,15 @@ export default function OutcomePredictionPanel({
                 The linked KPI improves against its baseline within the evaluation window.
               </li>
               <li>
-                Measured net impact is positive after execution cost
-                {decision.predicted_net_impact != null
-                  ? ` (target: ${formatEuro(decision.predicted_net_impact)})`
-                  : ""}
-                .
+                {financialTarget
+                  ? `If financial impact is measured, compare it with the linked simulation target of ${formatEuro(impactClassification.value)}.`
+                  : "No financial success target is set until an evidence-backed monetary model is linked."}
               </li>
               <li>No new critical risk is raised against this decision during execution.</li>
             </ul>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Only linked simulation output is treated as a financial target; heuristic or derived amounts remain context only.
+            </p>
           </div>
           <div>
             <h3 className="flex items-center gap-2 text-sm font-semibold">
