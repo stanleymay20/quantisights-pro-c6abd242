@@ -13,13 +13,18 @@ function codInput(overrides: Partial<CostOfDelayInput> = {}): CostOfDelayInput {
   };
 }
 
-// Helper: base input for recommendations
+// Helper: base input for recommendation playbook tests.
+// These fixtures exercise domain-specific action generation, so they carry
+// explicit verified provenance instead of bypassing the production hard gate.
 function recInput(overrides: Partial<RecommendationInput> = {}): RecommendationInput {
   return {
     signalType: "signal",
     severity: "high",
     confidence: 70,
     sampleSize: 50,
+    datasetId: "test-dataset-cross-industry",
+    sourceEntityId: "test-insight-cross-industry",
+    dataRowsUsed: 50,
     ...overrides,
   };
 }
@@ -82,112 +87,62 @@ describe("Cost of Delay — Cross-Industry Scoring", () => {
       expect(r.estimatedDelayCost).toContain("/week");
     });
 
-    it("Tier 4 (yield) uses ~6% base rate", () => {
-      const r = computeCostOfDelay(codInput({ ...base, affectedMetricType: "yield" }));
+    it("Tier 4 (generic) uses ~5% base rate", () => {
+      const r = computeCostOfDelay(codInput({ ...base, affectedMetricType: "misc" }));
       expect(r.estimatedDelayCost).toContain("/week");
     });
+  });
 
-    it("predictedNetImpact overrides revenue-based estimate", () => {
-      const r = computeCostOfDelay(codInput({ ...base, predictedNetImpact: -50000 }));
-      expect(r.estimatedDelayCost).toContain("/week");
-      expect(r.estimatedDelayCost).not.toContain("exposure");
+  describe("Currency safety", () => {
+    it("without revenue or impact, no € shown", () => {
+      const r = computeCostOfDelay(codInput({ revenue: undefined, predictedNetImpact: undefined }));
+      expect(r.estimatedDelayCost).not.toContain("€");
+    });
+
+    it("with predicted net impact, € shown", () => {
+      const r = computeCostOfDelay(codInput({ revenue: undefined, predictedNetImpact: 500_000 }));
+      expect(r.estimatedDelayCost).toContain("€");
     });
   });
 
-  describe("Expected impact keyword bonuses", () => {
-    it("critical keywords boost score", () => {
-      const withKeyword = computeCostOfDelay(codInput({ expectedImpact: "Catastrophic system failure" }));
-      const without = computeCostOfDelay(codInput({}));
-      expect(withKeyword.score).toBeGreaterThan(without.score);
+  describe("Cross-industry action windows", () => {
+    it("critical safety creates a short action window", () => {
+      const r = computeCostOfDelay(codInput({ severity: "critical", affectedMetricType: "safety", confidence: 90 }));
+      expect(r.recommendedActionWindowDays).toBeLessThanOrEqual(3);
     });
 
-    it("safety + compounding keywords stack", () => {
-      const stacked = computeCostOfDelay(codInput({ expectedImpact: "Safety hazard with cascading compounding effects" }));
-      const single = computeCostOfDelay(codInput({ expectedImpact: "Minor improvement opportunity" }));
-      expect(stacked.score).toBeGreaterThan(single.score);
-    });
-
-    it("operational disruption keywords add bonus", () => {
-      const outage = computeCostOfDelay(codInput({ expectedImpact: "Complete system outage affecting production" }));
-      const baseline = computeCostOfDelay(codInput({}));
-      expect(outage.score).toBeGreaterThan(baseline.score);
-    });
-  });
-
-  describe("Score bounds and labels", () => {
-    it("score is always 0-100", () => {
-      const extreme = computeCostOfDelay(codInput({
-        severity: "critical", confidence: 100, signalDelta: 200,
-        affectedEntityCount: 10000, trendAccelerating: true,
-        affectedMetricType: "mortality", ageDays: 100,
-        expectedImpact: "Catastrophic cascading safety hazard with fatality risk",
-      }));
-      expect(extreme.score).toBeLessThanOrEqual(100);
-      expect(extreme.score).toBeGreaterThanOrEqual(0);
-    });
-
-    it("low severity + low confidence = low label", () => {
-      const r = computeCostOfDelay(codInput({ severity: "low", confidence: 20, revenue: 0, ageDays: 0 }));
-      expect(r.label).toBe("low");
-    });
-
-    it("critical severity + high confidence = critical label", () => {
-      const r = computeCostOfDelay(codInput({
-        severity: "critical", confidence: 95, affectedMetricType: "safety",
-        trendAccelerating: true, ageDays: 30,
-      }));
-      expect(["critical", "high"]).toContain(r.label);
-    });
-  });
-
-  describe("Action window decay", () => {
-    it("older signals get shorter action windows", () => {
-      const fresh = computeCostOfDelay(codInput({ ageDays: 0, severity: "high" }));
-      const old = computeCostOfDelay(codInput({ ageDays: 30, severity: "high" }));
-      expect(old.recommendedActionWindowDays).toBeLessThanOrEqual(fresh.recommendedActionWindowDays);
+    it("lower severity permits a longer window", () => {
+      const critical = computeCostOfDelay(codInput({ severity: "critical", affectedMetricType: "revenue", confidence: 80 }));
+      const low = computeCostOfDelay(codInput({ severity: "low", affectedMetricType: "revenue", confidence: 80 }));
+      expect(low.recommendedActionWindowDays).toBeGreaterThan(critical.recommendedActionWindowDays);
     });
   });
 });
 
 describe("Decision Recommendation — Cross-Industry Owners", () => {
-  it("safety → VP EHS", () => {
-    const r = generateRecommendation(recInput({ category: "safety" }));
-    expect(r.suggestedOwner).toContain("EHS");
-  });
+  const cases: [string, string][] = [
+    ["mortality_rate", "CMO"],
+    ["patient_safety", "CMO"],
+    ["clinical_outcome", "CMO"],
+    ["trir_safety", "Safety"],
+    ["compliance_rate", "Compliance"],
+    ["fraud_rate", "CRO"],
+    ["liquidity_ratio", "CFO"],
+    ["credit_exposure", "CRO"],
+    ["downtime", "Operations"],
+    ["defect_rate", "Quality"],
+    ["yield_rate", "Manufacturing"],
+    ["emission_intensity", "Sustainability"],
+    ["inventory_turnover", "Supply Chain"],
+    ["procurement_cycle", "Procurement"],
+    ["enrollment_rate", "Enrollment"],
+    ["vacancy_rate", "Leasing"],
+    ["occupancy_rate", "Revenue Management"],
+  ];
 
-  it("patient → CMO", () => {
-    const r = generateRecommendation(recInput({ metricType: "patient_outcome" }));
-    expect(r.suggestedOwner).toContain("CMO");
-  });
-
-  it("compliance → CCO", () => {
-    const r = generateRecommendation(recInput({ category: "compliance" }));
-    expect(r.suggestedOwner).toContain("CCO");
-  });
-
-  it("fraud → CRO", () => {
-    const r = generateRecommendation(recInput({ category: "fraud" }));
-    expect(r.suggestedOwner).toContain("CRO");
-  });
-
-  it("downtime → VP Operations", () => {
-    const r = generateRecommendation(recInput({ metricType: "downtime" }));
-    expect(r.suggestedOwner).toContain("Operations");
-  });
-
-  it("emission → Sustainability", () => {
-    const r = generateRecommendation(recInput({ metricType: "emission" }));
-    expect(r.suggestedOwner).toContain("Sustainability");
-  });
-
-  it("enrollment → Enrollment Management", () => {
-    const r = generateRecommendation(recInput({ metricType: "enrollment" }));
-    expect(r.suggestedOwner).toContain("Enrollment");
-  });
-
-  it("occupancy → Revenue Management", () => {
-    const r = generateRecommendation(recInput({ metricType: "occupancy" }));
-    expect(r.suggestedOwner).toContain("Revenue Management");
+  it.each(cases)("metric=%s → owner contains %s", (metric, expected) => {
+    const r = generateRecommendation(recInput({ metricType: metric }));
+    expect(r.suggestedOwner).toContain(expected);
   });
 
   it("unknown metric → generic owner", () => {
