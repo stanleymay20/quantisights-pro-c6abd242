@@ -27,6 +27,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.9.5
+
       - name: Install dependencies
         run: npm ci
 
@@ -38,6 +43,9 @@ jobs:
 
       - name: Strict trusted-kernel typecheck
         run: npm run typecheck:trusted
+
+      - name: Typecheck auth rate limiter
+        run: deno check supabase/functions/auth-rate-limiter/index.ts
 
       - name: Test
         run: npm test -- --run
