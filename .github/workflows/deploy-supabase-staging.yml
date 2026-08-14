@@ -22,7 +22,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: staging
     permissions:
       contents: read
@@ -47,6 +47,30 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test -- --run
+
+      - name: Evidence framework tests
+        run: npm run evidence:test
+
+      - name: Verify security configuration
+        run: npm run verify:security-config
+
+      - name: Build
+        run: npm run build
+
       - name: Install Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
@@ -69,4 +93,3 @@ jobs:
 
       - name: Verify staging Edge Functions
         run: supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
-
