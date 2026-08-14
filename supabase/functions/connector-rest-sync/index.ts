@@ -36,6 +36,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createLogger } from "../_shared/logger.ts";
 import { parseJsonBody } from "../_shared/ingest-utils.ts";
 import { withRetry } from "../_shared/retry.ts";
+import { safeOutboundFetch } from "../_shared/outbound-http.ts";
 import {
   createRun,
   failRun,
@@ -409,7 +410,7 @@ async function extractRest(
 
     const json = await withRetry(
       async () => {
-        const resp = await fetch(url.toString(), { method, headers });
+        const resp = await safeOutboundFetch(url, { method, headers });
         if (resp.status >= 500) throw new Error(`Upstream ${resp.status}`);
         if (!resp.ok) {
           const text = await resp.text();
