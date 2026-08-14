@@ -39,7 +39,7 @@ ALTER TABLE public.data_connectors
 -- Requires pg_cron extension (available in Supabase Pro)
 -- Runs the morning-brief edge function at 07:00 UTC every day
 
-DO $$
+DO $migration$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_extension WHERE extname = 'pg_cron'
@@ -47,7 +47,7 @@ BEGIN
     PERFORM cron.schedule(
       'daily-morning-brief',
       '0 7 * * *',   -- 07:00 UTC daily
-      $$
+      $cron$
         SELECT net.http_post(
           url := current_setting('app.supabase_url') || '/functions/v1/morning-brief',
           headers := jsonb_build_object(
@@ -56,22 +56,22 @@ BEGIN
           ),
           body := '{}'::jsonb
         ) AS request_id;
-      $$
+      $cron$
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
   -- pg_cron may not be available in all environments; silently skip
   NULL;
-END $$;
+END $migration$;
 
 -- ─── pg_cron: schedule connector sync every hour ───────────────────────────
-DO $$
+DO $migration$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
     PERFORM cron.schedule(
       'hourly-connector-sync',
       '0 * * * *',   -- top of every hour
-      $$
+      $cron$
         SELECT net.http_post(
           url := current_setting('app.supabase_url') || '/functions/v1/connector-scheduler',
           headers := jsonb_build_object(
@@ -80,9 +80,9 @@ BEGIN
           ),
           body := '{}'::jsonb
         ) AS request_id;
-      $$
+      $cron$
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
   NULL;
-END $$;
+END $migration$;
