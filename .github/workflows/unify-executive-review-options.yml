@@ -1,0 +1,162 @@
+name: Unify Executive Review Options
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/unify-executive-review-options.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Consolidate primary executive review on shared option model
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/components/decisions/ExecutiveReviewFlow.tsx")
+          text = path.read_text()
+
+          text = text.replace('import { cn } from "@/lib/utils";\n', '', 1)
+          anchor = 'import type { ExplanationMetadata } from "@/components/dashboard/ExplainDecisionPanel";\n'
+          addition = '''import DecisionOptionComparison from "@/components/decisions/DecisionOptionComparison";
+          import {
+            buildDecisionOptions,
+            classifyExecutiveDecisionImpact,
+            traceabilityFromExecutiveDecision,
+          } from "@/lib/decision-options";
+          '''.replace('          ', '')
+          if anchor not in text:
+              raise SystemExit("Import anchor not found")
+          text = text.replace(anchor, anchor + addition, 1)
+
+          alt_start = text.find('function AlternativeOption({')
+          alt_end = text.find('/**\n * UX-2 linear executive review surface', alt_start)
+          if alt_start < 0 or alt_end < 0:
+              raise SystemExit("Legacy alternative helper markers not found")
+          text = text[:alt_start] + text[alt_end:]
+
+          state_anchor = '''  const confidence =
+            decision.capped_confidence ?? decision.confidence_at_decision ?? decision.raw_confidence;
+          '''.replace('          ', '')
+          state_addition = '''  const traceability = useMemo(
+            () => traceabilityFromExecutiveDecision({
+              id: decision.id,
+              explanationMetadata: decision.explanation_metadata,
+            }),
+            [decision],
+          );
+          const impactClassification = useMemo(
+            () => classifyExecutiveDecisionImpact({
+              predictedNetImpact: decision.predicted_net_impact,
+              decisionSimulationId: decision.decision_simulation_id,
+              explanationMetadata: decision.explanation_metadata,
+            }),
+            [decision],
+          );
+          const options = useMemo(
+            () => buildDecisionOptions({
+              recommendedAction: decision.recommended_action || "Review the pending recommendation",
+              predictedNetImpact: impactClassification.value,
+              predictedImpactStatus: impactClassification.status,
+              predictedImpactLabel: impactClassification.label,
+              confidence,
+              assumptions: metadata?.assumptions ?? [],
+              riskIfWrong: risks[0] ?? null,
+              traceability,
+            }),
+            [confidence, decision.recommended_action, impactClassification, metadata?.assumptions, risks, traceability],
+          );
+          '''.replace('          ', '')
+          if state_anchor not in text:
+              raise SystemExit("Confidence anchor not found")
+          text = text.replace(state_anchor, state_anchor + state_addition, 1)
+
+          old_summary = '''          <p className="flex items-center gap-2 font-semibold">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            {formatEuro(decision.predicted_net_impact)}
+          </p>
+          '''.replace('          ', '')
+          new_summary = '''          <div>
+            <p className="flex items-center gap-2 font-semibold">
+              <TrendingUp className="h-4 w-4 text-primary" />
+              {formatEuro(impactClassification.value)}
+              <Badge variant="outline" className="text-[10px] capitalize">{impactClassification.status}</Badge>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{impactClassification.label}</p>
+          </div>
+          '''.replace('          ', '')
+          if old_summary not in text:
+              raise SystemExit("Executive summary impact block not found")
+          text = text.replace(old_summary, new_summary, 1)
+
+          step4 = text.find('      <ReviewSection step={4} title="Alternative Actions">')
+          step5 = text.find('      <ReviewSection step={5} title="Business Impact">', step4)
+          if step4 < 0 or step5 < 0:
+              raise SystemExit("Alternative action section markers not found")
+          new_step4 = '''      <ReviewSection step={4} title="Alternative Actions">
+            <DecisionOptionComparison options={options} />
+          </ReviewSection>
+
+          '''.replace('          ', '')
+          text = text[:step4] + new_step4 + text[step5:]
+
+          step5 = text.find('      <ReviewSection step={5} title="Business Impact">')
+          step6 = text.find('      <ReviewSection step={6} title="Risks and Constraints">', step5)
+          if step5 < 0 or step6 < 0:
+              raise SystemExit("Business impact section markers not found")
+          new_step5 = '''      <ReviewSection step={5} title="Business Impact">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">Financial impact</p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <p className="text-base font-semibold">{formatEuro(impactClassification.value)}</p>
+                  <Badge variant="outline" className="text-[10px] capitalize">{impactClassification.status}</Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{impactClassification.label}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">Probability of positive ROI</p>
+                <p className="mt-1 text-base font-semibold">
+                  {formatPercent(decision.predicted_roi_probability)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">Impact basis</p>
+                <p className="mt-1">
+                  {metadata?.expected_impact?.range
+                    ? `${metadata.expected_impact.range}${metadata.expected_impact.basis ? ` — ${metadata.expected_impact.basis}` : ""}`
+                    : impactClassification.label}
+                </p>
+              </div>
+            </div>
+          </ReviewSection>
+
+          '''.replace('          ', '')
+          text = text[:step5] + new_step5 + text[step6:]
+
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: git rm .github/workflows/unify-executive-review-options.yml
+
+      - name: Commit directly to main
+        run: |
+          git config user.name "quantivis-integrity-bot"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git add src/components/decisions/ExecutiveReviewFlow.tsx
+          git commit -m "Unify primary executive review option model"
+          git push origin HEAD:main
