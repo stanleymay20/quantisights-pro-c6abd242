@@ -279,7 +279,7 @@ function normalizeInsight(i: any): DecisionSource {
     raw_confidence: toNumber(i.raw_confidence ?? i.confidence_score),
     capped_confidence: toNumber(i.capped_confidence),
     confidence_cap_reason: i.confidence_cap_reason ?? null,
-    expected_impact: estimateInsightImpact(i),
+    expected_impact: null,
     rationale: i.message ?? null,
     dataset_id: i.dataset_id ?? null,
     sample_size: toNumber(i.sample_size),
@@ -354,7 +354,7 @@ function buildDecisionRow(source: DecisionSource, organizationId: string, datase
       expected_impact: {
         range: source.expected_impact,
         parsed_value: expectedImpact,
-        basis: source.kind === "insight" ? "Severity and metric-driven estimate from raw insight" : "Advisory expected impact / rule output",
+        basis: source.kind === "insight" ? "No evidence-backed monetary impact model was available for this insight" : "Advisory expected impact / rule output",
       },
       confidence_explanation: {
         score: source.capped_confidence ?? source.confidence,
@@ -438,21 +438,6 @@ function recommendationFromInsight(i: any) {
   if (category.includes("cash") || category.includes("receivable") || category.includes("payable")) return "Review working-capital timing and align purchasing, collections, and supplier payments.";
 
   return "Assign an owner to investigate root cause, confirm expected impact, and approve or reject the recommended response.";
-}
-
-function estimateInsightImpact(i: any) {
-  const category = String(i.category ?? "").toLowerCase();
-  const severity = String(i.severity ?? "").toLowerCase();
-  const variance = Math.abs(Number(i.variance_score ?? 0));
-  const severityBase = severity === "critical" ? 50000 : 25000;
-  const varianceLift = Number.isFinite(variance) ? Math.min(75000, variance * 1000) : 0;
-
-  if (category.includes("revenue")) return severityBase + 35000 + varianceLift;
-  if (category.includes("margin")) return severityBase + 25000 + varianceLift;
-  if (category.includes("inventory")) return severityBase + 15000 + varianceLift;
-  if (category.includes("marketing")) return severityBase + 12000 + varianceLift;
-  if (category.includes("cost")) return severityBase + 18000 + varianceLift;
-  return severityBase + varianceLift;
 }
 
 function buildWhyItMatters(source: DecisionSource) {
