@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * connector-scheduler — cron-driven dispatcher for connector_sync_schedules.
  *
@@ -35,18 +34,30 @@ const NEXT_INTERVAL_MS: Record<string, number> = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   const log = createLogger("connector-scheduler", req);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !serviceKey || !anonKey) {
+    log.error("missing required Supabase environment configuration");
+    return new Response(JSON.stringify({ error: "Scheduler unavailable" }), {
+      status: 503,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
-  // Verify cron secret
-  const svc = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { auth: { persistSession: false } },
-  ) as any;
-  const { data: expected } = await svc.rpc("get_ingest_cron_secret");
+  // Verify cron secret before any service-role workload is performed.
+  const svc = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const { data: expected, error: secretError } = await svc.rpc("get_ingest_cron_secret");
   const provided = req.headers.get("x-cron-secret");
-  if (!expected || expected !== provided) {
+  if (secretError || typeof expected !== "string" || !provided || expected !== provided) {
     log.warn("invalid cron secret");
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -80,47 +91,55 @@ Deno.serve(async (req: Request) => {
     const skipped: string[] = [];
 
     for (const sched of (schedules ?? []) as ScheduleRow[]) {
-      // Compute next run + claim
       const intervalMs = NEXT_INTERVAL_MS[sched.schedule_kind] ?? 60 * 60 * 1000;
       const nextRun = new Date(now.getTime() + intervalMs).toISOString();
 
-      const { error: claimErr } = await svc
+      // Compare-and-swap claim: a zero-row update means another worker changed
+      // next_run_at first. Only the worker that receives the claimed row may
+      // dispatch the connector.
+      const { data: claimed, error: claimErr } = await svc
         .from("connector_sync_schedules")
         .update({ last_dispatch_at: now.toISOString(), next_run_at: nextRun })
         .eq("id", sched.id)
-        .eq("next_run_at", sched.next_run_at);
+        .eq("organization_id", sched.organization_id)
+        .eq("next_run_at", sched.next_run_at)
+        .select("id")
+        .maybeSingle();
 
-      if (claimErr) {
+      if (claimErr || !claimed?.id) {
         skipped.push(sched.connector_id);
+        if (claimErr) {
+          log.warn("schedule claim failed", { schedule_id: sched.id, error: claimErr.message });
+        }
         continue;
       }
 
-      // Look up connector type to choose handler
-      const { data: cRow } = await svc
+      // Look up the connector inside the same organization before dispatch.
+      const { data: cRow, error: connectorError } = await svc
         .from("data_connectors")
         .select("connector_type,status")
         .eq("id", sched.connector_id)
+        .eq("organization_id", sched.organization_id)
         .maybeSingle();
-      if (!cRow || (cRow as { status: string }).status === "paused") {
+      if (connectorError || !cRow || cRow.status === "paused") {
         skipped.push(sched.connector_id);
         continue;
       }
 
-      const fnName = pickFunction((cRow as { connector_type: string }).connector_type);
+      const fnName = pickFunction(cRow.connector_type);
       if (!fnName) {
         skipped.push(sched.connector_id);
         continue;
       }
 
-      // Fire-and-forget dispatch (best-effort with cron-secret header)
-      const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/${fnName}`;
+      const url = `${supabaseUrl}/functions/v1/${fnName}`;
       try {
-        await fetch(url, {
+        const response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "x-cron-secret": provided,
-            apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+            apikey: anonKey,
           },
           body: JSON.stringify({
             connector_id: sched.connector_id,
@@ -128,11 +147,19 @@ Deno.serve(async (req: Request) => {
             request_id: `cron-${sched.id}-${now.getTime()}`,
           }),
         });
+        if (!response.ok) {
+          log.warn("dispatch returned non-success status", {
+            connector: sched.connector_id,
+            status: response.status,
+          });
+          skipped.push(sched.connector_id);
+          continue;
+        }
         dispatched.push(sched.connector_id);
-      } catch (e) {
+      } catch (e: unknown) {
         log.warn("dispatch failed", {
           connector: sched.connector_id,
-          error: String(e),
+          error: e instanceof Error ? e.message : String(e),
         });
         skipped.push(sched.connector_id);
       }
@@ -143,10 +170,10 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({ dispatched, skipped, scanned: schedules?.length ?? 0 }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  } catch (e) {
-    log.error("fatal", { error: String(e) });
+  } catch (e: unknown) {
+    log.error("fatal", { error: e instanceof Error ? e.message : String(e) });
     await guard.fail(e);
-    return new Response(JSON.stringify({ error: String(e) }), {
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
