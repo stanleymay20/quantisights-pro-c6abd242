@@ -204,7 +204,9 @@ describe("SAP OData governance", () => {
       entity_sets: ["A_SalesOrder"],
       key_fields: ["SalesOrder"],
       fields: [{ name: "SalesOrder", type: "Edm.String", nullable: false, max_length: 10 }],
-      navigation_properties: [{ name: "to_Item", target: "A_SalesOrderItemType" }],
+      navigation_properties: [
+        { name: "to_Item", target: "Collection(API_SALES_ORDER_SRV.A_SalesOrderItemType)" },
+      ],
     });
   });
 });
