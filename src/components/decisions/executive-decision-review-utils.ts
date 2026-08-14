@@ -15,6 +15,7 @@ export interface ExecutiveDecisionRecord {
   confidence_cap_reason?: string | null;
   predicted_net_impact?: number | null;
   predicted_roi_probability?: number | null;
+  decision_simulation_id?: string | null;
   outcome_delta?: number | null;
   explanation_metadata?: unknown;
   created_at?: string | null;
