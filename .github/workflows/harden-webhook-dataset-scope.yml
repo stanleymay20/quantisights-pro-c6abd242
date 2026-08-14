@@ -1,0 +1,127 @@
+name: Harden Webhook Dataset Scope
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/harden-webhook-dataset-scope.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Enforce webhook dataset tenant scope
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("supabase/functions/webhook-ingest/index.ts")
+          text = path.read_text()
+
+          old_client = '''  const startTime = Date.now();
+          const supabase = createClient(
+            Deno.env.get("SUPABASE_URL")!,
+            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+            { auth: { persistSession: false } },
+          );
+
+          let jobId: string | null = null;
+          '''.replace('          ', '')
+          new_client = '''  const startTime = Date.now();
+          const supabaseUrl = Deno.env.get("SUPABASE_URL");
+          const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+          let jobId: string | null = null;
+          '''.replace('          ', '')
+          if old_client not in text:
+              raise SystemExit("Webhook service-client anchor not found")
+          text = text.replace(old_client, new_client, 1)
+
+          respond_anchor = '''  const respond = (body: unknown, status = 200) =>
+            new Response(JSON.stringify(body), {
+              status,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+
+          '''.replace('          ', '')
+          respond_replacement = respond_anchor + '''  if (!supabaseUrl || !serviceKey) {
+            structuredLog("configuration_error", { error: "missing required Supabase environment configuration" });
+            return respond({ error: "Webhook ingestion service unavailable", stage: "configuration" }, 503);
+          }
+
+          const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+
+          '''.replace('          ', '')
+          if respond_anchor not in text:
+              raise SystemExit("Webhook respond anchor not found")
+          text = text.replace(respond_anchor, respond_replacement, 1)
+
+          auth_anchor = '''    sourceId = source.id;
+            orgId = source.organization_id;
+
+            structuredLog("authenticated", {
+          '''.replace('            ', '')
+          auth_replacement = '''    sourceId = source.id;
+            orgId = source.organization_id;
+
+            const sourceConfig = isRecord(source.config) ? source.config as Record<string, unknown> : {};
+            const configuredDatasetId = typeof sourceConfig.dataset_id === "string" && sourceConfig.dataset_id.trim()
+              ? sourceConfig.dataset_id.trim()
+              : null;
+
+            if (configuredDatasetId) {
+              const { data: scopedDataset, error: datasetErr } = await supabase
+                .from("datasets")
+                .select("id")
+                .eq("id", configuredDatasetId)
+                .eq("organization_id", orgId)
+                .maybeSingle();
+
+              if (datasetErr || !scopedDataset) {
+                return fail(400, "Configured dataset not found for source organization", "dataset_scope");
+              }
+            }
+
+            structuredLog("authenticated", {
+          '''.replace('            ', '')
+          if auth_anchor not in text:
+              raise SystemExit("Webhook authenticated source anchor not found")
+          text = text.replace(auth_anchor, auth_replacement, 1)
+
+          old_config = '''    const sourceConfig = isRecord(source.config) ? source.config as Record<string, unknown> : {};
+            const fieldMap = (sourceConfig.field_mapping ?? {}) as Record<string, string>;
+            const defaultMetricType = (sourceConfig.default_metric_type as string) || "revenue";
+            const datasetId = (sourceConfig.dataset_id as string) || null;
+          '''.replace('            ', '')
+          new_config = '''    const fieldMap = (sourceConfig.field_mapping ?? {}) as Record<string, string>;
+            const defaultMetricType = (sourceConfig.default_metric_type as string) || "revenue";
+            const datasetId = configuredDatasetId;
+          '''.replace('            ', '')
+          if old_config not in text:
+              raise SystemExit("Webhook source config anchor not found")
+          text = text.replace(old_config, new_config, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: git rm .github/workflows/harden-webhook-dataset-scope.yml
+
+      - name: Commit directly to main
+        run: |
+          git config user.name "quantivis-integrity-bot"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git add supabase/functions/webhook-ingest/index.ts
+          git commit -m "Scope webhook datasets to source organization"
+          git push origin HEAD:main
