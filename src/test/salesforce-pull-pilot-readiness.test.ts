@@ -20,6 +20,16 @@ describe("Salesforce pull pilot-readiness invariants", () => {
     expect(source).toContain("safeSalesforceHttpError");
   });
 
+  it("authorizes tenant membership before connector execution", () => {
+    const authorization = source.indexOf("authorizeConnectorInvocation({");
+    const circuitGate = source.indexOf("shouldAllow(svc, orgId, connector_id)");
+    const tokenLookup = source.indexOf("getSalesforceTokens(svc");
+    expect(authorization).toBeGreaterThan(-1);
+    expect(circuitGate).toBeGreaterThan(authorization);
+    expect(tokenLookup).toBeGreaterThan(authorization);
+    expect(source).toContain("organizationId: orgId");
+  });
+
   it("scopes checkpoint reads to the organization and fails persistence errors closed", () => {
     expect(source).toMatch(
       /connector_sync_checkpoints[\s\S]*?\.eq\("organization_id",\s*ctx\.orgId\)[\s\S]*?\.eq\("connector_id",\s*ctx\.connectorId\)/,
