@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
           // Determine whether the business decision succeeded. Manual feedback
           // is explicit. Automated evaluation requires a known expected direction.
           const isExplicitManual = body.decision_id === d.id && Boolean(body.actual_outcome);
-          let businessSuccess: boolean | null = isExplicitManual
+          const businessSuccess: boolean | null = isExplicitManual
             ? body.actual_outcome === "positive"
             : successFromMeasurement(
                 directionByDecision.get(d.id) ?? null,
