@@ -1,12 +1,12 @@
 // AICIS Outcome Evaluator
 // Scans completed decisions linked to AICIS predictions, compares predicted
-// risk vs actual binary outcome, and writes aicis_outcomes rows (Brier score).
+// risk vs an explicit binary outcome, and writes aicis_outcomes rows (Brier score).
 // Idempotent on (organization_id, external_id).
 //
 // Triggers:
 //   - Cron mode: { cron: true }  + x-cron-secret header  → all orgs
 //   - Manual:    { organization_id }  + Bearer auth (owner/admin)
-//   - Single:    { decision_id, actual_outcome: 'positive'|'negative', actual_value? }
+//   - Single:    { decision_id, actual_outcome: 'positive'|'negative', actual_impact? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -22,7 +22,29 @@ interface BodyShape {
   organization_id?: string;
   decision_id?: string;
   actual_outcome?: "positive" | "negative";
-  actual_value?: number;
+  /** Optional business impact metadata. Never used as a Brier target. */
+  actual_impact?: number;
+}
+
+function normalizeProbability(value: unknown): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  if (numeric <= 1) return numeric;
+  if (numeric <= 100) return numeric / 100;
+  return null;
+}
+
+function binaryOutcomeFromStatus(status: unknown): 0 | 1 | null {
+  switch (String(status ?? "").toLowerCase()) {
+    case "success":
+    case "partial_success":
+      return 1;
+    case "negative_outcome":
+    case "no_effect":
+      return 0;
+    default:
+      return null;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -81,7 +103,7 @@ Deno.serve(async (req) => {
   }
 
   let total_evaluated = 0;
-  const total_skipped = 0;
+  let total_skipped = 0;
   let total_errors = 0;
   const per_org: Array<{ org_id: string; evaluated: number; skipped: number; errors: number }> = [];
 
@@ -100,7 +122,7 @@ Deno.serve(async (req) => {
       orgsProcessed++;
       const stat = { org_id: orgId, evaluated: 0, skipped: 0, errors: 0 };
       try {
-        // Find completed AICIS-linked decisions
+        // Find completed AICIS-linked decisions.
         let q = service
           .from("decision_ledger")
           .select("id, organization_id, linked_aicis_prediction_id, linked_aicis_recommendation_id, decision_status, execution_status, outcome_delta, actual_value, baseline_value, predicted_net_impact, decided_at, execution_completed_at, outcome_measured_at, notes")
@@ -110,10 +132,38 @@ Deno.serve(async (req) => {
         const { data: decisions, error: dErr } = await q.limit(500);
         if (dErr) throw new Error(`decisions query: ${dErr.message}`);
 
-        for (const d of decisions ?? []) {
-          if (!d.linked_aicis_prediction_id && !d.linked_aicis_recommendation_id) { stat.skipped++; continue; }
+        // For unattended/cron evaluation, only use direction-aware outcome
+        // classifications produced by evaluate-outcomes. Never infer success
+        // from the sign of an arbitrary business metric.
+        const evaluatedStatusByDecision = new Map<string, 0 | 1>();
+        const decisionIds = (decisions ?? []).map(d => d.id as string);
+        if (!body.actual_outcome && decisionIds.length > 0) {
+          const { data: measuredRows, error: outcomeErr } = await service
+            .from("decision_outcomes")
+            .select("decision_id, outcome_status, evaluation_date")
+            .eq("organization_id", orgId)
+            .in("decision_id", decisionIds)
+            .not("evaluation_date", "is", null)
+            .order("evaluation_date", { ascending: false })
+            .limit(2000);
+          if (outcomeErr) throw new Error(`decision outcomes query: ${outcomeErr.message}`);
 
-          // Resolve prediction (if any)
+          for (const measured of measuredRows ?? []) {
+            const decisionId = measured.decision_id as string;
+            if (evaluatedStatusByDecision.has(decisionId)) continue;
+            const binary = binaryOutcomeFromStatus(measured.outcome_status);
+            if (binary != null) evaluatedStatusByDecision.set(decisionId, binary);
+          }
+        }
+
+        for (const d of decisions ?? []) {
+          if (!d.linked_aicis_prediction_id && !d.linked_aicis_recommendation_id) {
+            stat.skipped++;
+            total_skipped++;
+            continue;
+          }
+
+          // Resolve prediction (if any).
           let pred: { id: string; external_id: string; country_iso3: string | null; domain: string | null; risk_probability: number | null } | null = null;
           if (d.linked_aicis_prediction_id) {
             const { data: p } = await service
@@ -130,17 +180,25 @@ Deno.serve(async (req) => {
               .maybeSingle();
             if (r) pred = { id: r.id, external_id: r.external_id, country_iso3: r.country_iso3, domain: r.domain, risk_probability: null };
           }
-          if (!pred) { stat.skipped++; continue; }
+          if (!pred) {
+            stat.skipped++;
+            total_skipped++;
+            continue;
+          }
 
-          // Determine actual outcome (binary 0/1) and value
-          let actual: number | null = null;
-          if (typeof body.actual_value === "number") actual = body.actual_value;
-          else if (body.actual_outcome) actual = body.actual_outcome === "positive" ? 1 : 0;
-          else if (typeof d.actual_value === "number") actual = d.actual_value > 0 ? 1 : 0;
-          else if (typeof d.outcome_delta === "number") actual = d.outcome_delta > 0 ? 1 : 0;
-          else { stat.skipped++; continue; } // no signal yet
+          // Brier scoring requires an actual binary outcome in {0,1}.
+          // Explicit user feedback wins; otherwise use the direction-aware
+          // evaluated status. Numeric impact values are never binary targets.
+          const actual: 0 | 1 | null = body.actual_outcome
+            ? (body.actual_outcome === "positive" ? 1 : 0)
+            : (evaluatedStatusByDecision.get(d.id as string) ?? null);
+          if (actual == null) {
+            stat.skipped++;
+            total_skipped++;
+            continue;
+          }
 
-          const predicted = pred.risk_probability != null ? Number(pred.risk_probability) : null;
+          const predicted = normalizeProbability(pred.risk_probability);
           const brier = predicted != null ? Math.pow(predicted - actual, 2) : null;
           const error_margin = predicted != null ? Math.abs(predicted - actual) : null;
           const externalId = `decision:${d.id}`;
@@ -161,11 +219,18 @@ Deno.serve(async (req) => {
           const { error: upErr } = await service
             .from("aicis_outcomes")
             .upsert(row, { onConflict: "organization_id,external_id" });
-          if (upErr) { stat.errors++; total_errors++; log("error", "upsert_failed", { err: upErr.message, decision_id: d.id }); continue; }
-          stat.evaluated++; total_evaluated++;
+          if (upErr) {
+            stat.errors++;
+            total_errors++;
+            log("error", "upsert_failed", { err: upErr.message, decision_id: d.id });
+            continue;
+          }
+          stat.evaluated++;
+          total_evaluated++;
         }
 
-        // Audit
+        // Audit. actual_impact is retained as contextual metadata only and is
+        // deliberately excluded from probability-calibration mathematics.
         await service.from("audit_log").insert({
           organization_id: orgId,
           actor_id: userId,
@@ -173,14 +238,21 @@ Deno.serve(async (req) => {
           action_type: "aicis_outcomes_evaluated",
           resource_type: "aicis_outcomes",
           resource_id: correlationId,
-          payload: { evaluated: stat.evaluated, skipped: stat.skipped, errors: stat.errors, cron: isCronMode },
+          payload: {
+            evaluated: stat.evaluated,
+            skipped: stat.skipped,
+            errors: stat.errors,
+            cron: isCronMode,
+            actual_impact: Number.isFinite(body.actual_impact) ? body.actual_impact : null,
+          },
         });
 
         per_org.push(stat);
       } catch (orgErr) {
         const msg = orgErr instanceof Error ? orgErr.message : String(orgErr);
         log("error", "org_failed", { org_id: orgId, err: msg });
-        stat.errors++; total_errors++;
+        stat.errors++;
+        total_errors++;
         per_org.push(stat);
       }
     }
@@ -191,6 +263,6 @@ Deno.serve(async (req) => {
     return json({ total_evaluated, total_skipped, total_errors, per_org, correlation_id: correlationId, duration_ms, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return json({ error: msg, total_evaluated, total_errors, correlation_id: correlationId }, 500);
+    return json({ error: msg, total_evaluated, total_skipped, total_errors, correlation_id: correlationId }, 500);
   }
 });
