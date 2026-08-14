@@ -1,11 +1,12 @@
 /**
  * similar-decisions — Hybrid retrieval: deterministic + neural fallback.
- * 
- * v3: When deterministic retrieval yields only weak matches, triggers neural
- * embedding via Lovable AI to extract semantic concepts and re-search.
- * Compares both result sets and returns the stronger one.
+ *
+ * v4: Historical success is evaluated against the expected metric direction.
+ * A negative delta is therefore correctly treated as success for decrease-is-good
+ * metrics such as churn, cost, risk, mortality, downtime, and emissions.
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { generateEmbedding, searchSimilar } from "../_shared/embeddings.ts";
@@ -17,6 +18,7 @@ import { generateNeuralEmbedding } from "../_shared/neural-fallback.ts";
 
 type MatchTier = "strong" | "moderate" | "weak";
 type RetrievalSource = "deterministic" | "neural_fallback";
+type ExpectedDirection = "increase" | "decrease" | "stable";
 
 const DOMAIN_CATEGORIES: Record<string, string[]> = {
   sales: ["sales", "revenue", "pipeline", "deal", "acv", "quota", "enterprise", "account", "ae", "booking"],
@@ -72,6 +74,15 @@ function buildMatchRationale(
     return `${prefix}Moderate match (${simPct}%) — ${reason}`;
   }
   return `${prefix}Weak match (${simPct}%) — limited overlap${queryCategory !== matchCategory ? `, different domain (${matchCategory} vs ${queryCategory})` : ""}`;
+}
+
+function successForDirection(deltaValue: unknown, direction: ExpectedDirection | undefined): boolean | null {
+  if (!direction) return null;
+  const delta = Number(deltaValue);
+  if (!Number.isFinite(delta)) return null;
+  if (direction === "increase") return delta > 0;
+  if (direction === "decrease") return delta < 0;
+  return Math.abs(delta) <= 1;
 }
 
 interface EnrichedResult {
@@ -133,6 +144,7 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const svc = createClient(supabaseUrl, serviceKey);
     const queryCategory = detectCategory(query_text);
 
     // ═══════════════════════════════════════════════════
@@ -165,14 +177,13 @@ serve(async (req) => {
             const neuralResults = await searchSimilar(supabaseUrl, serviceKey, organization_id, neuralEmb, {
               entityTypes: ["decision", "outcome", "insight", "advisory"],
               limit: 15,
-              minSimilarity: 0.25, // Lower threshold for neural — concepts are more targeted
+              minSimilarity: 0.25,
             });
             neuralEnriched = enrichResults(neuralResults, query_text, queryCategory, "neural_fallback");
             neuralFallbackUsed = true;
           }
         } catch (e) {
           console.error("Neural fallback error:", e);
-          // Continue with deterministic results only
         }
       }
     }
@@ -185,7 +196,6 @@ serve(async (req) => {
     let selectedSource: "deterministic" | "neural_fallback" | "merged";
 
     if (neuralStrong.length > deterministicStrong.length) {
-      // Neural found better matches — use neural but deduplicate
       const seenIds = new Set<string>();
       const merged = [...neuralStrong, ...deterministicStrong].filter(r => {
         if (seenIds.has(r.entity_id)) return false;
@@ -198,7 +208,6 @@ serve(async (req) => {
       finalEnriched = deterministicStrong;
       selectedSource = "deterministic";
     } else {
-      // Both weak — show weak results with proper labeling
       const all = [...deterministicEnriched, ...neuralEnriched];
       const seenIds = new Set<string>();
       finalEnriched = all.filter(r => {
@@ -213,38 +222,79 @@ serve(async (req) => {
     const hasStrongMatch = finalResults.some(r => r.match_tier === "strong");
     const hasModerateMatch = finalResults.some(r => r.match_tier === "moderate");
 
-    // ═══════════════════════════════════════════════════
-    // HISTORICAL PERFORMANCE (from strong/moderate only)
-    // ═══════════════════════════════════════════════════
-    const outcomes = finalResults.filter(r => r.entity_type === "outcome" && r.match_tier !== "weak");
-    let historicalSuccessRate: number | null = null;
-    let avgAccuracy: number | null = null;
-    let confidenceAdjustment = 0;
+    // Resolve outcome direction from the source-of-truth outcome contract rather
+    // than inferring business success from the sign of outcome_delta.
+    const outcomeIds = finalResults
+      .filter(r => r.entity_type === "outcome")
+      .map(r => r.entity_id);
+    const directionByDecision = new Map<string, ExpectedDirection>();
 
-    if (outcomes.length >= 2) {
-      const successCount = outcomes.filter(r => {
-        const delta = (r.metadata as any)?.outcome_delta;
-        return delta != null && delta > 0;
-      }).length;
-      historicalSuccessRate = Math.round((successCount / outcomes.length) * 100);
+    if (outcomeIds.length > 0) {
+      const { data: outcomeDefs, error: directionError } = await svc
+        .from("decision_outcomes")
+        .select("decision_id, expected_direction")
+        .eq("organization_id", organization_id)
+        .in("decision_id", outcomeIds)
+        .limit(100);
 
-      const accuracies = outcomes
-        .map(r => (r.metadata as any)?.accuracy_score)
-        .filter((a): a is number => a != null);
-      if (accuracies.length > 0) {
-        avgAccuracy = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length);
-        if (hasStrongMatch) {
-          if (avgAccuracy < 50) confidenceAdjustment = -10;
-          else if (avgAccuracy < 70) confidenceAdjustment = -5;
-          else if (avgAccuracy > 85) confidenceAdjustment = 5;
-        } else {
-          if (avgAccuracy < 50) confidenceAdjustment = -5;
-          else if (avgAccuracy < 70) confidenceAdjustment = -2;
+      if (directionError) {
+        console.warn("Unable to resolve precedent outcome direction:", directionError.message);
+      } else {
+        for (const def of outcomeDefs ?? []) {
+          if (
+            !directionByDecision.has(def.decision_id) &&
+            ["increase", "decrease", "stable"].includes(def.expected_direction)
+          ) {
+            directionByDecision.set(def.decision_id, def.expected_direction as ExpectedDirection);
+          }
         }
       }
     }
 
-    // Retrieval quality classification
+    for (const result of finalResults) {
+      if (result.entity_type !== "outcome") continue;
+      const expectedDirection = directionByDecision.get(result.entity_id);
+      const outcomeSuccess = successForDirection(result.metadata?.outcome_delta, expectedDirection);
+      result.metadata = {
+        ...result.metadata,
+        expected_direction: expectedDirection ?? null,
+        outcome_success: outcomeSuccess,
+      };
+    }
+
+    // ═══════════════════════════════════════════════════
+    // HISTORICAL PERFORMANCE (direction-aware precedents only)
+    // ═══════════════════════════════════════════════════
+    const outcomes = finalResults.filter(r => r.entity_type === "outcome" && r.match_tier !== "weak");
+    const evaluableOutcomes = outcomes.filter(
+      r => typeof r.metadata?.outcome_success === "boolean",
+    );
+    let historicalSuccessRate: number | null = null;
+    let avgAccuracy: number | null = null;
+    let confidenceAdjustment = 0;
+
+    if (evaluableOutcomes.length >= 2) {
+      const successCount = evaluableOutcomes.filter(
+        r => r.metadata.outcome_success === true,
+      ).length;
+      historicalSuccessRate = Math.round((successCount / evaluableOutcomes.length) * 100);
+    }
+
+    const accuracies = outcomes
+      .map(r => Number(r.metadata?.accuracy_score))
+      .filter(a => Number.isFinite(a));
+    if (accuracies.length > 0) {
+      avgAccuracy = Math.round(accuracies.reduce((s, v) => s + v, 0) / accuracies.length);
+      if (hasStrongMatch) {
+        if (avgAccuracy < 50) confidenceAdjustment = -10;
+        else if (avgAccuracy < 70) confidenceAdjustment = -5;
+        else if (avgAccuracy > 85) confidenceAdjustment = 5;
+      } else {
+        if (avgAccuracy < 50) confidenceAdjustment = -5;
+        else if (avgAccuracy < 70) confidenceAdjustment = -2;
+      }
+    }
+
     const retrievalQuality = hasStrongMatch
       ? "high"
       : hasModerateMatch
@@ -253,7 +303,6 @@ serve(async (req) => {
           ? "low"
           : "none";
 
-    // Precedent type for UI
     const precedentType = hasStrongMatch
       ? "strong_precedent"
       : hasModerateMatch
@@ -267,6 +316,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       similar: finalResults,
       historical_success_rate: historicalSuccessRate,
+      historical_success_sample_size: evaluableOutcomes.length,
       avg_accuracy: avgAccuracy,
       confidence_adjustment: confidenceAdjustment,
       retrieval_quality: retrievalQuality,
