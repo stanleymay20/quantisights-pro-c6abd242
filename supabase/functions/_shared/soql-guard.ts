@@ -1,11 +1,10 @@
-// @ts-nocheck
 /**
  * SOQL governance layer for Salesforce connectors.
  *
  * Enforces:
  *  - SELECT-only
  *  - no tooling / admin / setup objects
- *  - bounded LIMIT (injected if missing)
+ *  - bounded outer LIMIT (injected if missing)
  *  - object allowlist
  *  - field allowlist (parsed from SELECT clause)
  *  - timeout cap (callers must respect)
@@ -15,16 +14,27 @@
  */
 
 const FORBIDDEN_OBJECT_PATTERNS = [
-  /^Permission/i, /^Apex/i, /^Auth/i, /^Login/i, /Setup$/i,
-  /^Profile$/i, /^User(Role|License|Permission|Recent)/i,
-  /History$/i, /Share$/i, /Feed$/i, /^Organization$/i,
-  /^Network/i, /^Domain/i, /^SessionPermSet/i,
+  /^Permission/i,
+  /^Apex/i,
+  /^Auth/i,
+  /^Login/i,
+  /Setup$/i,
+  /^Profile$/i,
+  /^User(Role|License|Permission|Recent)/i,
+  /History$/i,
+  /Share$/i,
+  /Feed$/i,
+  /^Organization$/i,
+  /^Network/i,
+  /^Domain/i,
+  /^SessionPermSet/i,
 ];
 const FORBIDDEN_KEYWORDS = /\b(update|insert|delete|merge|upsert|undelete|grant|revoke|alter|drop|create)\b/i;
+const OUTER_LIMIT_PATTERN = /\blimit\s+(\d+)(?=\s*(?:offset\s+\d+\s*)?$)/i;
 
 export interface SoqlGovernance {
   allowed_objects: string[];                 // exact object names (case-insensitive)
-  allowed_fields?: Record<string, string[]>; // object -> field allowlist; if absent, all non-forbidden fields allowed
+  allowed_fields?: Record<string, string[]>; // object -> field allowlist; object key matching is case-insensitive
   max_query_cost?: number;                   // mapped to LIMIT cap, default 5000
   query_timeout_seconds?: number;            // default 60
 }
@@ -36,28 +46,65 @@ export interface ValidatedSoql {
   limit: number;
 }
 
-/** Parse minimal SOQL: SELECT f1, f2 FROM Object [WHERE ...] [ORDER BY ...] [LIMIT n] */
-export function parseSoql(raw: string): { fields: string[]; object: string; limit: number | null } {
-  const stripped = raw.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").trim().replace(/;+\s*$/, "");
-  const m = /^\s*select\s+(.+?)\s+from\s+([A-Za-z0-9_]+)\b([\s\S]*?)$/i.exec(stripped);
-  if (!m) throw new Error("SOQL parse failed: expected `SELECT ... FROM Object`");
-  const fields = m[1].split(",").map(s => s.trim()).filter(Boolean);
-  if (fields.length === 0) throw new Error("SOQL parse failed: no fields selected");
-  // Reject subqueries / aggregate-injected functions outside an allowlist
-  for (const f of fields) {
-    if (/[()]/.test(f) && !/^(count|sum|avg|min|max|count_distinct)\s*\([A-Za-z0-9_]*\)$/i.test(f)) {
-      throw new Error(`SOQL field disallowed: ${f}`);
-    }
-    if (!/^[A-Za-z0-9_().*, ]+$/.test(f)) throw new Error(`SOQL field invalid chars: ${f}`);
+function stripCommentsAndTrailingSemicolons(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .trim()
+    .replace(/;+\s*$/, "");
+}
+
+function outerLimitOf(tail: string): number | null {
+  const match = OUTER_LIMIT_PATTERN.exec(tail);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function fieldAllowlistForObject(
+  allowedFields: Record<string, string[]> | undefined,
+  objectName: string,
+): string[] | null {
+  if (!allowedFields) return null;
+  const normalizedObject = objectName.toLowerCase();
+  for (const [configuredObject, fields] of Object.entries(allowedFields)) {
+    if (configuredObject.toLowerCase() === normalizedObject) return fields;
   }
-  const object = m[2];
-  const tail = m[3] ?? "";
-  const lm = /\blimit\s+(\d+)\b/i.exec(tail);
-  return { fields, object, limit: lm ? Number(lm[1]) : null };
+  return null;
+}
+
+/** Parse minimal SOQL: SELECT f1, f2 FROM Object [WHERE ...] [ORDER BY ...] [LIMIT n] [OFFSET n] */
+export function parseSoql(raw: string): { fields: string[]; object: string; limit: number | null } {
+  const stripped = stripCommentsAndTrailingSemicolons(raw);
+  const match = /^\s*select\s+(.+?)\s+from\s+([A-Za-z0-9_]+)\b([\s\S]*?)$/i.exec(stripped);
+  const fieldsClause = match?.[1];
+  const object = match?.[2];
+  if (!fieldsClause || !object) {
+    throw new Error("SOQL parse failed: expected `SELECT ... FROM Object`");
+  }
+
+  const fields = fieldsClause.split(",").map((field) => field.trim()).filter(Boolean);
+  if (fields.length === 0) throw new Error("SOQL parse failed: no fields selected");
+
+  // Reject subqueries / aggregate-injected functions outside a narrow allowlist.
+  for (const field of fields) {
+    if (
+      /[()]/.test(field) &&
+      !/^(count|sum|avg|min|max|count_distinct)\s*\([A-Za-z0-9_]*\)$/i.test(field)
+    ) {
+      throw new Error(`SOQL field disallowed: ${field}`);
+    }
+    if (!/^[A-Za-z0-9_().*, ]+$/.test(field)) {
+      throw new Error(`SOQL field invalid chars: ${field}`);
+    }
+  }
+
+  const tail = match?.[3] ?? "";
+  return { fields, object, limit: outerLimitOf(tail) };
 }
 
 export function assertSoqlSafe(raw: string, gov: SoqlGovernance): ValidatedSoql {
-  const stripped = raw.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").trim().replace(/;+\s*$/, "");
+  const stripped = stripCommentsAndTrailingSemicolons(raw);
   if (!stripped) throw new Error("query is empty");
   if (stripped.includes(";")) throw new Error("multiple statements not allowed");
   if (!/^\s*select\b/i.test(stripped)) throw new Error("only SELECT is allowed");
@@ -65,41 +112,50 @@ export function assertSoqlSafe(raw: string, gov: SoqlGovernance): ValidatedSoql 
 
   const parsed = parseSoql(stripped);
 
-  // Object allowlist
-  if (FORBIDDEN_OBJECT_PATTERNS.some(re => re.test(parsed.object))) {
+  // Object allowlist.
+  if (FORBIDDEN_OBJECT_PATTERNS.some((pattern) => pattern.test(parsed.object))) {
     throw new Error(`object forbidden (tooling/admin): ${parsed.object}`);
   }
-  const allowed = (gov.allowed_objects ?? []).map(s => s.toLowerCase());
+  const allowed = (gov.allowed_objects ?? []).map((objectName) => objectName.toLowerCase());
   if (!allowed.includes(parsed.object.toLowerCase())) {
     throw new Error(`object not in allowlist: ${parsed.object}`);
   }
 
-  // Field allowlist (when configured for this object)
-  const fieldAllow = gov.allowed_fields?.[parsed.object];
-  if (fieldAllow && fieldAllow.length) {
-    const lowAllow = new Set(fieldAllow.map(f => f.toLowerCase()));
-    for (const f of parsed.fields) {
-      const bare = f.replace(/^.*\(/, "").replace(/\)$/, "").trim();
+  // Field allowlist. Object-name matching must use the same case-insensitive semantics as
+  // allowed_objects; otherwise `FROM account` could bypass an `Account` field allowlist.
+  const fieldAllow = fieldAllowlistForObject(gov.allowed_fields, parsed.object);
+  if (fieldAllow && fieldAllow.length > 0) {
+    const normalizedAllow = new Set(fieldAllow.map((field) => field.toLowerCase()));
+    for (const field of parsed.fields) {
+      const bare = field.replace(/^.*\(/, "").replace(/\)$/, "").trim();
       if (bare === "*") throw new Error("SELECT * not allowed");
-      if (!lowAllow.has(bare.toLowerCase())) throw new Error(`field not in allowlist for ${parsed.object}: ${bare}`);
+      if (!normalizedAllow.has(bare.toLowerCase())) {
+        throw new Error(`field not in allowlist for ${parsed.object}: ${bare}`);
+      }
     }
   }
 
-  // LIMIT enforcement
-  const cap = Math.min(50_000, Math.max(1, gov.max_query_cost ?? 5_000));
-  let limit = parsed.limit ?? cap;
-  if (limit > cap) limit = cap;
-  const query = parsed.limit ? stripped.replace(/\blimit\s+\d+\b/i, `LIMIT ${limit}`) : `${stripped} LIMIT ${limit}`;
+  // LIMIT enforcement. Only a trailing outer LIMIT counts; `LIMIT 9999` inside a quoted WHERE
+  // value must not suppress insertion of the real query bound.
+  const rawCap = gov.max_query_cost ?? 5_000;
+  const cap = Math.min(50_000, Math.max(1, Number.isFinite(rawCap) ? Math.floor(rawCap) : 5_000));
+  const limit = parsed.limit == null ? cap : Math.min(parsed.limit, cap);
+  const query = parsed.limit == null
+    ? `${stripped} LIMIT ${limit}`
+    : stripped.replace(OUTER_LIMIT_PATTERN, `LIMIT ${limit}`);
 
   return { query, object: parsed.object, fields: parsed.fields, limit };
 }
 
 /** Redact obvious secret material from a header bag for safe telemetry logging. */
-export function redactHeaders(h: Record<string, string>): Record<string, string> {
+export function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(h)) {
-    if (/authorization|api[-_]?key|token|cookie|x-connection-api-key/i.test(k)) out[k] = "[redacted]";
-    else out[k] = v;
+  for (const [key, value] of Object.entries(headers)) {
+    if (/authorization|api[-_]?key|token|cookie|x-connection-api-key/i.test(key)) {
+      out[key] = "[redacted]";
+    } else {
+      out[key] = value;
+    }
   }
   return out;
 }
