@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateRecommendation } from "@/lib/decision-recommendation";
-import { scoreDecisionQuality, buildConfidenceBasis } from "@/lib/evidence-contract";
+import { scoreDecisionQuality, buildConfidenceBasis, buildTraceability } from "@/lib/evidence-contract";
 import { computeCostOfDelay } from "@/lib/cost-of-delay";
 
 describe("Decision Intelligence Integrity Tests", () => {
@@ -44,6 +44,7 @@ describe("Decision Intelligence Integrity Tests", () => {
         signalType: "proactive", severity: "low", confidence: 20,
       });
       expect(rec.qualityScore.grade).not.toBe("A");
+      expect(rec.isDecisionGrade).toBe(false);
     });
   });
 
@@ -66,22 +67,38 @@ describe("Decision Intelligence Integrity Tests", () => {
         signalType: "signal", severity: "critical", confidence: 80, message: "Critical churn spike detected at 18%",
       });
       const classifications = rec.sections.map(s => s.classification);
-      // Must have at least one fact/observed and one AI recommendation
       expect(classifications).toContain("AI_RECOMMENDATION");
       expect(classifications.some(c => c === "OBSERVED_FACT" || c === "HEURISTIC_ESTIMATE")).toBe(true);
     });
   });
 
-  describe("Traceability — Always Present", () => {
-    it("every recommendation must include a traceability record", () => {
+  describe("Traceability — Always Present and Explicit", () => {
+    it("unverified recommendations must say so rather than invent a dataset", () => {
       const rec = generateRecommendation({
         signalType: "advisory", severity: "medium", confidence: 55, message: "Cost trend rising steadily over 6 months",
       });
       expect(rec.traceability).toBeDefined();
-      expect(rec.traceability.sourceDataset).toBeTruthy();
+      expect(rec.traceability.sourceDataset).toBe("Unverified source");
+      expect(rec.traceability.isVerifiedSource).toBe(false);
       expect(rec.traceability.generatedAt).toBeTruthy();
       expect(rec.traceability.modelOrHeuristic).toBeTruthy();
       expect(rec.traceability.metricTransformationPath).toBeTruthy();
+      expect(rec.isDecisionGrade).toBe(false);
+    });
+
+    it("a recommendation with dataset, source entity and rows is verified", () => {
+      const rec = generateRecommendation({
+        signalType: "signal",
+        severity: "high",
+        confidence: 75,
+        message: "Revenue declined 12% across the observed period",
+        sampleSize: 40,
+        datasetId: "dataset-1",
+        sourceEntityId: "insight-1",
+      });
+      expect(rec.traceability.sourceDatasetId).toBe("dataset-1");
+      expect(rec.traceability.sourceEntityId).toBe("insight-1");
+      expect(rec.traceability.isVerifiedSource).toBe(true);
     });
   });
 
@@ -89,21 +106,18 @@ describe("Decision Intelligence Integrity Tests", () => {
     it("below-threshold recommendations must suppress strategic advice", () => {
       const rec = generateRecommendation({
         signalType: "proactive", severity: "low", confidence: 15,
-        // Minimal input — should fail decision gate
       });
-      if (!rec.isDecisionGrade) {
-        expect(rec.decisionGateMessage).toBeTruthy();
-        expect(rec.recommendedAction).toContain("Not decision-grade");
-      }
+      expect(rec.isDecisionGrade).toBe(false);
+      expect(rec.decisionGateMessage).toBeTruthy();
+      expect(rec.recommendedAction).toContain("Not decision-grade");
     });
 
     it("decision gate message must explain what is missing", () => {
       const rec = generateRecommendation({
         signalType: "proactive", severity: "low", confidence: 10,
       });
-      if (rec.decisionGateMessage) {
-        expect(rec.decisionGateMessage).toContain("Insufficient evidence");
-      }
+      expect(rec.decisionGateMessage).toContain("Insufficient evidence or provenance");
+      expect(rec.qualityScore.hardGateFailures).toContain("unverified source traceability");
     });
   });
 
@@ -112,7 +126,6 @@ describe("Decision Intelligence Integrity Tests", () => {
       const result = computeCostOfDelay({
         severity: "high", confidence: 70, revenue: 1000000,
       });
-      // Revenue exposure model now derives financial estimate
       expect(result.estimatedDelayCost).toContain("€");
       expect(result.estimatedDelayCost).toContain("/week");
     });
@@ -127,20 +140,28 @@ describe("Decision Intelligence Integrity Tests", () => {
   });
 
   describe("Decision Quality Scoring", () => {
-    it("full evidence block scores high", () => {
+    it("full verified evidence block scores high", () => {
       const score = scoreDecisionQuality({
         observation: "Revenue declined 15% over 3 months across all segments",
         evidence: ["Q1: €2.1M → Q3: €1.78M", "All 4 segments affected", "Accelerating trend"],
-        reasoning: "Sustained multi-segment decline suggests structural issue, not seasonal",
+        reasoning: "Sustained multi-segment decline is a measured pattern that warrants driver investigation",
         confidenceBasis: buildConfidenceBasis({ sampleSize: 45, calibrationApplied: true }),
-        assumptions: ["Trend will continue without intervention"],
+        traceability: buildTraceability({
+          datasetId: "dataset-1",
+          sourceEntityId: "insight-1",
+          dataRowsUsed: 45,
+          metricTypes: ["revenue"],
+          modelUsed: "Calibrated statistical model",
+        }),
+        assumptions: ["Trend will continue without intervention", "Causality is not established"],
         limitations: [],
-        recommendation: "Investigate root cause via diagnostic engine and monitor KPI weekly",
+        recommendation: "Investigate candidate drivers via diagnostic engine and monitor KPI weekly",
         expectedImpact: "Prevent further 5-10% decline (€89K-€178K quarterly)",
         riskIfWrong: "If seasonal, intervention cost is wasted but limited to investigation resources",
       });
       expect(score.grade).toBe("A");
       expect(score.isDecisionGrade).toBe(true);
+      expect(score.hardGateFailures).toEqual([]);
     });
 
     it("empty evidence block scores F", () => {
@@ -181,6 +202,7 @@ describe("Decision Intelligence Integrity Tests", () => {
       });
       expect(rec.confidenceBasis.isHeuristic).toBe(true);
       expect(rec.confidenceBasis.label).toContain("Heuristic");
+      expect(rec.isDecisionGrade).toBe(false);
     });
   });
 });
