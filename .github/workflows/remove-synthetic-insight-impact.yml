@@ -1,0 +1,62 @@
+name: Remove Synthetic Insight Impact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/remove-synthetic-insight-impact.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Remove synthetic monetary impact from insight-only decisions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("supabase/functions/auto-create-decisions/index.ts")
+          text = path.read_text()
+
+          old_value = "    expected_impact: estimateInsightImpact(i),"
+          new_value = "    expected_impact: null,"
+          if old_value not in text:
+              raise SystemExit("Insight synthetic impact assignment not found")
+          text = text.replace(old_value, new_value, 1)
+
+          old_basis = '        basis: source.kind === "insight" ? "Severity and metric-driven estimate from raw insight" : "Advisory expected impact / rule output",'
+          new_basis = '        basis: source.kind === "insight" ? "No evidence-backed monetary impact model was available for this insight" : "Advisory expected impact / rule output",'
+          if old_basis not in text:
+              raise SystemExit("Insight impact basis marker not found")
+          text = text.replace(old_basis, new_basis, 1)
+
+          start = text.find("function estimateInsightImpact(i: any) {")
+          end = text.find("function buildWhyItMatters", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Synthetic impact helper markers not found")
+          text = text[:start] + text[end:]
+
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: git rm .github/workflows/remove-synthetic-insight-impact.yml
+
+      - name: Commit directly to main
+        run: |
+          git config user.name "quantivis-integrity-bot"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git add supabase/functions/auto-create-decisions/index.ts
+          git commit -m "Stop synthesizing insight-only financial impact"
+          git push origin HEAD:main
