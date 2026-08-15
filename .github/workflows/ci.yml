@@ -55,6 +55,8 @@ jobs:
           deno check supabase/functions/connector-salesforce-discover/index.ts
           deno check supabase/functions/connector-salesforce-pull/index.ts
           deno check supabase/functions/connector-hubspot-pull/index.ts
+          deno check supabase/functions/auth-email-hook/index.ts
+          deno check supabase/functions/process-email-queue/index.ts
 
       - name: Test
         run: npm test -- --run
