@@ -3,6 +3,7 @@
 # Run from repo root: bash scripts/deploy-edge-functions.sh
 #
 # Prerequisites:
+#   npm install
 #   npm install -g supabase
 #   supabase login
 #   supabase link --project-ref itpwpnwzzitkelffttyx
@@ -27,6 +28,9 @@
 set -e
 PROJECT="itpwpnwzzitkelffttyx"
 FUNCTIONS_DIR="$(dirname "$0")/../supabase/functions"
+
+echo "Preparing generated Edge runtime assets..."
+node scripts/build-supplier-risk-edge-runtime.mjs
 
 echo "Deploying edge functions to $PROJECT..."
 echo ""
