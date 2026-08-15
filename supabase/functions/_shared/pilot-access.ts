@@ -57,7 +57,7 @@ export async function grantPilotAccess(
     };
   }
 
-  const { data: activeSubscription, error: activeLookupError } = await supabase
+  const { data: candidateSubscription, error: activeLookupError } = await supabase
     .from("subscriptions")
     .select("tier, status, trial_end, current_period_end")
     .eq("organization_id", organizationId)
@@ -68,16 +68,27 @@ export async function grantPilotAccess(
 
   if (activeLookupError) throw activeLookupError;
 
-  if (activeSubscription) {
-    const trialEnd = activeSubscription.trial_end ?? activeSubscription.current_period_end ?? null;
-    return {
-      granted: false,
-      active: true,
-      alreadyUsed: false,
-      tier: activeSubscription.tier ?? PILOT_TIER,
-      trialEnd,
-      reason: "already_active",
-    };
+  if (candidateSubscription) {
+    const candidateTrialEndMs = candidateSubscription.trial_end
+      ? new Date(candidateSubscription.trial_end).getTime()
+      : 0;
+    const actuallyActive = candidateSubscription.status === "active"
+      || (candidateSubscription.status === "trialing" && candidateTrialEndMs > now);
+
+    if (actuallyActive) {
+      const trialEnd = candidateSubscription.trial_end ?? candidateSubscription.current_period_end ?? null;
+      return {
+        granted: false,
+        active: true,
+        alreadyUsed: false,
+        tier: candidateSubscription.tier ?? PILOT_TIER,
+        trialEnd,
+        reason: "already_active",
+      };
+    }
+    // An expired Stripe checkout trial is not an active entitlement and should
+    // not prevent an organization that never used the no-card pilot from
+    // evaluating the product through the pilot path.
   }
 
   const trialEnd = new Date(now + PILOT_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -107,13 +118,14 @@ export async function grantPilotAccess(
       .maybeSingle();
     if (!racedPilot) throw insertError;
     const racedEndMs = racedPilot.trial_end ? new Date(racedPilot.trial_end).getTime() : 0;
+    const racedActive = racedPilot.status === "trialing" && racedEndMs > Date.now();
     return {
       granted: false,
-      active: racedPilot.status === "trialing" && racedEndMs > Date.now(),
+      active: racedActive,
       alreadyUsed: true,
       tier: racedPilot.tier ?? PILOT_TIER,
       trialEnd: racedPilot.trial_end ?? null,
-      reason: "already_active",
+      reason: racedActive ? "already_active" : "pilot_already_used",
     };
   }
 
