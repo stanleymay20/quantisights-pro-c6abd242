@@ -1,0 +1,77 @@
+name: GA Staging Validation
+
+# Runs deployment-dependent GA evidence after a successful Supabase staging
+# promotion. This gate intentionally fails when the dedicated staging test
+# credentials are absent; tenant-isolation evidence must never be fabricated.
+
+on:
+  workflow_run:
+    workflows: ["Deploy Supabase Staging"]
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ga-staging-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    permissions:
+      contents: read
+    env:
+      LOAD_TARGET: staging
+      LOAD_SUPABASE_URL: https://cmnihsbdbpubznlkmjbc.supabase.co
+      LOAD_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Resolve staged commit
+        id: release
+        env:
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "sha=$WORKFLOW_RUN_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify staging test credentials
+        run: |
+          if [ -z "$LOAD_SUPABASE_ANON_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_ANON_KEY is required for GA tenant-isolation evidence"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_SERVICE_ROLE_KEY is required for GA tenant-isolation evidence"
+            exit 1
+          fi
+
+      - name: Checkout staged release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Seed isolated staging organizations
+        run: npm run tenant-isolation:seed
+
+      - name: Prove tenant isolation
+        run: npm run tenant-isolation:run
+
+      - name: Teardown tenant-isolation fixtures
+        if: always()
+        run: npm run tenant-isolation:teardown
