@@ -9,6 +9,9 @@
     "@react-email/components": "npm:@react-email/components@0.0.22",
     "@lovable.dev/email-js": "npm:@lovable.dev/email-js@0.1.2",
     "@lovable.dev/webhooks-js": "npm:@lovable.dev/webhooks-js@0.0.2",
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2"
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2",
+    "npm:@lovable.dev/email-js": "npm:@lovable.dev/email-js@0.1.2",
+    "npm:@lovable.dev/webhooks-js": "npm:@lovable.dev/webhooks-js@0.0.2",
+    "npm:@supabase/supabase-js@2": "npm:@supabase/supabase-js@2.57.2"
   }
 }
