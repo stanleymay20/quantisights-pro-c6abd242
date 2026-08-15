@@ -1,3 +1,5 @@
 GA Cloudflare security apply request
 Date: 2026-08-15
+Attempt: 2
 Purpose: apply the repository-managed production security header policy and verify the live edge before GA promotion.
+Note: prerequisite verifier now reports all missing required Cloudflare credentials in one run.
