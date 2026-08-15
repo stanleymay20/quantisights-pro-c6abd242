@@ -23,6 +23,6 @@ describe("auth rate limiter type boundary", () => {
   it("pins Deno tooling and checks the auth limiter in CI", () => {
     expect(ci).toContain("denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed");
     expect(ci).toContain("deno-version: v2.9.5");
-    expect(ci).toContain("deno check supabase/functions/auth-rate-limiter/index.ts");
+    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts");
   });
 });

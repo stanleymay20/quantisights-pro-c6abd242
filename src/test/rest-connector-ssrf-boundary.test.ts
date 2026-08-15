@@ -12,7 +12,7 @@ describe("REST connector SSRF boundary", () => {
     expect(connector).toContain('safeOutboundFetch');
     expect(connector).toContain('from "../_shared/outbound-http.ts"');
     expect(connector).not.toContain('await fetch(url.toString(), { method, headers })');
-    expect(ci).toContain("deno check supabase/functions/connector-rest-sync/index.ts");
+    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts");
   });
 
   it("requires HTTPS and rejects embedded URL credentials", () => {

@@ -9,7 +9,7 @@ const ci = read(".github/workflows/ci.yml");
 describe("connector scheduler claim integrity", () => {
   it("does not suppress TypeScript checking", () => {
     expect(scheduler).not.toContain("@ts-nocheck");
-    expect(ci).toContain("deno check supabase/functions/connector-scheduler/index.ts");
+    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/connector-scheduler/index.ts");
   });
 
   it("requires a returned compare-and-swap claim before dispatch", () => {

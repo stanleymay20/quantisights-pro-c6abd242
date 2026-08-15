@@ -64,7 +64,7 @@ describe("connector credential storage security", () => {
   });
 
   it("Deno-checks the credential store in CI", () => {
-    expect(ci).toContain("deno check supabase/functions/connector-credential-store/index.ts");
+    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts");
     expect(ci).toContain("Typecheck privileged Edge functions");
   });
 });
