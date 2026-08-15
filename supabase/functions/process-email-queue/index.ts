@@ -1,4 +1,4 @@
-import { sendLovableEmail } from 'npm:@lovable.dev/email-js'
+import { sendLovableEmail } from 'npm:@lovable.dev/email-js@0.1.2'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const MAX_RETRIES = 5
@@ -8,8 +8,8 @@ const DEFAULT_AUTH_TTL_MINUTES = 15
 const DEFAULT_TRANSACTIONAL_TTL_MINUTES = 60
 
 // Check if an error is a rate-limit (429) response.
-// Uses EmailAPIError.status when available (email-js >=0.x with structured errors),
-// falls back to parsing the error message for older versions.
+// Uses EmailAPIError.status when available, and falls back to parsing the
+// message for compatibility with older provider responses.
 function isRateLimited(error: unknown): boolean {
   if (error && typeof error === 'object' && 'status' in error) {
     return (error as { status: number }).status === 429
@@ -249,6 +249,7 @@ Deno.serve(async (req) => {
       }
 
       try {
+        const lovableApiBaseUrl = Deno.env.get('LOVABLE_SEND_URL') || undefined
         await sendLovableEmail(
           {
             run_id: payload.run_id,
@@ -264,10 +265,9 @@ Deno.serve(async (req) => {
             unsubscribe_token: payload.unsubscribe_token,
             message_id: payload.message_id,
           },
-          // sendUrl is optional — when LOVABLE_SEND_URL is not set, the library
-          // falls back to the default Lovable API endpoint (https://api.lovable.dev).
-          // Set LOVABLE_SEND_URL as a Supabase secret to override (e.g. for local dev).
-          { apiKey, sendUrl: Deno.env.get('LOVABLE_SEND_URL') }
+          // email-js uses apiBaseUrl for endpoint overrides. Keep the existing
+          // secret name for compatibility with deployed environments.
+          { apiKey, apiBaseUrl: lovableApiBaseUrl }
         )
 
         // Log success
