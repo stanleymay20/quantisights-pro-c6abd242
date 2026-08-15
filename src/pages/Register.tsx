@@ -3,11 +3,11 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthThrottle } from "@/hooks/useAuthThrottle";
-import { supabase } from "@/integrations/supabase/client";
 import { Check, X } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import GoogleButton from "@/components/auth/GoogleButton";
 import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
+import { PILOT_TERMS } from "@/lib/pilot-terms";
 
 const PASSWORD_RULES = [
   { label: "At least 8 characters", test: (p: string) => p.length >= 8 },
@@ -26,7 +26,9 @@ const Register = () => {
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const planParam = new URLSearchParams(location.search).get("plan");
+  const params = new URLSearchParams(location.search);
+  const planParam = params.get("plan");
+  const pilotParam = params.get("pilot") === "1";
   const PLAN_LABELS: Record<string, string> = {
     starter: `${TIERS.starter.name} — ${TIERS.starter.currency}${TIERS.starter.price}/mo`,
     growth: `${TIERS.growth.name} — ${TIERS.growth.currency}${TIERS.growth.price.toLocaleString("en-US")}/mo`,
@@ -108,18 +110,28 @@ const Register = () => {
   return (
     <AuthLayout
       title="Create your workspace"
-      subtitle={`Create your workspace, then review the ${COMMERCIAL_TERMS.trialDays}-day trial and renewal terms at checkout.`}
+      subtitle={`Set up Quantivis and evaluate the real workflow with a ${PILOT_TERMS.days}-day ${PILOT_TERMS.tierLabel} pilot. No card required and no automatic renewal.`}
       ribbon={
-        planParam && PLAN_LABELS[planParam] ? (
+        pilotParam ? (
+          <div className="mb-6 -mt-1 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/20 text-center">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Evaluation pilot</p>
+            <p className="text-sm font-semibold text-primary mt-0.5">
+              {PILOT_TERMS.days} days of {PILOT_TERMS.tierLabel} access
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              No payment card · No automatic renewal · Starts after workspace setup
+            </p>
+          </div>
+        ) : planParam && PLAN_LABELS[planParam] ? (
           <div className="mb-6 -mt-1 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/20 text-center">
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              You're signing up for
+              Paid plan selected
             </p>
             <p className="text-sm font-semibold text-primary mt-0.5">
               {PLAN_LABELS[planParam]}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility} · Terms shown at checkout
+              Evaluate with the no-card pilot first, or choose checkout later · Paid checkout includes a {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility}
             </p>
           </div>
         ) : null
