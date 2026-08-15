@@ -9,7 +9,6 @@
   "imports": {
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2",
     "zod": "npm:zod@^3.25.76",
-    "@/lib/": "../../../src/lib/",
     "@/lib/agent-gateway": "../../../src/lib/agent-gateway.ts",
     "@/lib/real-time-signals": "../../../src/lib/real-time-signals.ts",
     "@/lib/signal-quality": "../../../src/lib/signal-quality.ts",
