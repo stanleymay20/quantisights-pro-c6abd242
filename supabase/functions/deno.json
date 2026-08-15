@@ -6,7 +6,6 @@
     "strictNullChecks": false,
     "useUnknownInCatchVariables": false,
     "noImplicitThis": false,
-    "alwaysStrict": false,
     "strictFunctionTypes": false,
     "strictPropertyInitialization": false,
     "strictBindCallApply": false,
