@@ -18,9 +18,29 @@ export interface ConnectorMembershipClient {
   rpc(name: string, args: Record<string, unknown>): PromiseLike<RpcResult>;
 }
 
+/**
+ * Exclusive authorization result.
+ *
+ * The `?: never` fields keep the runtime objects minimal while making every
+ * branch-specific property part of the union's public shape. This preserves
+ * reliable control-flow typing in both the relaxed Supabase/Deno compiler
+ * configuration and stricter TypeScript consumers.
+ */
 export type ConnectorInvocationDecision =
-  | { allowed: true; actor: "service_role" | "user"; userId: string | null }
-  | { allowed: false; status: 401 | 403; reason: "unauthorized" | "forbidden" };
+  | {
+      allowed: true;
+      actor: "service_role" | "user";
+      userId: string | null;
+      status?: never;
+      reason?: never;
+    }
+  | {
+      allowed: false;
+      status: 401 | 403;
+      reason: "unauthorized" | "forbidden";
+      actor?: never;
+      userId?: never;
+    };
 
 /** Exact bearer comparison only; substring/prefix matching would weaken service-role identity. */
 export function isExactServiceRoleBearer(authHeader: string | null, serviceRoleKey: string): boolean {
