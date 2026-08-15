@@ -36,6 +36,7 @@ jobs:
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
       SUPABASE_FUNCTION_DEPLOY_BASE_DELAY_SECONDS: "5"
       SUPABASE_FUNCTION_DEPLOY_PACE_SECONDS: "2"
+      SUPABASE_PRUNE_STALE_REMOTE_FUNCTIONS: "true"
     steps:
       - name: Verify required secrets
         run: |
