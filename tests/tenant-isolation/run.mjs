@@ -145,9 +145,9 @@ async function positiveWrite(token, actorEmail, actorOrgId) {
       headers: { ...headers(token), Prefer: "return=representation" },
       body: JSON.stringify({
         organization_id: actorOrgId,
-        title: `own-org-write-canary-${Date.now()}`,
+        recommended_action: `own-org-write-canary-${Date.now()}`,
         decision_type: "operational",
-        status: "pending",
+        decision_status: "pending",
       }),
     });
   } catch (e) {
@@ -219,9 +219,9 @@ async function negativeWrite(token, actorEmail, actorOrgId, targetOrgId) {
       headers: { ...headers(token), Prefer: "return=representation" },
       body: JSON.stringify({
         organization_id: targetOrgId,
-        title: `cross-tenant-write-probe-${Date.now()}`,
+        recommended_action: `cross-tenant-write-probe-${Date.now()}`,
         decision_type: "operational",
-        status: "pending",
+        decision_status: "pending",
       }),
     });
   } catch (e) {
