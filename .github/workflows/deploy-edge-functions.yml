@@ -115,3 +115,6 @@ jobs:
 
       - name: Verify production Edge Functions
         run: bash scripts/verify-supabase-functions.sh
+
+      - name: Verify live GA security baseline
+        run: node scripts/verify-live-ga-security.mjs
