@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { motion } from "framer-motion";
 import { Check, Loader2, Crown, X, Minus } from "lucide-react";
 import { COMMERCIAL_TERMS, TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
+import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,15 +25,61 @@ const renderCellValue = (value: boolean | string) => {
 const Pricing = () => {
   useSeoHead({
     title: "Pricing — Quantivis Decision Governance Platform",
-    description: "Transparent Decision Governance pricing: Essentials €499/mo, Governance €1,999/mo, and Enterprise custom. Trial eligibility and renewal terms are shown before checkout.",
+    description: "Transparent Decision Governance pricing: Essentials €499/mo, Governance €1,999/mo, and Enterprise custom. Explore Quantivis with a no-card pilot before choosing a paid plan.",
     canonicalPath: "/pricing",
   });
   const { user } = useAuth();
-  const { tier: currentTier, subscribed } = useSubscription();
+  const { tier: currentTier, subscribed, isPilot, trialEnd, refresh } = useSubscription();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [loadingTier, setLoadingTier] = useState<TierKey | null>(null);
+  const [pilotLoading, setPilotLoading] = useState(false);
   const [annual, setAnnual] = useState(false);
+
+  const handlePilot = async () => {
+    if (!user) {
+      navigate("/register?pilot=1");
+      return;
+    }
+
+    if (subscribed) {
+      navigate("/onboarding");
+      return;
+    }
+
+    if (isPilot) {
+      toast({
+        title: "Pilot completed",
+        description: "Your one-time evaluation pilot has ended. Choose a paid plan below to continue.",
+      });
+      return;
+    }
+
+    setPilotLoading(true);
+    try {
+      const { data, error } = await invokeWithRetry<{
+        success?: boolean;
+        reason?: string;
+        trial_end?: string | null;
+      }>("activate-pilot");
+      if (error) throw error;
+      if (!data?.success) throw new Error("Pilot access could not be activated.");
+      await refresh();
+      toast({
+        title: `${PILOT_TERMS.days}-day pilot activated`,
+        description: `${PILOT_TERMS.tierLabel} access is ready. No card required and no automatic renewal.`,
+      });
+      navigate("/onboarding");
+    } catch (err: unknown) {
+      toast({
+        title: "Pilot activation unavailable",
+        description: err instanceof Error ? err.message : "Choose a paid plan or contact us for help.",
+        variant: "destructive",
+      });
+    } finally {
+      setPilotLoading(false);
+    }
+  };
 
   const handleCheckout = async (tierKey: TierKey) => {
     if (!user) { navigate(`/register?plan=${tierKey}`); return; }
@@ -44,7 +91,7 @@ const Pricing = () => {
     if (annual && !tier.price_id_annual) {
       toast({
         title: "Annual billing — our team will follow up",
-        description: "Starting your trial now. We'll contact you within 24 hours to set up annual billing at the discounted rate.",
+        description: "Starting your checkout trial now. We'll contact you within 24 hours to set up annual billing at the discounted rate.",
         variant: "default",
       });
     }
@@ -73,6 +120,10 @@ const Pricing = () => {
     }
   };
 
+  const pilotEndLabel = trialEnd
+    ? new Date(trialEnd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+
   return (
     <div className="min-h-dvh bg-background flex flex-col">
       <Navbar />
@@ -81,7 +132,7 @@ const Pricing = () => {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-center mb-16"
+            className="text-center mb-12"
           >
             <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Pricing</p>
             <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
@@ -94,6 +145,51 @@ const Pricing = () => {
             <p className="text-xs text-muted-foreground/60 max-w-md mx-auto">
               Every plan includes full audit trail, EU AI Act compliance documentation, and GDPR-ready infrastructure.
             </p>
+          </motion.div>
+
+          {/* Evaluation-first entry: let users reach value before asking for payment. */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-5xl mx-auto mb-10 rounded-2xl border border-primary/30 bg-primary/[0.06] p-6 sm:p-8"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs uppercase tracking-[0.18em] font-semibold text-primary">Explore first, pay later</span>
+                  <span className="text-[10px] px-2 py-1 rounded-full bg-success/15 text-success font-semibold">No card required</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+                  {PILOT_TERMS.days}-day {PILOT_TERMS.tierLabel} pilot
+                </h2>
+                <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
+                  Connect your data, generate real insights, run the decision workflow, and evaluate Quantivis before choosing a paid plan. The pilot does not auto-renew.
+                </p>
+                {subscribed && isPilot && pilotEndLabel && (
+                  <p className="text-xs text-primary font-medium">Your pilot is active until {pilotEndLabel}.</p>
+                )}
+                {!subscribed && isPilot && (
+                  <p className="text-xs text-muted-foreground">Your one-time pilot has ended. Choose a paid plan below to continue.</p>
+                )}
+              </div>
+              <button
+                onClick={handlePilot}
+                disabled={pilotLoading || (!subscribed && isPilot)}
+                className="shrink-0 px-7 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-50"
+              >
+                {pilotLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+                ) : subscribed && isPilot ? (
+                  "Continue Pilot"
+                ) : subscribed ? (
+                  "Open Workspace"
+                ) : isPilot ? (
+                  "Pilot Completed"
+                ) : (
+                  `Start ${PILOT_TERMS.days}-Day Pilot`
+                )}
+              </button>
+            </div>
           </motion.div>
 
           {/* Billing interval toggle */}
@@ -140,7 +236,7 @@ const Pricing = () => {
                     )}
                     {isActive && (
                       <div className="absolute -top-3 right-4 px-3 py-1 rounded-full bg-success/20 text-success text-xs font-semibold flex items-center gap-1">
-                        <Crown className="w-3 h-3" /> Your Plan
+                        <Crown className="w-3 h-3" /> {isPilot ? "Pilot Access" : "Your Plan"}
                       </div>
                     )}
 
@@ -181,12 +277,21 @@ const Pricing = () => {
                         Contact Sales
                       </button>
                     ) : isActive ? (
-                      <button
-                        onClick={handleManage}
-                        className="w-full py-3 rounded-lg border border-border text-sm font-semibold hover:bg-secondary transition-colors"
-                      >
-                        Manage Subscription
-                      </button>
+                      isPilot ? (
+                        <button
+                          onClick={() => navigate("/executive")}
+                          className="w-full py-3 rounded-lg border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors"
+                        >
+                          Continue Pilot
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleManage}
+                          className="w-full py-3 rounded-lg border border-border text-sm font-semibold hover:bg-secondary transition-colors"
+                        >
+                          Manage Subscription
+                        </button>
+                      )
                     ) : (
                       <>
                         <button
@@ -201,17 +306,18 @@ const Pricing = () => {
                           {loadingTier === key ? (
                             <Loader2 className="w-4 h-4 animate-spin mx-auto" />
                           ) : subscribed ? (
-                            "Switch Plan"
+                            isPilot ? "Convert to Paid Plan" : "Switch Plan"
                           ) : (
-                            `Start ${COMMERCIAL_TERMS.trialDays}-Day Trial`
+                            `Choose Plan · ${COMMERCIAL_TERMS.trialDays}-Day Checkout Trial`
                           )}
                         </button>
                         {isPopular && !subscribed && (
                           <button
-                            onClick={() => navigate("/enterprise/contact")}
-                            className="w-full pt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            onClick={handlePilot}
+                            disabled={pilotLoading || isPilot}
+                            className="w-full pt-2 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
                           >
-                            Talk to Sales instead →
+                            {isPilot ? "Pilot already completed" : `Or try ${PILOT_TERMS.days} days with no card →`}
                           </button>
                         )}
                       </>
@@ -313,12 +419,16 @@ const Pricing = () => {
                 a: "Because Quantivis is not a dashboard tool — it is a governance platform. EU AI Act fines reach €30M. McKinsey charges €50,000–€500,000 for a one-time governance project. Building this internally costs €350,000+ in Year 1. At €499/month (€5,988/year), Quantivis delivers continuous governance at less than 1.2% of the minimum consulting engagement cost.",
               },
               {
+                q: `What is the ${PILOT_TERMS.days}-day pilot?`,
+                a: `It is a one-time self-serve evaluation with ${PILOT_TERMS.tierLabel} capabilities. No payment card is required, it does not automatically renew, and you choose a paid plan only after you have had time to evaluate the real workflow.`,
+              },
+              {
                 q: "What counts as a data connector?",
                 a: "A connector is a live integration with an enterprise data source — Stripe, Salesforce, HubSpot, SAP, NetSuite, Xero, Google Sheets, Snowflake, BigQuery, and others. Essentials includes 3 connectors. Governance unlocks all 15. CSV upload is available on every plan and does not count toward the connector limit.",
               },
               {
-                q: `What happens after the ${COMMERCIAL_TERMS.trialDays}-day trial?`,
-                a: `The trial is available to ${COMMERCIAL_TERMS.trialEligibility}. ${COMMERCIAL_TERMS.trialCheckoutDisclosure} Your checkout confirmation controls the renewal date and cancellation terms.`,
+                q: `How is the ${COMMERCIAL_TERMS.trialDays}-day checkout trial different?`,
+                a: `The checkout trial is attached to a paid Stripe subscription and is available to ${COMMERCIAL_TERMS.trialEligibility}. ${COMMERCIAL_TERMS.trialCheckoutDisclosure} The no-card pilot above is separate and never auto-renews.`,
               },
               {
                 q: "Can I change plans at any time?",
@@ -357,16 +467,17 @@ const Pricing = () => {
       {/* Bottom CTA */}
       <section className="py-16 border-t border-border bg-card/20">
         <div className="container mx-auto px-6 text-center max-w-2xl">
-          <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to Start?</h2>
+          <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to Evaluate Quantivis?</h2>
           <p className="text-muted-foreground mb-8">
-            {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility} · Terms shown before checkout
+            {PILOT_TERMS.days}-day {PILOT_TERMS.tierLabel} pilot · No card required · No automatic renewal
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button
-              onClick={() => navigate("/register")}
-              className="px-8 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
+              onClick={handlePilot}
+              disabled={pilotLoading || (!subscribed && isPilot)}
+              className="px-8 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-50"
             >
-              Start Trial
+              {subscribed && isPilot ? "Continue Pilot" : subscribed ? "Open Workspace" : isPilot ? "Pilot Completed" : "Start No-Card Pilot"}
             </button>
             <button
               onClick={() => navigate("/enterprise/contact")}
