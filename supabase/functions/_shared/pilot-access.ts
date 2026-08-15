@@ -28,6 +28,10 @@ export interface PilotGrantResult {
  * A pilot is intentionally one-time: an expired pilot row is never extended by
  * this helper. Conversion to a paid Stripe subscription is the only path after
  * expiry.
+ *
+ * This shared helper is part of the staging deployment inventory so entitlement
+ * changes are exercised by the same migration/function parity gate as the rest
+ * of the Supabase runtime before any production promotion.
  */
 export async function grantPilotAccess(
   supabase: SupabaseClient,
