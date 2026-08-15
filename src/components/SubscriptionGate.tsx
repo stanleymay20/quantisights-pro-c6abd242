@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSubscriptionGate } from "@/hooks/useSubscriptionGate";
-import { useSubscription } from "@/hooks/useSubscription";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,12 +19,11 @@ interface Props {
  * to the no-card evaluation path before we ask them to choose a paid plan.
  */
 const SubscriptionGate = ({ feature, children, fallbackMessage, requiredTier = "growth" }: Props) => {
-  const { canAccess, loading } = useSubscriptionGate();
-  const { subscribed, isPilot, loading: subscriptionLoading } = useSubscription();
+  const { canAccess, loading, subscribed, isPilot } = useSubscriptionGate();
   const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
 
-  if (loading || subscriptionLoading) return <>{children}</>;
+  if (loading) return <>{children}</>;
 
   if (!canAccess(feature)) {
     const canStartPilot = !subscribed && !isPilot;
