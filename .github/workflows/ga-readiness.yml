@@ -1,0 +1,62 @@
+name: GA Readiness
+
+# Runs the repository's official heavy release gate before production promotion.
+# This workflow is intentionally separate from normal CI so 1M-row certification
+# is available as an explicit release signal without slowing every commit.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ga-readiness.yml"
+
+concurrency:
+  group: ga-readiness
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      QV_CERTIFY_REPORT: ${{ github.workspace }}/artifacts/quantivis-certification-report.md
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate deployment scripts
+        run: |
+          bash -n scripts/deploy-supabase-functions-resilient.sh
+          bash -n scripts/verify-supabase-functions.sh
+
+      - name: Prepare certification output
+        run: mkdir -p artifacts
+
+      - name: Run official GA release gate
+        run: npm run release-gate
+
+      - name: Verify certification report
+        run: |
+          test -s "$QV_CERTIFY_REPORT"
+          echo "Certification report generated at $QV_CERTIFY_REPORT"
+          cat "$QV_CERTIFY_REPORT"
+
+      - name: Verify evidence documentation parity
+        run: npm run evidence:docs
+
+      - name: Build supplier-risk Edge runtime bundle
+        run: node scripts/build-supplier-risk-edge-runtime.mjs
