@@ -14,7 +14,9 @@ on:
       - ".github/workflows/deploy-edge-functions.yml"
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
+      - "scripts/verify-live-ga-security.mjs"
       - "scripts/build-supplier-risk-edge-runtime.mjs"
+      - "config/security-policy.mjs"
       - "package.json"
       - "package-lock.json"
 
@@ -45,10 +47,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate deployment scripts
+      - name: Validate release scripts
         run: |
           bash -n scripts/deploy-supabase-functions-resilient.sh
           bash -n scripts/verify-supabase-functions.sh
+          node --check scripts/verify-live-ga-security.mjs
 
       - name: Prepare certification output
         run: mkdir -p artifacts
@@ -67,3 +70,6 @@ jobs:
 
       - name: Build supplier-risk Edge runtime bundle
         run: node scripts/build-supplier-risk-edge-runtime.mjs
+
+      - name: Verify live GA security baseline
+        run: node scripts/verify-live-ga-security.mjs
