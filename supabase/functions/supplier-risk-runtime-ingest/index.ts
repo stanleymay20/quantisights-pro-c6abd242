@@ -16,11 +16,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
-import {
-  runSupplierRiskRuntimePipeline,
-  type SupplierRiskDecisionLedgerRow,
-  type SupplierRiskRuntimePipelineResult,
-} from "@/lib/supplier-risk-runtime-pipeline";
+import { runSupplierRiskRuntimePipeline } from "./_generated/supplier-risk-runtime-pipeline.mjs";
 
 type SourceKind = "advisory" | "insight";
 
@@ -149,7 +145,7 @@ async function runSupplierRiskPipelineForSource(
   source: SupplierRiskSource,
   now: string,
   userId: string,
-): Promise<{ status: SupplierRiskRuntimePipelineResult["status"]; decision_id: string | null }> {
+): Promise<{ status: string; decision_id: string | null }> {
   const impactAmount = deriveImpactAmount(source);
   const deliveryDelayHours = deriveDeliveryDelayHours(source);
   let persistedDecisionId: string | null = null;
@@ -210,7 +206,7 @@ async function runSupplierRiskPipelineForSource(
         if (error) throw new Error(`audit_log insert failed: ${error.message}`);
         return { audit_id: data.id };
       },
-      persistDecisionLedgerRow: async (row: SupplierRiskDecisionLedgerRow) => {
+      persistDecisionLedgerRow: async (row: any) => {
         const insertRow = {
           ...row,
           advisory_instance_id: source.kind === "advisory" ? source.id : null,

@@ -16,6 +16,7 @@ dist-ssr
 !.env*.example
 supabase/functions/.env*
 !supabase/functions/.env.example
+supabase/functions/supplier-risk-runtime-ingest/_generated/
 .worktrees/
 
 # Editor directories and files
