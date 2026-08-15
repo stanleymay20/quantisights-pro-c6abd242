@@ -37,12 +37,16 @@ jobs:
 
       - name: Verify required secrets
         run: |
+          missing=0
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "::error::CLOUDFLARE_API_TOKEN is not set"
-            exit 1
+            missing=1
           fi
           if [ -z "$CLOUDFLARE_ZONE_ID" ]; then
             echo "::error::CLOUDFLARE_ZONE_ID is not set"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
             exit 1
           fi
 
