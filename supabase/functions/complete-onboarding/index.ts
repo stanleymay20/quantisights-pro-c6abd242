@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import { verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { grantPilotAccess, PILOT_DAYS, PILOT_TIER } from "../_shared/pilot-access.ts";
 
 // Industry-weighted baseline risk scores
 const INDUSTRY_WEIGHTS: Record<string, Record<string, number>> = {
@@ -165,16 +166,21 @@ serve(async (req) => {
       }
     }
 
-    // 4. Mark onboarding complete
+    // 4. Give a new organization enough time to experience the real decision
+    // loop before asking for payment. Existing paid/trial subscriptions are
+    // preserved, and an expired pilot is never silently extended.
+    const pilot = await grantPilotAccess(supabase, organization_id);
+
+    // 5. Mark onboarding complete
     await supabase
       .from("organizations")
       .update({ onboarding_completed: true })
       .eq("id", organization_id);
 
-    // 5. Create audit log entry (insert an insight record)
+    // 6. Create audit log entry (insert an insight record)
     await supabase.from("insights").insert({
       organization_id,
-      message: `Onboarding completed: ${selectedRoles.length} executive roles activated, ECI ${eciScore}/100, ${kpisCreated} KPIs deployed. Industry: ${industry}, Size: ${sizeBand}, Revenue: ${revenueBand}.`,
+      message: `Onboarding completed: ${selectedRoles.length} executive roles activated, ECI ${eciScore}/100, ${kpisCreated} KPIs deployed. Industry: ${industry}, Size: ${sizeBand}, Revenue: ${revenueBand}. Pilot access: ${pilot.reason}.`,
       severity: "info",
       category: "system",
     });
@@ -187,6 +193,18 @@ serve(async (req) => {
         convergence_score: eciScore,
         kpis_created: kpisCreated,
         industry_weights_applied: industry,
+        pilot: {
+          active: pilot.active,
+          granted: pilot.granted,
+          already_used: pilot.alreadyUsed,
+          reason: pilot.reason,
+          tier: pilot.tier,
+          trial_end: pilot.trialEnd,
+          days: PILOT_DAYS,
+          default_tier: PILOT_TIER,
+          no_card_required: true,
+          auto_renews: false,
+        },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
