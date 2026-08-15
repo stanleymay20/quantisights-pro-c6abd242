@@ -55,6 +55,8 @@ jobs:
           deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-discover/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-hubspot-pull/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/complete-onboarding/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/activate-pilot/index.ts
           deno check --config supabase/functions/auth-email-hook/deno.json supabase/functions/auth-email-hook/index.ts
           deno check --config supabase/functions/process-email-queue/deno.json supabase/functions/process-email-queue/index.ts
 
