@@ -60,10 +60,11 @@ describe("audit round 3 batch fixes", () => {
       expect(source).toContain('.eq("stripe_subscription_id", subscription.id)');
     });
 
-    it("useSubscription triggers reconciliation in the background for active subscriptions", () => {
+    it("useSubscription reconciles active Stripe subscriptions but never synthetic pilot rows", () => {
       const source = read("src/hooks/useSubscription.ts");
       expect(source).toContain('supabase.functions.invoke("check-subscription")');
-      expect(source).toContain("if (isActive) {");
+      expect(source).toContain("if (isActive && !isPilot) {");
+      expect(source).toContain('stripe_subscription_id?.startsWith("pilot_")');
     });
   });
 
