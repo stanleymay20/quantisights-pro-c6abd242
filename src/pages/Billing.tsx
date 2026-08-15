@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
+import { PILOT_TERMS } from "@/lib/pilot-terms";
 import {
   CreditCard, Crown, Users, BarChart3, ArrowUpRight,
   Loader2, Check, Zap, Lock, ExternalLink, Calendar,
@@ -31,13 +32,21 @@ interface UsageData {
 const TIER_LIMITS: Record<string, { simulations: number; convergence: number; copilot: number; seats: number }> = {
   starter:    { simulations: 5,  convergence: 3,  copilot: 20,  seats: 5  },
   growth:     { simulations: 50, convergence: 30, copilot: -1,  seats: 15 },  // -1 = unlimited
-  enterprise: { simulations: -1, convergence: -1, copilot: -1,  seats: -1 },
+  enterprise: { simulations: -1, convergence: -1, copilot: -1, seats: -1 },
 };
 
 const Billing = () => {
   const { user } = useAuth();
   const { currentOrgId } = useOrganization();
-  const { subscribed, tier, subscriptionEnd, loading: subLoading } = useSubscription();
+  const {
+    subscribed,
+    tier,
+    subscriptionEnd,
+    isTrial,
+    trialEnd,
+    isPilot,
+    loading: subLoading,
+  } = useSubscription();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [usage, setUsage] = useState<UsageData>({ simulations: 0, convergence: 0, copilot: 0, members: 0 });
@@ -46,6 +55,15 @@ const Billing = () => {
   const activeTier = tier || "starter";
   const tierConfig = TIERS[activeTier as TierKey] || TIERS.starter;
   const limits = TIER_LIMITS[activeTier] || TIER_LIMITS.starter;
+  const accessEnd = isPilot ? trialEnd : isTrial ? trialEnd : subscriptionEnd;
+  const accessEndLabel = isPilot ? "Pilot access ends" : isTrial ? "Trial ends" : "Next billing";
+  const accessBadge = isPilot
+    ? subscribed ? "Pilot" : "Pilot ended"
+    : isTrial && subscribed
+      ? "Trial"
+      : subscribed
+        ? "Active"
+        : "No active plan";
 
   useEffect(() => {
     if (!currentOrgId) return;
@@ -68,6 +86,10 @@ const Billing = () => {
   }, [currentOrgId]);
 
   const openPortal = async () => {
+    if (isPilot) {
+      navigate("/pricing");
+      return;
+    }
     setPortalLoading(true);
     try {
       const { data, error } = await invokeWithRetry<{ url?: string }>("customer-portal");
@@ -132,23 +154,25 @@ const Billing = () => {
                         <div className="flex items-center gap-2">
                           <h2 className="text-[18px] font-semibold tracking-tight">{tierConfig.name}</h2>
                           <Badge className="bg-primary/10 text-primary border-none">
-                            {subscribed ? "Active" : "Trial"}
+                            {subLoading ? "Checking…" : accessBadge}
                           </Badge>
                         </div>
                         <p className="text-muted-foreground text-sm">
-                          {tierConfig.price !== null
-                            ? subscribed
-                              ? `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval}`
-                              : `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval} after trial`
-                            : "Custom pricing"}
+                          {isPilot
+                            ? `${PILOT_TERMS.days}-day no-card evaluation · No automatic renewal`
+                            : tierConfig.price !== null
+                              ? subscribed
+                                ? `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval}`
+                                : `${tierConfig.currency}${tierConfig.price}/${tierConfig.interval}`
+                              : "Custom pricing"}
                         </p>
                       </div>
                     </div>
 
-                    {subscriptionEnd && (
+                    {accessEnd && (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Calendar className="w-4 h-4" />
-                        Next billing: {new Date(subscriptionEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                        {accessEndLabel}: {new Date(accessEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
                       </div>
                     )}
 
@@ -163,20 +187,25 @@ const Billing = () => {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {subscribed ? (
+                    {subscribed && !isPilot ? (
                       <Button onClick={openPortal} disabled={portalLoading} variant="outline" className="gap-2">
                         {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
                         Manage Subscription
                       </Button>
                     ) : (
                       <Button onClick={() => navigate("/pricing")} className="gap-2">
-                        <Zap className="w-4 h-4" /> Upgrade Now
+                        <Zap className="w-4 h-4" /> {isPilot ? "Choose Paid Plan" : "Choose Plan"}
                       </Button>
                     )}
-                    {subscribed && activeTier !== "enterprise" && (
+                    {subscribed && !isPilot && activeTier !== "enterprise" && (
                       <Button onClick={() => navigate("/pricing")} variant="ghost" size="sm" className="gap-1 text-primary">
                         <ArrowUpRight className="w-3 h-3" /> Upgrade Plan
                       </Button>
+                    )}
+                    {subscribed && isPilot && (
+                      <p className="text-xs text-muted-foreground max-w-[220px] text-right">
+                        Keep evaluating until the pilot ends. Payment is only requested when you choose a paid plan.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -244,22 +273,30 @@ const Billing = () => {
                 <CardContent className="p-8 flex items-center justify-between flex-wrap gap-6">
                   <div className="space-y-2">
                     <h3 className="text-lg font-bold tracking-tight">
-                      {activeTier === "starter" ? "Unlock AI Decision Intelligence" : "Go Enterprise"}
+                      {isPilot ? "Continue after your pilot" : activeTier === "starter" ? "Unlock AI Decision Intelligence" : "Go Enterprise"}
                     </h3>
                     <p className="text-sm text-muted-foreground max-w-md">
-                      {activeTier === "starter"
-                        ? "Upgrade to Governance for AI Prescriptive Advisory, Causal Inference, Predictive Forecasting, Monte Carlo Simulations, Board Governance Reports, AICIS geopolitical signals, and unlimited Copilot."
-                        : "Upgrade to Enterprise for Cognitive Bias Detection, Counterfactual Explanations, Executive Convergence Index, unlimited simulations, multi-org management, and dedicated support."}
+                      {isPilot
+                        ? "Your evaluation does not auto-renew. When Quantivis has proven useful for your decision workflow, choose the paid plan that fits your team."
+                        : activeTier === "starter"
+                          ? "Upgrade to Governance for AI Prescriptive Advisory, Causal Inference, Predictive Forecasting, Monte Carlo Simulations, Board Governance Reports, AICIS geopolitical signals, and unlimited Copilot."
+                          : "Upgrade to Enterprise for Cognitive Bias Detection, Counterfactual Explanations, Executive Convergence Index, unlimited simulations, multi-org management, and dedicated support."}
                     </p>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {(activeTier === "starter" ? TIERS.growth : TIERS.enterprise).features.slice(0, 3).map((f) => (
-                        <Badge key={f} variant="outline" className="text-xs border-primary/30 text-primary">
-                          <Lock className="w-3 h-3 mr-1" /> {f}
-                        </Badge>
-                      ))}
-                    </div>
+                    {!isPilot && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {(activeTier === "starter" ? TIERS.growth : TIERS.enterprise).features.slice(0, 3).map((f) => (
+                          <Badge key={f} variant="outline" className="text-xs border-primary/30 text-primary">
+                            <Lock className="w-3 h-3 mr-1" /> {f}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {activeTier === "starter" ? (
+                  {isPilot ? (
+                    <Button onClick={() => navigate("/pricing")} size="lg" className="gap-2 shadow-lg shadow-primary/20">
+                      <Zap className="w-4 h-4" /> Choose a Paid Plan
+                    </Button>
+                  ) : activeTier === "starter" ? (
                     <Button onClick={() => navigate("/pricing")} size="lg" className="gap-2 shadow-lg shadow-primary/20">
                       <Zap className="w-4 h-4" />
                       Upgrade to Governance — €{TIERS.growth.price}/mo
@@ -337,7 +374,7 @@ const Billing = () => {
                         {(Object.entries(TIERS) as [TierKey, (typeof TIERS)[TierKey]][]).map(([key, t]) => (
                           <th key={key} className={`text-center py-3 px-4 font-medium ${key === activeTier ? "text-primary" : "text-muted-foreground"}`}>
                             {t.name}
-                            {key === activeTier && <Badge className="ml-2 bg-primary/10 text-primary border-none text-[10px]">Current</Badge>}
+                            {key === activeTier && <Badge className="ml-2 bg-primary/10 text-primary border-none text-[10px]">{isPilot ? "Pilot" : "Current"}</Badge>}
                           </th>
                         ))}
                       </tr>
