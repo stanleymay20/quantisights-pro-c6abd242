@@ -1,1 +1,18 @@
-{}
+{
+  "compilerOptions": {
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "noImplicitThis": false,
+    "strictFunctionTypes": false,
+    "strictPropertyInitialization": false,
+    "strictBindCallApply": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": false
+  },
+  "imports": {
+    "@lovable.dev/email-js": "npm:@lovable.dev/email-js@0.1.2",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2"
+  }
+}
