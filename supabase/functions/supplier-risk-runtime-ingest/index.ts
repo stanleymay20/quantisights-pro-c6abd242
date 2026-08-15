@@ -20,7 +20,7 @@ import {
   runSupplierRiskRuntimePipeline,
   type SupplierRiskDecisionLedgerRow,
   type SupplierRiskRuntimePipelineResult,
-} from "@/lib/supplier-risk-runtime-pipeline.ts";
+} from "@/lib/supplier-risk-runtime-pipeline";
 
 type SourceKind = "advisory" | "insight";
 
