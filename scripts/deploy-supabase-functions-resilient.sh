@@ -29,6 +29,29 @@ is_transient_failure() {
     <<<"$output"
 }
 
+report_deployment_failure() {
+  local function_name="$1"
+  local output="$2"
+  local escaped_output="$output"
+
+  # GitHub workflow commands require percent/newline/carriage-return escaping.
+  # Preserve the original Supabase CLI error in the check annotation so failed
+  # deployments remain diagnosable even when the full job log is unavailable.
+  escaped_output="${escaped_output//'%'/'%25'}"
+  escaped_output="${escaped_output//$'\r'/'%0D'}"
+  escaped_output="${escaped_output//$'\n'/'%0A'}"
+  echo "::error title=Supabase Edge deploy failed: ${function_name}::${escaped_output}"
+
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      printf '### Supabase Edge deployment failure\n\n'
+      printf -- '- Function: `%s`\n' "$function_name"
+      printf -- '- Project: `%s`\n\n' "$SUPABASE_PROJECT_REF"
+      printf '```text\n%s\n```\n' "$output"
+    } >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
+
 mapfile -t functions < <(
   find supabase/functions \
     -mindepth 2 \
@@ -69,11 +92,12 @@ for function_name in "${functions[@]}"; do
     fi
 
     if ! is_transient_failure "$output"; then
-      echo "::error::${function_name} failed with a non-transient deployment error; refusing to retry."
+      report_deployment_failure "$function_name" "$output"
       exit "$status"
     fi
 
     if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+      report_deployment_failure "$function_name" "$output"
       echo "::error::${function_name} exhausted ${MAX_ATTEMPTS} attempts after transient Supabase/API failures."
       exit "$status"
     fi
