@@ -10,6 +10,13 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ga-readiness.yml"
+      - ".github/workflows/deploy-supabase-staging.yml"
+      - ".github/workflows/deploy-edge-functions.yml"
+      - "scripts/deploy-supabase-functions-resilient.sh"
+      - "scripts/verify-supabase-functions.sh"
+      - "scripts/build-supplier-risk-edge-runtime.mjs"
+      - "package.json"
+      - "package-lock.json"
 
 concurrency:
   group: ga-readiness
