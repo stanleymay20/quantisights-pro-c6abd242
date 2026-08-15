@@ -90,6 +90,8 @@ done
 
 reconcile_remote_inventory() {
   local remote_json
+  local remote_stderr
+  local remote_stderr_file
   local list_status
   local -a remote_functions=()
   local -a stale_remote_functions=()
@@ -99,22 +101,33 @@ reconcile_remote_inventory() {
     exit 1
   fi
 
+  # Supabase CLI JSON output is emitted on stdout. Keep stderr separate so
+  # warnings/progress messages cannot corrupt the machine-readable inventory.
+  remote_stderr_file="$(mktemp)"
   set +e
   remote_json="$(supabase functions list \
     --project-ref "$SUPABASE_PROJECT_REF" \
-    --output json 2>&1)"
+    --output json 2>"$remote_stderr_file")"
   list_status=$?
   set -e
+  remote_stderr="$(cat "$remote_stderr_file")"
+  rm -f "$remote_stderr_file"
+
+  if [ -n "$remote_stderr" ]; then
+    printf '%s\n' "$remote_stderr" >&2
+  fi
 
   if [ "$list_status" -ne 0 ]; then
-    printf '%s\n' "$remote_json"
+    if [ -n "$remote_json" ]; then
+      printf '%s\n' "$remote_json"
+    fi
     echo "::error::Unable to obtain remote Supabase Edge Function inventory for $SUPABASE_PROJECT_REF."
     exit "$list_status"
   fi
 
   if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$remote_json"; then
     printf '%s\n' "$remote_json"
-    echo "::error::Supabase Edge Function inventory was not valid JSON array output; refusing unsafe reconciliation."
+    echo "::error::Supabase Edge Function inventory stdout was not the documented JSON array; refusing unsafe reconciliation."
     exit 1
   fi
 
