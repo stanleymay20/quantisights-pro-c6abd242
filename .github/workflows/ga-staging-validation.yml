@@ -67,11 +67,12 @@ jobs:
         run: npm ci
 
       - name: Seed isolated staging organizations
+        id: seed
         run: npm run tenant-isolation:seed
 
       - name: Prove tenant isolation
         run: npm run tenant-isolation:run
 
       - name: Teardown tenant-isolation fixtures
-        if: always()
+        if: ${{ always() && steps.seed.outcome != 'skipped' }}
         run: npm run tenant-isolation:teardown
