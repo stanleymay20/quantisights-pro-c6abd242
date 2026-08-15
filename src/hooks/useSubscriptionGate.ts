@@ -44,7 +44,7 @@ const FEATURE_TIERS: Record<string, TierKey[]> = {
 };
 
 export const useSubscriptionGate = () => {
-  const { subscribed, tier, loading } = useSubscription();
+  const { subscribed, tier, loading, isPilot } = useSubscription();
   const { user } = useAuth();
 
   // Demo users bypass all subscription gates
@@ -61,5 +61,5 @@ export const useSubscriptionGate = () => {
 
   const isExpired = !loading && !subscribed && !isDemoUser;
 
-  return { canAccess, isExpired, tier, loading, subscribed, isDemoUser };
+  return { canAccess, isExpired, tier, loading, subscribed, isPilot, isDemoUser };
 };
