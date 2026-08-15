@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSubscriptionGate } from "@/hooks/useSubscriptionGate";
+import { useSubscription } from "@/hooks/useSubscription";
+import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,16 +16,21 @@ interface Props {
 }
 
 /**
- * Wraps a feature behind a subscription tier gate.
- * Shows an upgrade prompt + modal if the user's tier doesn't include the feature.
+ * Wraps a feature behind a subscription tier gate. New organizations are sent
+ * to the no-card evaluation path before we ask them to choose a paid plan.
  */
 const SubscriptionGate = ({ feature, children, fallbackMessage, requiredTier = "growth" }: Props) => {
   const { canAccess, loading } = useSubscriptionGate();
+  const { subscribed, isPilot, loading: subscriptionLoading } = useSubscription();
+  const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
 
-  if (loading) return <>{children}</>;
+  if (loading || subscriptionLoading) return <>{children}</>;
 
   if (!canAccess(feature)) {
+    const canStartPilot = !subscribed && !isPilot;
+    const pilotEnded = !subscribed && isPilot;
+
     return (
       <>
         <Card className="border-dashed border-2 border-primary/20">
@@ -32,23 +40,39 @@ const SubscriptionGate = ({ feature, children, fallbackMessage, requiredTier = "
             </div>
             <div className="space-y-1">
               <h3 className="text-[14px] font-semibold">
-                {fallbackMessage || "This feature requires an upgrade"}
+                {canStartPilot
+                  ? `Try this in your ${PILOT_TERMS.days}-day pilot`
+                  : pilotEnded
+                    ? "Your evaluation pilot has ended"
+                    : fallbackMessage || "This feature requires an upgrade"}
               </h3>
               <p className="text-sm text-muted-foreground max-w-md">
-                Your current plan doesn't include this capability. Upgrade to unlock it.
+                {canStartPilot
+                  ? `${PILOT_TERMS.tierLabel} pilot access requires no card and does not auto-renew. Experience the workflow before choosing a paid plan.`
+                  : pilotEnded
+                    ? "Choose a paid plan to keep using gated decision capabilities."
+                    : "Your current access level doesn't include this capability. Choose the required plan to unlock it."}
               </p>
             </div>
-            <Button onClick={() => setModalOpen(true)} className="gap-2">
-              See what's included
-            </Button>
+            {canStartPilot || pilotEnded ? (
+              <Button onClick={() => navigate("/pricing")} className="gap-2">
+                {canStartPilot ? `Start ${PILOT_TERMS.days}-Day Pilot` : "Choose a Plan"}
+              </Button>
+            ) : (
+              <Button onClick={() => setModalOpen(true)} className="gap-2">
+                See what's included
+              </Button>
+            )}
           </CardContent>
         </Card>
-        <UpgradeModal
-          open={modalOpen}
-          onOpenChange={setModalOpen}
-          feature={fallbackMessage || feature}
-          requiredTier={requiredTier}
-        />
+        {!canStartPilot && !pilotEnded && (
+          <UpgradeModal
+            open={modalOpen}
+            onOpenChange={setModalOpen}
+            feature={fallbackMessage || feature}
+            requiredTier={requiredTier}
+          />
+        )}
       </>
     );
   }
