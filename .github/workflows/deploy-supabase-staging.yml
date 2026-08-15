@@ -7,9 +7,10 @@ name: Deploy Supabase Staging
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent/fix-staging-edge-imports]
     paths:
       - "supabase/functions/**"
+      - "src/lib/**"
       - "supabase/migrations/**"
       - "supabase/config.toml"
       - ".github/workflows/deploy-supabase-staging.yml"
