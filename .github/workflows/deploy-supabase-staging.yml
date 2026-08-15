@@ -15,6 +15,7 @@ on:
       - "supabase/config.toml"
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
+      - "tests/tenant-isolation/**"
       - ".github/workflows/deploy-supabase-staging.yml"
   workflow_dispatch: {}
 
