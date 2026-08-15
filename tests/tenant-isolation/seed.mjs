@@ -64,10 +64,10 @@ async function seedRows(orgId, userId, orgTag) {
   ];
   const { data: dec, error: decErr } = await sb.from("decision_ledger").insert({
     organization_id: orgId,
-    title: `${runTag} canary ${orgTag}`,
+    recommended_action: `${runTag} canary ${orgTag}`,
     decision_type: "operational",
-    status: "pending",
-    created_by: userId,
+    decision_status: "pending",
+    decided_by: userId,
     evidence_sources: evidencePayload,
   }).select("id, evidence_sources").single();
   if (decErr || !dec?.id) {
