@@ -8,17 +8,16 @@ import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
 const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // calibration cadence
 
 /**
- * Adaptive Calibration Engine v2
- * 
- * Hardened version with:
- * - Laplace/Beta smoothing per band (prevents wild corrections from small samples)
- * - Windowed computation (most recent 500 decisions)
- * - Improved success metric (prefers prediction_accuracy_score over binary outcome_delta)
- * - Minimal column select (no select("*"))
- * - Model metadata (window bounds, success metric, low-sample warnings)
+ * Adaptive Calibration Engine v3
+ *
+ * Calibration only learns from canonical prediction_accuracy_score values.
+ * Raw outcome_delta is an observed metric change, not a universal success
+ * signal: negative deltas are correct for lower-is-better KPIs. The outcome
+ * evaluator now writes direction-aware accuracy and the migration backfills
+ * legacy rows where a canonical direction exists.
  */
 
-const DECISION_COLUMNS = "execution_status, capped_confidence, raw_confidence, outcome_delta, prediction_accuracy_score, created_at" as const;
+const DECISION_COLUMNS = "execution_status, capped_confidence, raw_confidence, prediction_accuracy_score, created_at" as const;
 const WINDOW_SIZE = 500;
 const MIN_DECISIONS = 5;
 const MIN_BAND_COUNT = 2;
@@ -28,51 +27,31 @@ const LOW_SAMPLE_THRESHOLD = 5;
 
 interface BandData {
   predicted_sum: number;
-  successes: number; // smoothed will be computed from this
+  successes: number;
   count: number;
 }
 
-/**
- * Compute success signal for a single decision.
- * Prefers prediction_accuracy_score (0–100 continuous).
- * Falls back to outcome_delta with a neutral zone (±1% = 0.5).
- * Returns a value between 0 and 1.
- */
-function computeSuccess(d: any): { value: number; metric: "prediction_accuracy_score" | "outcome_delta" } {
+function computeSuccess(d: any): number | null {
   const accuracy = d.prediction_accuracy_score != null ? Number(d.prediction_accuracy_score) : null;
-  if (accuracy != null && Number.isFinite(accuracy)) {
-    // Normalize 0–100 to 0–1
-    return { value: Math.min(1, Math.max(0, accuracy / 100)), metric: "prediction_accuracy_score" };
-  }
-
-  const delta = d.outcome_delta != null ? Number(d.outcome_delta) : null;
-  if (delta != null && Number.isFinite(delta)) {
-    // Neutral zone: within ±1% = 0.5 (ambiguous)
-    if (Math.abs(delta) <= 1) return { value: 0.5, metric: "outcome_delta" };
-    return { value: delta > 0 ? 1 : 0, metric: "outcome_delta" };
-  }
-
-  return { value: 0.5, metric: "outcome_delta" }; // No data = neutral
+  if (accuracy == null || !Number.isFinite(accuracy)) return null;
+  return Math.min(1, Math.max(0, accuracy / 100));
 }
 
 function computeCalibrationModel(decisions: any[]) {
-  // Include decisions that have been decided AND have at least one measurable signal.
-  // Previously required execution_status === "completed" which excluded 100% of decisions.
-  // Now: any decision with a decided status and confidence data is eligible.
-  // Success is still computed from prediction_accuracy_score or outcome_delta when available.
+  // Never infer success from raw outcome_delta sign. A row becomes calibration
+  // evidence only after the direction-aware outcome evaluator has produced a
+  // canonical accuracy score.
   const calibrated = decisions.filter(
     (d) =>
       d.capped_confidence != null &&
-      (d.execution_status === "completed" ||
-       d.prediction_accuracy_score != null ||
-       d.outcome_delta != null)
+      d.prediction_accuracy_score != null &&
+      Number.isFinite(Number(d.prediction_accuracy_score))
   );
 
   if (calibrated.length < MIN_DECISIONS) {
     return { insufficient: true, count: calibrated.length };
   }
 
-  // Window: use most recent
   const windowed = calibrated
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, WINDOW_SIZE);
@@ -80,11 +59,6 @@ function computeCalibrationModel(decisions: any[]) {
   const windowStart = windowed[windowed.length - 1]?.created_at;
   const windowEnd = windowed[0]?.created_at;
 
-  // Track which success metric is dominant
-  let accuracyCount = 0;
-  let deltaCount = 0;
-
-  // Build 10-point confidence bands
   const bands: Record<string, BandData> = {};
   for (let b = 0; b < 100; b += 10) {
     const key = `${b}-${b + 10}`;
@@ -92,22 +66,18 @@ function computeCalibrationModel(decisions: any[]) {
   }
 
   windowed.forEach((d) => {
+    const success = computeSuccess(d);
+    if (success == null) return;
+
     const conf = Math.min(99, Math.max(0, Number(d.capped_confidence ?? d.raw_confidence ?? 50)));
     const bandStart = Math.floor(conf / 10) * 10;
     const key = `${bandStart}-${bandStart + 10}`;
-    const { value, metric } = computeSuccess(d);
-
-    if (metric === "prediction_accuracy_score") accuracyCount++;
-    else deltaCount++;
 
     bands[key].predicted_sum += conf;
-    bands[key].successes += value;
+    bands[key].successes += success;
     bands[key].count++;
   });
 
-  const successMetric = accuracyCount >= deltaCount ? "prediction_accuracy_score" : "outcome_delta";
-
-  // Compute corrections per band with Laplace/Beta smoothing
   const band_corrections: Record<string, number> = {};
   const band_sample_sizes: Record<string, number> = {};
   const low_sample_bands: string[] = [];
@@ -120,7 +90,6 @@ function computeCalibrationModel(decisions: any[]) {
     if (band.count < MIN_BAND_COUNT) continue;
 
     const meanPredicted = band.predicted_sum / band.count;
-    // Smoothed actual rate using Beta prior: (successes + α) / (count + α + β)
     const smoothedRate = ((band.successes + SMOOTHING_ALPHA) / (band.count + SMOOTHING_ALPHA + SMOOTHING_BETA)) * 100;
     const correction = Math.round((smoothedRate - meanPredicted) * 10) / 10;
 
@@ -129,10 +98,7 @@ function computeCalibrationModel(decisions: any[]) {
     totalAbsError += Math.abs(correction);
     bandsWithData++;
 
-    if (band.count < LOW_SAMPLE_THRESHOLD) {
-      low_sample_bands.push(key);
-    }
-
+    if (band.count < LOW_SAMPLE_THRESHOLD) low_sample_bands.push(key);
     if (correction < -3) overconfidentBands++;
     if (correction > 3) underconfidentBands++;
   }
@@ -157,7 +123,7 @@ function computeCalibrationModel(decisions: any[]) {
     mean_absolute_error: mae,
     total_decisions_analyzed: windowed.length,
     confidence_bands_count: bandsWithData,
-    success_metric: successMetric,
+    success_metric: "prediction_accuracy_score",
     window_start: windowStart,
     window_end: windowEnd,
     window_decisions_count: windowed.length,
@@ -197,7 +163,6 @@ serve(async (req) => {
         }
       }
 
-      // Advisory lock — prevent overlapping cron runs
       const guard = await cronGuard("adaptive-calibration");
       if (!guard.acquired) return guard.earlyResponse(corsHeaders);
 
@@ -205,11 +170,6 @@ serve(async (req) => {
       const { data: orgs } = await svc.from("organizations").select("id");
       let calibrated = 0;
 
-      // Bound the org loop to the invocation's wall-clock budget, and
-      // rotate the starting point each tick so a sustained overload
-      // doesn't permanently starve whichever orgs sort last -- safe since
-      // skipping an org this tick just leaves its calibration model at
-      // the previous version until the next tick recomputes it.
       const cronStartedAt = Date.now();
       const deadline = makeDeadline(cronStartedAt);
       const rotatedOrgs = rotateForFairness(orgs || [], cronStartedAt, RUN_INTERVAL_MS);
@@ -218,7 +178,6 @@ serve(async (req) => {
       for (const org of rotatedOrgs) {
         if (deadline.expired()) break;
         orgsProcessed++;
-        // Fetch ALL decided decisions (not just "completed") to maximize calibration coverage
         const { data: decisions } = await svc
           .from("decision_ledger")
           .select(DECISION_COLUMNS)
@@ -305,13 +264,10 @@ serve(async (req) => {
     });
     if (!isMember) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Minimal select — only columns we actually use
-    // Match cron path: include all decided decisions, not just "completed"
     const { data: decisions } = await svc
       .from("decision_ledger")
       .select(DECISION_COLUMNS)
@@ -325,7 +281,7 @@ serve(async (req) => {
         JSON.stringify({
           model: null,
           insufficient_data: true,
-          message: "No completed decisions found",
+          message: "No direction-aware evaluated decisions found",
           decisions_count: 0,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -339,7 +295,7 @@ serve(async (req) => {
         JSON.stringify({
           model: null,
           insufficient_data: true,
-          message: `Need at least ${MIN_DECISIONS} completed decisions with outcomes. Currently: ${result.count}`,
+          message: `Need at least ${MIN_DECISIONS} decisions with canonical direction-aware accuracy. Currently: ${result.count}`,
           decisions_count: result.count,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -382,14 +338,13 @@ serve(async (req) => {
           const aiData = await aiResp.json();
           aiNarrative = aiData.choices?.[0]?.message?.content || "";
         } else {
-          await aiResp.text(); // consume body
+          await aiResp.text();
         }
       } catch (e) {
         console.error("AI narrative error:", e);
       }
     }
 
-    // Get current model version
     const { data: existing } = await svc
       .from("calibration_models")
       .select("model_version")
