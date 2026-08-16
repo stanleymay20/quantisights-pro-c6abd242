@@ -2,7 +2,7 @@ project_id = "itpwpnwzzitkelffttyx"
 
 [functions]
   [functions.adaptive-calibration]
-    verify_jwt = false
+    verify_jwt = true
   [functions.ai-kpi-analysis]
     verify_jwt = false
   [functions.ai-scenario-analysis]
