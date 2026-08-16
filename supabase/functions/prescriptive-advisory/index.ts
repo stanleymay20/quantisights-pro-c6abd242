@@ -24,7 +24,6 @@ serve(async (req) => {
       });
     }
 
-    // ── Tier gating ──
     const access = await requireFeatureAccess(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -42,7 +41,6 @@ serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
 
-    // Dataset contract: verify dataset belongs to org
     const dsCheckResp = await fetch(
       `${supabaseUrl}/rest/v1/datasets?id=eq.${dataset_id}&organization_id=eq.${organization_id}&select=id`,
       { headers }
@@ -76,7 +74,6 @@ serve(async (req) => {
 
     const totalSampleSize = (metrics || []).length;
 
-    // Data quality gate
     const qualityMetrics = (metrics || []).filter((m: any) => (m.quality_score ?? 100) >= 60);
     if (qualityMetrics.length < 8) {
       return new Response(JSON.stringify({
@@ -90,7 +87,6 @@ serve(async (req) => {
       });
     }
 
-    // Group metrics by type with time series
     const metricsByType: Record<string, { values: number[]; dates: string[]; regions: Set<string> }> = {};
     for (const m of qualityMetrics) {
       if (!metricsByType[m.metric_type]) {
@@ -101,7 +97,6 @@ serve(async (req) => {
       if (m.region) metricsByType[m.metric_type].regions.add(m.region);
     }
 
-    // Build summary for AI
     const metricSummaries = Object.entries(metricsByType).map(([type, data]) => {
       const vals = data.values;
       const n = vals.length;
@@ -135,7 +130,6 @@ serve(async (req) => {
       };
     });
 
-    // Use AI to generate domain-agnostic advisories
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       return new Response(JSON.stringify({ error: "AI service not configured" }), {
@@ -155,47 +149,48 @@ serve(async (req) => {
       category: i.category,
     }));
 
-    // ── RAG: Retrieve similar past decisions and outcomes ──
     let ragContextBlock = "";
     const ragMetadata: { similar_count: number; avg_similarity: number; historical_success_rate: number | null; confidence_adjustment: number } = {
       similar_count: 0, avg_similarity: 0, historical_success_rate: null, confidence_adjustment: 0,
     };
     try {
       const { generateEmbedding, searchSimilar, buildRAGContext } = await import("../_shared/embeddings.ts");
-      
-      // Build a query from the top metric summaries
-      const queryText = metricSummaries.slice(0, 5).map(m => 
+
+      const queryText = metricSummaries.slice(0, 5).map(m =>
         `${m.metric_type} ${m.total_change_pct > 0 ? 'increasing' : 'declining'} ${Math.abs(m.total_change_pct).toFixed(0)}% volatility ${m.volatility_pct.toFixed(0)}%`
       ).join(". ");
-      
+
       const queryEmbedding = await generateEmbedding(queryText);
       const similar = await searchSimilar(supabaseUrl, serviceKey, organization_id, queryEmbedding, {
         entityTypes: ["decision", "outcome"],
         limit: 8,
         minSimilarity: 0.25,
       });
-      
+
       if (similar.length > 0) {
         ragContextBlock = "\n" + buildRAGContext(similar) + "\n";
         ragMetadata.similar_count = similar.length;
         ragMetadata.avg_similarity = similar.reduce((s, r) => s + r.similarity, 0) / similar.length;
-        
-        // Compute historical success rate from retrieved outcomes
+
+        // Outcome embeddings already carry a canonical, direction-aware
+        // outcome_success boolean. Raw outcome_delta is only metric movement:
+        // a negative delta can be the desired result for lower-is-better KPIs.
         const outcomes = similar.filter(r => r.entity_type === "outcome");
-        if (outcomes.length >= 2) {
-          const successCount = outcomes.filter(r => {
-            const delta = (r.metadata as any)?.outcome_delta;
-            return delta != null && delta > 0;
-          }).length;
-          ragMetadata.historical_success_rate = (successCount / outcomes.length) * 100;
-          
-          // Adjust confidence based on historical accuracy
-          const avgAccuracy = outcomes
+        const evaluatedOutcomes = outcomes.filter(
+          r => typeof (r.metadata as any)?.outcome_success === "boolean",
+        );
+        if (evaluatedOutcomes.length >= 2) {
+          const successCount = evaluatedOutcomes.filter(
+            r => (r.metadata as any)?.outcome_success === true,
+          ).length;
+          ragMetadata.historical_success_rate = (successCount / evaluatedOutcomes.length) * 100;
+
+          const avgAccuracy = evaluatedOutcomes
             .map(r => (r.metadata as any)?.accuracy_score)
-            .filter((a): a is number => a != null);
+            .filter((a): a is number => a != null && Number.isFinite(Number(a)))
+            .map(Number);
           if (avgAccuracy.length > 0) {
             const meanAccuracy = avgAccuracy.reduce((s, v) => s + v, 0) / avgAccuracy.length;
-            // If past similar decisions had low accuracy, reduce confidence
             if (meanAccuracy < 50) ragMetadata.confidence_adjustment = -10;
             else if (meanAccuracy < 70) ragMetadata.confidence_adjustment = -5;
             else if (meanAccuracy > 85) ragMetadata.confidence_adjustment = 5;
@@ -206,7 +201,6 @@ serve(async (req) => {
       console.warn("RAG retrieval skipped:", ragErr instanceof Error ? ragErr.message : "unknown");
     }
 
-    // Fetch decision context if provided
     let contextBlock = "";
     if (decision_context_id) {
       const ctxResp = await fetch(
@@ -287,7 +281,6 @@ Rules:
 
     if (!aiRes.ok) {
       console.error("AI advisory error:", aiRes.status);
-      // Fallback: return empty advisories rather than failing
       return new Response(JSON.stringify({
         advisories: [],
         total_advisories: 0,
@@ -305,7 +298,6 @@ Rules:
     const aiData = await aiRes.json();
     const content = aiData.choices?.[0]?.message?.content || "";
 
-    // Extract JSON array from response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     let aiAdvisories: any[] = [];
     if (jsonMatch) {
@@ -316,7 +308,6 @@ Rules:
       }
     }
 
-    // Apply confidence capping to each advisory (with historical RAG adjustment)
     const advisories = aiAdvisories.map((a: any, i: number) => {
       const baseConfidence = (a.raw_confidence || 70) + ragMetadata.confidence_adjustment;
       const clampedConfidence = Math.max(30, Math.min(95, baseConfidence));
@@ -340,7 +331,6 @@ Rules:
       };
     });
 
-    // Add risk-based advisories from risk index (these are always relevant)
     for (const risk of (riskIndices || [])) {
       if (risk.score >= 70) {
         const role = risk.role_type || "executive";
@@ -367,11 +357,9 @@ Rules:
       }
     }
 
-    // Sort by priority
     const priorityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
     advisories.sort((a: any, b: any) => (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3));
 
-    // Deduplication: close existing open advisories for this dataset before inserting new ones
     const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" };
 
     await fetch(
@@ -384,8 +372,6 @@ Rules:
     );
 
     if (advisories.length > 0) {
-      // ── Layer C synthesis: enrich each advisory with internal context ──
-      // Doctrine: client values stay; only confidence + interpretation are augmented.
       const orgCtx = await getOrgContext(organization_id);
 
       const enrichedRows = await Promise.all(advisories.map(async (a: any) => {
@@ -404,7 +390,6 @@ Rules:
           client_confidence: Number(cappedConf ?? 50),
         });
 
-        // Safety: never overwrite client-anchored core values; only adjust confidence within ±10pp
         const safeEnrichedConfidence = enrichment.ok
           ? Math.max(0, Math.min(100, enrichment.enriched_confidence))
           : (cappedConf ?? null);
@@ -427,7 +412,6 @@ Rules:
           kpi_affected: a.kpi_affected,
           playbook_steps: a.playbook_steps,
           status: "open",
-          // Enrichment fields (Layer C)
           decision_enrichment_id: enrichment.enrichment_id,
           client_evidence_summary: enrichment.client_evidence_summary || null,
           internal_context_summary: enrichment.internal_context_summary || null,
@@ -457,7 +441,6 @@ Rules:
         const errBody = await insertResp.text();
         console.error("advisory_instances INSERT failed:", insertResp.status, errBody);
       } else {
-        // Phase 9: record governance audit trail per advisory
         try {
           const inserted = await insertResp.json();
           const profile = await getGovernanceProfile(supabaseUrl, serviceKey, organization_id);
