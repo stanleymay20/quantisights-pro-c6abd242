@@ -1,6 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import {
+  normalizeExpectedOutcomeDirection,
+  outcomeSucceededForDirection,
+} from "../_shared/outcome-direction.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
@@ -53,6 +57,21 @@ Deno.serve(async (req) => {
           });
         }
 
+        // Resolve the canonical outcome contract. Raw delta sign is not a
+        // business-success signal because some KPIs are explicitly lower-is-better.
+        const { data: outcomeContract } = await supabase
+          .from("decision_outcomes")
+          .select("expected_direction, expected_metric, evaluation_date, created_at")
+          .eq("decision_id", decision_id)
+          .eq("organization_id", organization_id)
+          .order("evaluation_date", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const expectedDirection = outcomeContract
+          ? normalizeExpectedOutcomeDirection(outcomeContract.expected_direction, outcomeContract.expected_metric)
+          : null;
+
         // Get current metrics snapshot for context
         const { data: currentMetrics } = await supabase
           .from("metrics")
@@ -96,9 +115,11 @@ Deno.serve(async (req) => {
           }
         });
 
-        // Determine if recommendation would change
-        const hasOutcome = decision.actual_value !== null;
-        const outcomePositive = hasOutcome ? (decision.outcome_delta || 0) >= 0 : null;
+        // Determine if recommendation would change using the outcome contract.
+        const hasOutcome = decision.actual_value !== null || decision.outcome_delta !== null;
+        const outcomePositive = hasOutcome && expectedDirection
+          ? outcomeSucceededForDirection(decision.outcome_delta, expectedDirection, 1)
+          : null;
         let recommendationChanged = false;
         let replayedRecommendation = decision.recommended_action;
 
@@ -121,7 +142,7 @@ Deno.serve(async (req) => {
         }
 
         if (hasOutcome) {
-          narrativeParts.push(`Actual outcome: ${decision.outcome_delta !== null ? `${decision.outcome_delta > 0 ? "+" : ""}${decision.outcome_delta.toFixed(1)}%` : "unmeasured"}.`);
+          narrativeParts.push(`Actual metric change: ${decision.outcome_delta !== null ? `${decision.outcome_delta > 0 ? "+" : ""}${decision.outcome_delta.toFixed(1)}%` : "unmeasured"}${expectedDirection ? `; intended direction: ${expectedDirection}` : ""}.`);
           if (decision.prediction_accuracy_score !== null) {
             narrativeParts.push(`Prediction accuracy: ${decision.prediction_accuracy_score.toFixed(0)}/100.`);
           }
@@ -162,7 +183,7 @@ Deno.serve(async (req) => {
           action_type: "decision_replayed",
           resource_type: "decision_replay",
           resource_id: replay.id,
-          payload: { decision_id, drift, recommendation_changed: recommendationChanged },
+          payload: { decision_id, drift, recommendation_changed: recommendationChanged, expected_direction: expectedDirection },
         });
 
         return new Response(JSON.stringify(replay), {
