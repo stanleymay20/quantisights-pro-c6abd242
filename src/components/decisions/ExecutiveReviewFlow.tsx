@@ -131,7 +131,8 @@ export default function ExecutiveReviewFlow({
   const evidenceCount = getEvidenceSignalCount(decision);
   const riskLevel = getExecutiveRiskLevel(decision);
   const checklistComplete = isReviewChecklistComplete(checklist);
-  const approveDisabled = !checklistComplete || busy;
+  const platformReady = dataGates.every((gate) => gate.passed);
+  const approveDisabled = !checklistComplete || !platformReady || busy;
   const alreadyDecided =
     decision.decision_status === "approved" || decision.decision_status === "rejected";
 
@@ -344,9 +345,11 @@ export default function ExecutiveReviewFlow({
 
       <ReviewSection step={8} title="Final Decision Action">
         <p className="text-muted-foreground">
-          {checklistComplete
-            ? "All review items are confirmed. You can now approve this decision."
-            : "Approve stays disabled until every checklist item above is confirmed."}
+          {!platformReady
+            ? "Approve stays disabled until every platform readiness check above passes."
+            : checklistComplete
+              ? "All review items and platform readiness checks are confirmed. You can now approve this decision."
+              : "Approve stays disabled until every checklist item above is confirmed."}
         </p>
         {isDemo && (
           <p className="mt-2 text-xs font-medium text-warning">
