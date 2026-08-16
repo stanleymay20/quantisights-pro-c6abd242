@@ -49,6 +49,10 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = false
   [functions.diagnostic-engine]
     verify_jwt = false
+  [functions.evaluate-outcomes]
+    verify_jwt = false
+  [functions.aicis-evaluate-outcomes]
+    verify_jwt = false
   [functions.execute-decision-action]
     verify_jwt = false
   [functions.executive-brief]
