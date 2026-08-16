@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { outcomeSucceededForDirection, type ExpectedOutcomeDirection } from "../_shared/outcome-direction.ts";
 
 const BIAS_PATTERNS = [
   {
@@ -27,7 +28,13 @@ const BIAS_PATTERNS = [
     name: "Sunk Cost Fallacy",
     detect: (decisions: any[]) => {
       const executed = decisions.filter(d => d.execution_status === "completed" && d.outcome_delta != null);
-      const negativeOutcomes = executed.filter(d => Number(d.outcome_delta) < 0);
+      const negativeOutcomes = executed.filter(d =>
+        outcomeSucceededForDirection(
+          d.outcome_delta,
+          d._expected_direction as ExpectedOutcomeDirection | undefined,
+          1,
+        ) === false
+      );
       const followUps = decisions.filter(d =>
         d.decision_status === "approved" &&
         negativeOutcomes.some(neg => d.recommended_action?.toLowerCase().includes(neg.recommended_action?.split(" ")[0]?.toLowerCase()))
@@ -35,7 +42,7 @@ const BIAS_PATTERNS = [
       if (followUps.length >= 2) {
         return {
           confidence: 65,
-          evidence: [`${followUps.length} new investments follow ${negativeOutcomes.length} negative-outcome decisions in the same domain`],
+          evidence: [`${followUps.length} new investments follow ${negativeOutcomes.length} direction-aware negative-outcome decisions in the same domain`],
           mitigation: "Evaluate each investment on its future merit only. Past costs are irrecoverable. Consider a 'clean-slate' analysis.",
         };
       }
@@ -134,15 +141,13 @@ serve(async (req) => {
     });
     const svc = createClient(supabaseUrl, serviceKey);
 
-    // Use getClaims() for secure JWT validation
-    const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: authErr } = await userClient.auth.getUser();
     if (authErr || !user?.id) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const userId = user?.id as string;
+    const userId = user.id as string;
 
     const { organization_id } = await req.json();
     if (!organization_id) {
@@ -159,20 +164,47 @@ serve(async (req) => {
     }
 
     // Fetch decision history (org-scoped — correct per entity scoping architecture)
-    const { data: decisions } = await svc.from("decision_ledger")
-      .select("recommended_action, decision_status, execution_status, capped_confidence, raw_confidence, predicted_net_impact, outcome_delta, prediction_accuracy_score, created_at")
+    const { data: decisionRows } = await svc.from("decision_ledger")
+      .select("id, recommended_action, decision_status, execution_status, capped_confidence, raw_confidence, predicted_net_impact, outcome_delta, prediction_accuracy_score, created_at")
       .eq("organization_id", organization_id)
       .order("created_at", { ascending: true })
       .limit(200);
 
-    if (!decisions || decisions.length < 3) {
+    if (!decisionRows || decisionRows.length < 3) {
       return new Response(JSON.stringify({
         biases: [],
         insufficient_data: true,
         message: "Minimum 3 decisions required for bias detection",
-        decisions_analyzed: decisions?.length || 0,
+        decisions_analyzed: decisionRows?.length || 0,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
+    // Resolve canonical direction once. A negative raw delta can be a successful
+    // outcome when the KPI is lower-is-better, so bias detection must not infer
+    // failure from sign alone.
+    const directionByDecision = new Map<string, ExpectedOutcomeDirection>();
+    const { data: outcomeDefs } = await svc
+      .from("decision_outcomes")
+      .select("decision_id, expected_direction, evaluation_date, created_at")
+      .eq("organization_id", organization_id)
+      .in("decision_id", decisionRows.map(d => d.id))
+      .order("evaluation_date", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1000);
+
+    for (const def of outcomeDefs ?? []) {
+      if (
+        !directionByDecision.has(def.decision_id) &&
+        ["increase", "decrease", "stable"].includes(def.expected_direction)
+      ) {
+        directionByDecision.set(def.decision_id, def.expected_direction as ExpectedOutcomeDirection);
+      }
+    }
+
+    const decisions = decisionRows.map(d => ({
+      ...d,
+      _expected_direction: directionByDecision.get(d.id) ?? null,
+    }));
 
     // Run all bias detectors
     const detectedBiases: any[] = [];
