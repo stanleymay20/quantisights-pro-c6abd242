@@ -4,10 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useOrganization } from "@/hooks/useOrganization";
-import { useProject } from "@/contexts/ProjectContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  AlertTriangle, TrendingDown, Target, XCircle, CheckCircle2, Activity, Crosshair,
+  AlertTriangle, TrendingDown, Target, CheckCircle2, Activity, Crosshair,
 } from "lucide-react";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
@@ -28,42 +27,40 @@ interface Decision {
   decided_at: string | null;
   outcome_measured_at: string | null;
   created_at: string;
+  outcome_status: string | null;
+  expected_direction: string | null;
 }
 
 /**
- * A "True Miss" is a prediction error — the system was confident about the wrong outcome.
- * This is distinct from a "Bad Outcome" (negative business result regardless of prediction).
- *
- * Priority order (strongest signal first):
- * 1. predicted_net_impact > 0 but actual outcome_delta ≤ 0 (predicted gains that didn't materialize)
- * 2. prediction_accuracy_score < 50 (explicit accuracy metric below threshold)
- * 3. abs(calibration_error) > 40 (large gap between predicted and actual)
- * 4. High confidence (≥60%) + negative outcome (weakest — can punish correct pessimism)
+ * A "True Miss" is a prediction error — not merely a negative raw metric delta.
+ * The canonical decision_outcomes status is direction-aware, so a falling cost,
+ * risk, churn, or latency KPI can correctly count as success.
  */
 function isTrueMiss(d: Decision): boolean {
-  // Priority 1: Predicted positive impact but outcome negative/zero (strongest signal)
-  if (d.predicted_net_impact !== null && d.predicted_net_impact > 0 && (d.outcome_delta ?? 0) <= 0) return true;
-
-  // Priority 2: Explicit prediction accuracy score below threshold
   if (d.prediction_accuracy_score !== null && d.prediction_accuracy_score < 50) return true;
-
-  // Priority 3: Large calibration error
   if (d.calibration_error !== null && Math.abs(d.calibration_error) > 40) return true;
 
-  // Priority 4 (fallback): High confidence + bad outcome
   const conf = d.confidence_at_decision ?? d.capped_confidence ?? 0;
-  if (conf >= 60 && (d.outcome_delta ?? 0) < 0) return true;
+  if (conf >= 60 && d.outcome_status === "negative_outcome") return true;
+  if (d.predicted_net_impact !== null && d.predicted_net_impact > 0 && d.outcome_status === "negative_outcome") return true;
 
   return false;
 }
 
 function isBadOutcome(d: Decision): boolean {
-  return (d.outcome_delta ?? 0) < 0;
+  return d.outcome_status === "negative_outcome";
+}
+
+function isMeasured(d: Decision): boolean {
+  return (
+    (d.outcome_status !== null && !["pending", "not_evaluable"].includes(d.outcome_status)) ||
+    d.prediction_accuracy_score !== null ||
+    d.outcome_measured_at !== null
+  );
 }
 
 const MissesPage = () => {
   const { currentOrgId } = useOrganization();
-  const { activeDatasetId } = useProject();
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -71,21 +68,46 @@ const MissesPage = () => {
     if (!currentOrgId) return;
     (async () => {
       setLoading(true);
-      // decision_ledger is org-scoped by design (decisions span datasets)
-      const { data } = await supabase
-        .from("decision_ledger")
-        .select("id, recommended_action, decision_type, confidence_at_decision, capped_confidence, calibration_error, prediction_accuracy_score, outcome_delta, actual_value, baseline_value, predicted_net_impact, execution_status, decided_at, outcome_measured_at, created_at")
-        .eq("organization_id", currentOrgId)
-        .eq("execution_status", "completed")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (data) setDecisions(data as Decision[]);
+      const [decisionResult, outcomeResult] = await Promise.all([
+        supabase
+          .from("decision_ledger")
+          .select("id, recommended_action, decision_type, confidence_at_decision, capped_confidence, calibration_error, prediction_accuracy_score, outcome_delta, actual_value, baseline_value, predicted_net_impact, execution_status, decided_at, outcome_measured_at, created_at")
+          .eq("organization_id", currentOrgId)
+          .eq("execution_status", "completed")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("decision_outcomes")
+          .select("decision_id, outcome_status, expected_direction, evaluation_date, created_at")
+          .eq("organization_id", currentOrgId)
+          .order("evaluation_date", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .limit(1000),
+      ]);
+
+      const outcomeByDecision = new Map<string, { outcome_status: string | null; expected_direction: string | null }>();
+      for (const outcome of outcomeResult.data ?? []) {
+        if (!outcomeByDecision.has(outcome.decision_id)) {
+          outcomeByDecision.set(outcome.decision_id, {
+            outcome_status: outcome.outcome_status,
+            expected_direction: outcome.expected_direction,
+          });
+        }
+      }
+
+      if (decisionResult.data) {
+        setDecisions(decisionResult.data.map((decision) => ({
+          ...decision,
+          outcome_status: outcomeByDecision.get(decision.id)?.outcome_status ?? null,
+          expected_direction: outcomeByDecision.get(decision.id)?.expected_direction ?? null,
+        })) as Decision[]);
+      }
       setLoading(false);
     })();
   }, [currentOrgId]);
 
   const { trueMisses, badOutcomes, hits, measured, trueMissRate, avgMissCalError, avgHitCalError, worstMiss } = useMemo(() => {
-    const measured = decisions.filter(d => d.outcome_delta !== null);
+    const measured = decisions.filter(isMeasured);
     const trueMisses = measured.filter(isTrueMiss);
     const badOutcomes = measured.filter(d => isBadOutcome(d) && !isTrueMiss(d));
     const hits = measured.filter(d => !isTrueMiss(d) && !isBadOutcome(d));
@@ -111,6 +133,8 @@ const MissesPage = () => {
 
   const renderDecisionRow = (d: Decision) => {
     const conf = d.confidence_at_decision || d.capped_confidence || 0;
+    const isFailure = d.outcome_status === "negative_outcome";
+    const isSuccess = d.outcome_status === "success" || d.outcome_status === "partial_success";
     return (
       <div key={d.id} className="flex items-center justify-between py-3 px-4 rounded-lg bg-muted/30 border">
         <div className="flex-1 min-w-0 mr-4">
@@ -122,9 +146,12 @@ const MissesPage = () => {
         <div className="flex items-center gap-3 shrink-0">
           <div className="text-right">
             <p className="text-xs text-muted-foreground">Outcome</p>
-            <p className={`text-sm font-bold tabular-nums ${(d.outcome_delta || 0) < 0 ? "text-destructive" : "text-success"}`}>
+            <p className={`text-sm font-bold tabular-nums ${isFailure ? "text-destructive" : isSuccess ? "text-success" : "text-foreground"}`}>
               {(d.outcome_delta || 0) >= 0 ? "+" : ""}{(d.outcome_delta || 0).toFixed(1)}%
             </p>
+            {d.expected_direction && (
+              <p className="text-[10px] text-muted-foreground">goal: {d.expected_direction}</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground">Confidence</p>
@@ -152,7 +179,6 @@ const MissesPage = () => {
 
         <SectionErrorBoundary sectionName="Missed Signals">
         <main className="flex-1 p-8 overflow-auto space-y-6">
-          {/* Summary */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <Card>
               <CardContent className="p-4 text-center">
@@ -195,7 +221,6 @@ const MissesPage = () => {
             </Card>
           </div>
 
-          {/* Worst miss */}
           {worstMiss && (
             <Card className="border-destructive/30 bg-destructive/5">
               <CardHeader className="pb-2">
@@ -210,6 +235,7 @@ const MissesPage = () => {
                   <Badge variant="destructive">Outcome: {(worstMiss.outcome_delta || 0) >= 0 ? "+" : ""}{(worstMiss.outcome_delta || 0).toFixed(1)}%</Badge>
                   <Badge variant="outline">Confidence: {worstMiss.confidence_at_decision || worstMiss.capped_confidence || 0}%</Badge>
                   <Badge variant="outline">Cal Error: {Math.abs(worstMiss.calibration_error || 0).toFixed(0)}</Badge>
+                  {worstMiss.expected_direction && <Badge variant="outline">Goal: {worstMiss.expected_direction}</Badge>}
                   {worstMiss.predicted_net_impact !== null && (
                     <Badge variant="outline">Predicted Impact: {worstMiss.predicted_net_impact > 0 ? "+" : ""}{worstMiss.predicted_net_impact.toFixed(0)}</Badge>
                   )}
@@ -218,7 +244,6 @@ const MissesPage = () => {
             </Card>
           )}
 
-          {/* Tabbed lists */}
           <Tabs defaultValue="true-misses">
             <TabsList>
               <TabsTrigger value="true-misses" className="gap-1.5">
@@ -237,7 +262,7 @@ const MissesPage = () => {
                     True Misses — Prediction Was Wrong
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    The model was confident about the wrong direction — predicted gains that didn't materialize, or high confidence with opposite results.
+                    The model was confident about the wrong direction or its recorded prediction accuracy fell below threshold.
                   </p>
                 </CardHeader>
                 <CardContent>
@@ -264,7 +289,7 @@ const MissesPage = () => {
                     Bad Outcomes — But Prediction May Have Been Correct
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Negative business result, but the system correctly flagged risk or assigned low confidence — this is calibration working as intended.
+                    The canonical outcome contract was missed, but the system may still have correctly flagged the risk or assigned low confidence.
                   </p>
                 </CardHeader>
                 <CardContent>
@@ -283,15 +308,13 @@ const MissesPage = () => {
             </TabsContent>
           </Tabs>
 
-          {/* Insight */}
           <Card className="border-muted">
             <CardContent className="p-5 text-center">
               <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-2">Why distinguish misses from bad outcomes?</p>
               <p className="text-sm text-muted-foreground max-w-xl mx-auto leading-relaxed">
-                A bad business outcome with low predicted confidence is actually a <span className="text-foreground font-medium">calibration success</span> — 
-                the system correctly identified uncertainty. A "True Miss" is where the prediction itself was wrong: 
-                high confidence that didn't materialize, or predicted gains that turned into losses. 
-                This distinction prevents gaming calibration scores and builds genuine trust.
+                A business outcome that missed its intended direction with low predicted confidence can still be a <span className="text-foreground font-medium">calibration success</span> —
+                the system correctly identified uncertainty. A "True Miss" is where the prediction itself was wrong.
+                Quantivis evaluates success against the KPI's intended direction, so lower-is-better metrics are not mislabeled as failures.
               </p>
             </CardContent>
           </Card>
