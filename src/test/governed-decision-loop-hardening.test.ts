@@ -81,6 +81,31 @@ describe("governed decision loop hardening", () => {
     expect(bias).not.toContain("Number(d.outcome_delta) < 0");
   });
 
+  it("keeps downstream outcome consumers direction safe", () => {
+    const outcomes = read("src/pages/Outcomes.tsx");
+    const misses = read("src/pages/Misses.tsx");
+    const history = read("src/pages/DecisionHistory.tsx");
+    const memory = read("src/components/dashboard/DecisionMemoryWidget.tsx");
+    const impact = read("src/components/decision-intelligence/DecisionImpactAttribution.tsx");
+    const strategy = read("src/pages/StrategyPack.tsx");
+    const embeddings = read("supabase/functions/embed-decisions/index.ts");
+
+    expect(outcomes).toContain("outcome_status");
+    expect(outcomes).toContain('status === "success" || status === "partial_success"');
+    expect(misses).toContain('d.outcome_status === "negative_outcome"');
+    expect(history).toContain("metric change");
+    expect(history).not.toContain('variant={(r.outcome_delta ?? 0) >= 0 ? "default" : "destructive"}');
+    expect(memory).toContain("Metric Δ:");
+    expect(memory).not.toContain('(d.outcome_delta ?? 0) >= 0 ? "text-success" : "text-destructive"');
+    expect(impact).toContain("Prediction Hit Rate");
+    expect(impact).not.toContain("const positiveCount");
+    expect(strategy).toContain("prediction_accuracy_score");
+    expect(strategy).toContain('label="Decision Accuracy"');
+    expect(strategy).not.toContain("completedDecisions.filter(d => (d.outcome_delta || 0) > 0)");
+    expect(embeddings).toContain("outcome_success: outcomeSuccess");
+    expect(embeddings).toContain("expected_direction: expectedDirection ?? null");
+  });
+
   it("keeps the browser approval button blocked by platform readiness as well as human review", () => {
     const review = read("src/components/decisions/ExecutiveReviewFlow.tsx");
 
