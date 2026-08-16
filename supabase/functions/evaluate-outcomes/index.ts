@@ -48,6 +48,10 @@ function classifyOutcome(
         100 - Math.abs(observedChange - expectedSignedChange) * 2
       ));
     }
+  } else {
+    // When no magnitude was forecast, retain a direction-aware calibration
+    // signal instead of falling back elsewhere to raw delta sign.
+    accuracyScore = succeeded ? 100 : status === "no_effect" ? 50 : 0;
   }
 
   return { status, accuracyScore };
@@ -67,8 +71,17 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action, organization_id, dataset_id, decision_id } = body;
 
-    // ── CRON: evaluate_all processes all orgs — protected by advisory lock ──
+    // ── CRON: evaluate_all processes all orgs — authenticated + locked ──
     if (action === "evaluate_all" && body.cron === true) {
+      const cronSecretHeader = req.headers.get("x-cron-secret");
+      const cronSecretEnv = Deno.env.get("CRON_SHARED_SECRET") ?? Deno.env.get("INGEST_CRON_SECRET");
+      if (!cronSecretHeader || !cronSecretEnv || cronSecretHeader !== cronSecretEnv) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const guard = await cronGuard("evaluate-outcomes");
       if (!guard.acquired) return guard.earlyResponse(corsHeaders);
 
@@ -275,10 +288,40 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Scheduling and manual evaluation mutate governance evidence and therefore
+    // require organization ownership/admin authority. Read-only performance and
+    // reliability queries remain available to members.
+    if (action === "schedule" || action === "evaluate") {
+      const { data: orgRole } = await supabase.rpc("get_user_org_role", {
+        _user_id: userId,
+        _org_id: organization_id,
+      });
+      if (!orgRole || !["owner", "admin"].includes(String(orgRole))) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // ── SCHEDULE: Create outcome tracking entry when decision is approved ──
     if (action === "schedule") {
       if (!decision_id || !body.expected_metric) {
         return new Response(JSON.stringify({ error: "decision_id and expected_metric required" }), { status: 400, headers: corsHeaders });
+      }
+
+      const { data: decisionCheck } = await supabase
+        .from("decision_ledger")
+        .select("id, decision_status")
+        .eq("id", decision_id)
+        .eq("organization_id", organization_id)
+        .maybeSingle();
+      if (!decisionCheck) {
+        return new Response(JSON.stringify({ error: "Decision not found" }), { status: 404, headers: corsHeaders });
+      }
+      if (decisionCheck.decision_status !== "approved") {
+        return new Response(JSON.stringify({ error: "Outcome tracking can only be scheduled for an approved decision" }), {
+          status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       if (dataset_id) {
