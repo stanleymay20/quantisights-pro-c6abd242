@@ -42,29 +42,24 @@ function deriveLifecycleState(d: RecentDecision): { label: string; color: string
 }
 
 function deriveLearning(d: RecentDecision): string | null {
-  if (d.outcome_delta == null || d.outcome_measured_at == null) return null;
-  const predicted = d.predicted_net_impact;
-  const actual = d.outcome_delta;
+  if (d.outcome_measured_at == null) return null;
   const accuracy = d.prediction_accuracy_score;
 
-  if (predicted != null && actual != null) {
-    const withinRange = Math.abs(actual - predicted) <= Math.abs(predicted) * 0.3;
-    if (withinRange) {
-      return `Outcome within modeled range (predicted ${predicted > 0 ? "+" : ""}${predicted.toFixed(1)}%, actual ${actual > 0 ? "+" : ""}${actual.toFixed(1)}%). Confidence reinforced for similar signals.`;
-    }
-    if (actual < predicted) {
-      return `Model overestimated impact (predicted ${predicted > 0 ? "+" : ""}${predicted.toFixed(1)}%, actual ${actual > 0 ? "+" : ""}${actual.toFixed(1)}%). Confidence adjusted downward for this signal class.`;
-    }
-    return `Outcome exceeded prediction (predicted ${predicted > 0 ? "+" : ""}${predicted.toFixed(1)}%, actual ${actual > 0 ? "+" : ""}${actual.toFixed(1)}%). Model updated to recognize stronger effect patterns.`;
-  }
-
+  // prediction_accuracy_score is the canonical direction-aware learning
+  // signal. Never compare raw outcome_delta directly with predicted impact:
+  // lower-is-better KPIs can have successful negative deltas, and the two
+  // values are not guaranteed to share one business-impact unit.
   if (accuracy != null) {
     if (accuracy >= 70) return `Prediction accuracy ${Math.round(accuracy)}% — model confidence reinforced.`;
     if (accuracy >= 40) return `Prediction accuracy ${Math.round(accuracy)}% — model recalibrating for this signal class.`;
-    return `Prediction accuracy ${Math.round(accuracy)}% — confidence reduced for similar future cases until more outcome data collected.`;
+    return `Prediction accuracy ${Math.round(accuracy)}% — confidence reduced for similar future cases until more outcome data is collected.`;
   }
 
-  return `Outcome recorded (${actual > 0 ? "+" : ""}${actual.toFixed(1)}%). Feeding into calibration engine.`;
+  if (d.outcome_delta != null) {
+    return `Outcome recorded (metric change ${d.outcome_delta > 0 ? "+" : ""}${d.outcome_delta.toFixed(1)}%). Direction-aware evaluation is pending before this is treated as success or failure.`;
+  }
+
+  return null;
 }
 
 const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
@@ -135,6 +130,7 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
     >
       <div className="flex items-center justify-between mb-2 sm:mb-4">
         <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-primary" />
           <h3 className="text-xs sm:text-sm font-semibold tracking-tight">Decision Memory</h3>
         </div>
         <Link to="/decisions" className="text-[10px] sm:text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5">
@@ -153,7 +149,6 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
         </div>
       ) : (
         <>
-          {/* Mobile compact summary */}
           <div className="sm:hidden">
             <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30">
               <div className="text-xs">
@@ -176,9 +171,7 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
             )}
           </div>
 
-          {/* Desktop full view / mobile expanded */}
           <div className={`${expanded ? "block" : "hidden"} sm:block`}>
-          {/* Calibration Score */}
           {calibrationTrend.current != null && (
             <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 mb-3">
               <div className="flex-1">
@@ -199,7 +192,6 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
             </div>
           )}
 
-          {/* Recent Decisions with Lifecycle + Outcome */}
           {decisions.length > 0 && (
             <div className="space-y-1">
               {decisions.slice(0, 5).map((d) => {
@@ -225,16 +217,15 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
                       </span>
                     </div>
 
-                    {/* Outcome comparison row */}
                     {hasOutcome && (
                       <div className="mt-1.5 ml-6 flex items-center gap-3 text-[10px]">
                         {d.predicted_net_impact != null && (
                           <span className="text-muted-foreground">
-                            Predicted: <span className="font-mono font-semibold">{d.predicted_net_impact > 0 ? "+" : ""}{d.predicted_net_impact.toFixed(1)}%</span>
+                            Predicted impact: <span className="font-mono font-semibold">{d.predicted_net_impact > 0 ? "+" : ""}{d.predicted_net_impact.toFixed(1)}%</span>
                           </span>
                         )}
-                        <span className={`font-mono font-semibold ${(d.outcome_delta ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
-                          Actual: {(d.outcome_delta ?? 0) > 0 ? "+" : ""}{(d.outcome_delta ?? 0).toFixed(1)}%
+                        <span className="font-mono font-semibold text-foreground" title="Raw metric change; success depends on the KPI's intended direction.">
+                          Metric Δ: {(d.outcome_delta ?? 0) > 0 ? "+" : ""}{(d.outcome_delta ?? 0).toFixed(1)}%
                         </span>
                         {d.prediction_accuracy_score != null && (
                           <span className={`${d.prediction_accuracy_score >= 70 ? "text-success" : d.prediction_accuracy_score >= 40 ? "text-warning" : "text-destructive"}`}>
@@ -244,7 +235,6 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
                       </div>
                     )}
 
-                    {/* Learning line */}
                     {learning && (
                       <p className="mt-1 ml-6 text-[10px] text-muted-foreground italic leading-relaxed">
                         ↳ {learning}
@@ -256,7 +246,6 @@ const DecisionMemoryWidget = memo(({ organizationId }: DecisionMemoryWidgetProps
             </div>
           )}
 
-          {/* Lifecycle legend */}
           <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-border/20 flex-wrap">
             {["Recommended", "Approved", "Outcome Recorded", "Recalibrated"].map((stage, i) => (
               <div key={stage} className="flex items-center gap-1">
