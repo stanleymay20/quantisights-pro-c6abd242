@@ -55,10 +55,11 @@ BEGIN
   v_evidence_status := lower(COALESCE(v_meta ->> 'evidence_status', ''));
   v_evidence_verified :=
     v_evidence_status IN ('verified', 'passed', 'approved', 'complete', 'completed', 'valid')
-    OR (
-      jsonb_typeof(v_evidence_sources) = 'array'
-      AND jsonb_array_length(v_evidence_sources) > 0
-    )
+    OR CASE
+      WHEN jsonb_typeof(v_evidence_sources) = 'array'
+        THEN jsonb_array_length(v_evidence_sources) > 0
+      ELSE false
+    END
     OR (
       v_meta ? 'source_data'
       AND jsonb_typeof(v_meta -> 'source_data') = 'object'
@@ -75,10 +76,11 @@ BEGIN
     lower(COALESCE(v_meta ->> 'has_unresolved_contradiction', 'false')) IN ('true', '1', 'yes')
     OR lower(COALESCE(v_meta ->> 'unresolved_contradiction', 'false')) IN ('true', '1', 'yes')
     OR lower(COALESCE(v_meta ->> 'contradiction_unresolved', 'false')) IN ('true', '1', 'yes')
-    OR (
-      jsonb_typeof(v_meta -> 'contradictions') = 'array'
-      AND jsonb_array_length(v_meta -> 'contradictions') > 0
-    )
+    OR CASE
+      WHEN jsonb_typeof(v_meta -> 'contradictions') = 'array'
+        THEN jsonb_array_length(v_meta -> 'contradictions') > 0
+      ELSE false
+    END
   );
 
   v_confidence_ok := v_confidence IS NOT NULL AND v_confidence >= 70;
