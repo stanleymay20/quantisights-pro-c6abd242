@@ -15,29 +15,40 @@ const DecisionImpactAttribution = ({ decisions }: Props) => {
 
     if (completed.length < 2) return null;
 
-    let cumulativeImpact = 0;
+    let cumulativeMetricChange = 0;
     let cumulativeAccuracy = 0;
+    let accuracyCount = 0;
 
-    const points = completed.map((d, i) => {
-      cumulativeImpact += Number(d.outcome_delta) || 0;
-      const accuracy = Number(d.prediction_accuracy_score) || 0;
-      cumulativeAccuracy = (cumulativeAccuracy * i + accuracy) / (i + 1);
+    const points = completed.map((d) => {
+      cumulativeMetricChange += Number(d.outcome_delta) || 0;
+      const hasAccuracy = d.prediction_accuracy_score != null && Number.isFinite(Number(d.prediction_accuracy_score));
+      if (hasAccuracy) {
+        accuracyCount += 1;
+        const accuracy = Number(d.prediction_accuracy_score);
+        cumulativeAccuracy = ((cumulativeAccuracy * (accuracyCount - 1)) + accuracy) / accuracyCount;
+      }
 
       return {
         date: format(parseISO(d.outcome_measured_at), "MMM yy"),
         rawDate: d.outcome_measured_at,
         impact: Number(d.outcome_delta) || 0,
-        cumulative: Math.round(cumulativeImpact * 100) / 100,
-        accuracy: Math.round(cumulativeAccuracy),
+        cumulative: Math.round(cumulativeMetricChange * 100) / 100,
+        accuracy: accuracyCount > 0 ? Math.round(cumulativeAccuracy) : null,
         action: d.recommended_action?.substring(0, 40),
       };
     });
 
-    const totalImpact = cumulativeImpact;
-    const positiveCount = completed.filter((d) => (Number(d.outcome_delta) || 0) > 0).length;
-    const hitRate = Math.round((positiveCount / completed.length) * 100);
+    const scored = completed.filter((d) => d.prediction_accuracy_score != null && Number.isFinite(Number(d.prediction_accuracy_score)));
+    const hitCount = scored.filter((d) => Number(d.prediction_accuracy_score) >= 50).length;
+    const hitRate = scored.length > 0 ? Math.round((hitCount / scored.length) * 100) : null;
 
-    return { points, totalImpact, hitRate, count: completed.length, avgAccuracy: Math.round(cumulativeAccuracy) };
+    return {
+      points,
+      totalMetricChange: cumulativeMetricChange,
+      hitRate,
+      count: completed.length,
+      avgAccuracy: accuracyCount > 0 ? Math.round(cumulativeAccuracy) : null,
+    };
   }, [decisions]);
 
   if (!data) {
@@ -66,24 +77,23 @@ const DecisionImpactAttribution = ({ decisions }: Props) => {
         </span>
       </div>
 
-      {/* Summary row */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
-          <p className="text-[10px] text-muted-foreground uppercase">Cumulative Impact</p>
-          <p className={`text-lg font-bold tracking-tight ${data.totalImpact >= 0 ? "text-emerald-400" : "text-destructive"}`}>
-            {data.totalImpact >= 0 ? "+" : ""}{data.totalImpact.toFixed(1)}%
+          <p className="text-[10px] text-muted-foreground uppercase">Cumulative Metric Δ</p>
+          <p className="text-lg font-bold tracking-tight text-foreground" title="Raw metric change; direction is not interpreted as good or bad here.">
+            {data.totalMetricChange >= 0 ? "+" : ""}{data.totalMetricChange.toFixed(1)}%
           </p>
         </div>
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
-          <p className="text-[10px] text-muted-foreground uppercase">Hit Rate</p>
-          <p className={`text-lg font-bold tracking-tight ${data.hitRate >= 60 ? "text-emerald-400" : "text-warning"}`}>
-            {data.hitRate}%
+          <p className="text-[10px] text-muted-foreground uppercase">Prediction Hit Rate</p>
+          <p className={`text-lg font-bold tracking-tight ${data.hitRate == null ? "text-muted-foreground" : data.hitRate >= 60 ? "text-emerald-400" : "text-warning"}`}>
+            {data.hitRate == null ? "—" : `${data.hitRate}%`}
           </p>
         </div>
         <div className="bg-muted/20 rounded-lg p-2.5 text-center">
           <p className="text-[10px] text-muted-foreground uppercase">Model Accuracy</p>
-          <p className={`text-lg font-bold tracking-tight ${data.avgAccuracy >= 70 ? "text-emerald-400" : "text-warning"}`}>
-            {Math.round(data.avgAccuracy)}%
+          <p className={`text-lg font-bold tracking-tight ${data.avgAccuracy == null ? "text-muted-foreground" : data.avgAccuracy >= 70 ? "text-emerald-400" : "text-warning"}`}>
+            {data.avgAccuracy == null ? "—" : `${Math.round(data.avgAccuracy)}%`}
           </p>
         </div>
       </div>
@@ -102,8 +112,8 @@ const DecisionImpactAttribution = ({ decisions }: Props) => {
                 return (
                   <div className="bg-popover border border-border p-2 rounded-lg shadow-lg text-xs space-y-1">
                     <p className="font-semibold">{d.date}</p>
-                    <p>Decision Impact: <span className="font-mono font-bold">{d.impact >= 0 ? "+" : ""}{d.impact.toFixed(1)}%</span></p>
-                    <p>Cumulative: <span className="font-mono font-bold">{d.cumulative >= 0 ? "+" : ""}{d.cumulative.toFixed(1)}%</span></p>
+                    <p>Metric change: <span className="font-mono font-bold">{d.impact >= 0 ? "+" : ""}{d.impact.toFixed(1)}%</span></p>
+                    <p>Cumulative metric Δ: <span className="font-mono font-bold">{d.cumulative >= 0 ? "+" : ""}{d.cumulative.toFixed(1)}%</span></p>
                     <p className="text-muted-foreground truncate max-w-48">{d.action}</p>
                   </div>
                 );
@@ -131,11 +141,11 @@ const DecisionImpactAttribution = ({ decisions }: Props) => {
       <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
         <div className="flex items-center gap-1">
           <div className="w-3 h-0.5 bg-primary rounded" />
-          Cumulative impact
+          Cumulative metric change
         </div>
         <div className="flex items-center gap-1">
           <div className="w-3 h-0.5 bg-muted-foreground rounded" style={{ borderTop: "1px dashed" }} />
-          Per-decision impact
+          Per-decision metric change
         </div>
       </div>
     </div>
