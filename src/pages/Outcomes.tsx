@@ -23,7 +23,15 @@ interface OutcomeRecord {
   decided_at: string | null;
   created_at: string;
   decision_type: string;
+  outcome_status: string | null;
+  expected_direction: string | null;
 }
+
+const isEvaluatedStatus = (status: string | null) =>
+  status != null && !["pending", "not_evaluable"].includes(status);
+const isWorkedStatus = (status: string | null) =>
+  status === "success" || status === "partial_success";
+const isMissedStatus = (status: string | null) => status === "negative_outcome";
 
 const Outcomes = () => {
   const { currentOrgId } = useOrganization();
@@ -35,21 +43,51 @@ const Outcomes = () => {
     if (!currentOrgId) return;
     const load = async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from("decision_ledger")
-        .select("id, recommended_action, confidence_at_decision, outcome_delta, prediction_accuracy_score, outcome_measured_at, decided_at, created_at, decision_type")
-        .eq("organization_id", currentOrgId)
-        .eq("decision_status", "approved")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      setRecords(data ?? []);
+      const [ledgerResult, outcomeResult] = await Promise.all([
+        supabase
+          .from("decision_ledger")
+          .select("id, recommended_action, confidence_at_decision, outcome_delta, prediction_accuracy_score, outcome_measured_at, decided_at, created_at, decision_type")
+          .eq("organization_id", currentOrgId)
+          .eq("decision_status", "approved")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("decision_outcomes")
+          .select("decision_id, outcome_status, expected_direction, evaluation_date, created_at")
+          .eq("organization_id", currentOrgId)
+          .order("evaluation_date", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .limit(1000),
+      ]);
+
+      const statusByDecision = new Map<string, { outcome_status: string | null; expected_direction: string | null }>();
+      for (const outcome of outcomeResult.data ?? []) {
+        if (!statusByDecision.has(outcome.decision_id)) {
+          statusByDecision.set(outcome.decision_id, {
+            outcome_status: outcome.outcome_status,
+            expected_direction: outcome.expected_direction,
+          });
+        }
+      }
+
+      setRecords((ledgerResult.data ?? []).map((record) => ({
+        ...record,
+        outcome_status: statusByDecision.get(record.id)?.outcome_status ?? null,
+        expected_direction: statusByDecision.get(record.id)?.expected_direction ?? null,
+      })));
       setLoading(false);
     };
     load();
   }, [currentOrgId]);
 
-  const evaluated = useMemo(() => records.filter(r => r.outcome_measured_at && r.outcome_delta != null), [records]);
-  const pending = useMemo(() => records.filter(r => !r.outcome_measured_at), [records]);
+  const evaluated = useMemo(
+    () => records.filter(r => isEvaluatedStatus(r.outcome_status) || (r.outcome_measured_at && r.outcome_delta != null)),
+    [records],
+  );
+  const pending = useMemo(
+    () => records.filter(r => !isEvaluatedStatus(r.outcome_status) && !r.outcome_measured_at),
+    [records],
+  );
 
   const avgAccuracy = useMemo(() => {
     const scored = evaluated.filter(r => r.prediction_accuracy_score != null);
@@ -57,8 +95,8 @@ const Outcomes = () => {
     return Math.round(scored.reduce((s, r) => s + (r.prediction_accuracy_score ?? 0), 0) / scored.length);
   }, [evaluated]);
 
-  const positiveOutcomes = evaluated.filter(r => (r.outcome_delta ?? 0) > 0).length;
-  const negativeOutcomes = evaluated.filter(r => (r.outcome_delta ?? 0) < 0).length;
+  const workedOutcomes = evaluated.filter(r => isWorkedStatus(r.outcome_status)).length;
+  const missedOutcomes = evaluated.filter(r => isMissedStatus(r.outcome_status)).length;
 
   if (loading) {
     return (
@@ -81,7 +119,6 @@ const Outcomes = () => {
           </div>
         </div>
 
-        {/* Summary cards */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -111,20 +148,19 @@ const Outcomes = () => {
           <Card>
             <CardContent className="p-4 text-center">
               <TrendingUp className="w-5 h-5 text-success mx-auto mb-1" />
-              <p className="text-[18px] font-semibold tracking-tight text-success">{positiveOutcomes}</p>
+              <p className="text-[18px] font-semibold tracking-tight text-success">{workedOutcomes}</p>
               <p className="text-xs text-muted-foreground">Worked</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4 text-center">
               <TrendingDown className="w-5 h-5 text-destructive mx-auto mb-1" />
-              <p className="text-[18px] font-semibold tracking-tight text-destructive">{negativeOutcomes}</p>
+              <p className="text-[18px] font-semibold tracking-tight text-destructive">{missedOutcomes}</p>
               <p className="text-xs text-muted-foreground">Missed</p>
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* Accuracy bar */}
         {avgAccuracy != null && (
           <Card>
             <CardContent className="p-5">
@@ -140,7 +176,6 @@ const Outcomes = () => {
           </Card>
         )}
 
-        {/* Evaluated outcomes */}
         {evaluated.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
@@ -148,7 +183,8 @@ const Outcomes = () => {
             </h2>
             {evaluated.map((r) => {
               const delta = r.outcome_delta ?? 0;
-              const isPositive = delta >= 0;
+              const worked = isWorkedStatus(r.outcome_status);
+              const missed = isMissedStatus(r.outcome_status);
               const accuracy = r.prediction_accuracy_score;
               return (
                 <Card
@@ -166,15 +202,25 @@ const Outcomes = () => {
                 >
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
-                      <div className={`mt-0.5 ${isPositive ? "text-success" : "text-destructive"}`}>
-                        {isPositive ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+                      <div className={`mt-0.5 ${worked ? "text-success" : missed ? "text-destructive" : "text-muted-foreground"}`}>
+                        {worked ? <CheckCircle2 className="w-5 h-5" /> : missed ? <XCircle className="w-5 h-5" /> : <Minus className="w-5 h-5" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium leading-snug">{r.recommended_action}</p>
                         <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <Badge variant={isPositive ? "default" : "destructive"} className="text-xs">
-                            {isPositive ? "+" : ""}{delta.toFixed(1)}% impact
+                          <Badge variant={missed ? "destructive" : worked ? "default" : "secondary"} className="text-xs">
+                            {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% impact
                           </Badge>
+                          {r.outcome_status && (
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {r.outcome_status.replace(/_/g, " ")}
+                            </Badge>
+                          )}
+                          {r.expected_direction && (
+                            <Badge variant="outline" className="text-xs">
+                              Goal: {r.expected_direction}
+                            </Badge>
+                          )}
                           {accuracy != null && (
                             <Badge variant="secondary" className="text-xs">
                               {accuracy.toFixed(0)}% accuracy
@@ -193,7 +239,6 @@ const Outcomes = () => {
           </div>
         )}
 
-        {/* Pending measurement */}
         {pending.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -236,7 +281,6 @@ const Outcomes = () => {
           </div>
         )}
 
-        {/* Empty state */}
         {records.length === 0 && (
           <div className="text-center py-16">
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
