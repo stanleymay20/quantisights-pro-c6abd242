@@ -253,7 +253,13 @@ describe("DecisionReview.tsx — approve()/reject() behavior (mocked RPC)", () =
     updated_at: "2026-01-01T00:00:00.000Z",
     decided_at: null,
     decided_by: null,
-    explanation_metadata: null,
+    explanation_metadata: {
+      evidence_status: "verified",
+      evidence_classification: "decision_grade",
+      source_data: { dataset_id: "dataset-1", dataset_name: "Supplier costs" },
+      governance: { status: "pending" },
+      contradictions: [],
+    },
   };
 
   // Generic chainable/thenable Supabase query-builder stub: every method
