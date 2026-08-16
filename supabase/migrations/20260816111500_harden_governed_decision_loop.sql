@@ -52,18 +52,27 @@ BEGIN
     RAISE EXCEPTION 'decision % not found', _decision_id USING ERRCODE = 'no_data_found';
   END IF;
 
+  -- Match the client trust adapter exactly: an explicit evidence status wins.
+  -- Linked evidence/source_data is only an inference fallback when no explicit
+  -- status is present. This prevents a caller from bypassing an explicit
+  -- partial/blocked/missing evidence classification merely by retaining links.
   v_evidence_status := lower(COALESCE(v_meta ->> 'evidence_status', ''));
-  v_evidence_verified :=
-    v_evidence_status IN ('verified', 'passed', 'approved', 'complete', 'completed', 'valid')
-    OR CASE
-      WHEN jsonb_typeof(v_evidence_sources) = 'array'
-        THEN jsonb_array_length(v_evidence_sources) > 0
-      ELSE false
-    END
-    OR (
-      v_meta ? 'source_data'
-      AND jsonb_typeof(v_meta -> 'source_data') = 'object'
+  IF v_evidence_status <> '' THEN
+    v_evidence_verified := v_evidence_status IN (
+      'verified', 'passed', 'approved', 'complete', 'completed', 'valid'
     );
+  ELSE
+    v_evidence_verified :=
+      CASE
+        WHEN jsonb_typeof(v_evidence_sources) = 'array'
+          THEN jsonb_array_length(v_evidence_sources) > 0
+        ELSE false
+      END
+      OR (
+        v_meta ? 'source_data'
+        AND jsonb_typeof(v_meta -> 'source_data') = 'object'
+      );
+  END IF;
 
   v_source_quality := lower(COALESCE(
     v_meta ->> 'evidence_classification',
