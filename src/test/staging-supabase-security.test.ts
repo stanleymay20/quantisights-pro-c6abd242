@@ -63,7 +63,8 @@ describe("staging Supabase security remediation", () => {
     expect(stagingWorkflow).toContain("SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc");
     expect(stagingWorkflow).not.toContain("itpwpnwzzitkelffttyx");
     expect(productionWorkflow).toContain("environment: production");
-    expect(productionWorkflow).toContain("SUPABASE_PROJECT_REF: itpwpnwzzitkelffttyx");
+    expect(productionWorkflow).toContain("SUPABASE_PROJECT_REF: izgfrekdamlgigehxoqs");
+    expect(productionWorkflow).not.toContain("SUPABASE_PROJECT_REF: itpwpnwzzitkelffttyx");
     expect(productionWorkflow).toContain("confirm_project_ref");
     expect(productionWorkflow).not.toMatch(/push:\s*\n/);
   });
