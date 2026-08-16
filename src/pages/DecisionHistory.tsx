@@ -132,11 +132,8 @@ const DecisionHistory = () => {
                               </span>
                             )}
                             {hasOutcome && (
-                              <Badge
-                                variant={(r.outcome_delta ?? 0) >= 0 ? "default" : "destructive"}
-                                className="text-[10px]"
-                              >
-                                {(r.outcome_delta ?? 0) >= 0 ? "+" : ""}{(r.outcome_delta ?? 0).toFixed(1)}%
+                              <Badge variant="secondary" className="text-[10px]" title="Raw metric change; success depends on the KPI's expected direction.">
+                                {(r.outcome_delta ?? 0) >= 0 ? "+" : ""}{(r.outcome_delta ?? 0).toFixed(1)}% metric change
                               </Badge>
                             )}
                             {r.prediction_accuracy_score != null && (
