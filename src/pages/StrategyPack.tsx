@@ -1,21 +1,19 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Download, FileText, Shield, TrendingUp, TrendingDown,
+  Download, Shield, TrendingUp, TrendingDown,
   AlertTriangle, CheckCircle2, Activity, Info, Loader2,
   BarChart3, Briefcase, Target, Eye,
 } from "lucide-react";
 import IntelligenceDisclaimer from "@/components/IntelligenceDisclaimer";
 import DatasetRequired from "@/components/layout/DatasetRequired";
 
-// ─── Types ───
 interface RoleRisk {
   role_type: string;
   score: number;
@@ -40,6 +38,7 @@ interface DecisionRow {
   predicted_net_impact: number | null;
   predicted_roi_probability: number | null;
   outcome_delta: number | null;
+  prediction_accuracy_score: number | null;
   execution_status: string;
   confidence_cap_reason: string | null;
   raw_confidence: number | null;
@@ -71,7 +70,6 @@ interface Advisory {
   source_evidence: Array<any> | null;
 }
 
-// ─── Helpers ───
 function fmt(v: number | null | undefined): string {
   if (v == null) return "—";
   return Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -111,7 +109,6 @@ const StrategyPack = () => {
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState("");
 
-  // Data state
   const [roleRisks, setRoleRisks] = useState<RoleRisk[]>([]);
   const [convergence, setConvergence] = useState<Convergence | null>(null);
   const [conflicts, setConflicts] = useState<any[]>([]);
@@ -129,7 +126,7 @@ const StrategyPack = () => {
         supabase.from("executive_risk_index").select("role_type, score, components, escalation_required, last_updated").eq("organization_id", currentOrgId),
         supabase.from("executive_convergence_index").select("score, alignment_status, dispersion, conflict_penalty").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("executive_conflicts").select("*").eq("organization_id", currentOrgId).is("resolved_at", null),
-        supabase.from("decision_ledger").select("id, recommended_action, decision_type, decision_status, capped_confidence, predicted_net_impact, predicted_roi_probability, outcome_delta, execution_status, confidence_cap_reason, raw_confidence").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(50),
+        supabase.from("decision_ledger").select("id, recommended_action, decision_type, decision_status, capped_confidence, predicted_net_impact, predicted_roi_probability, outcome_delta, prediction_accuracy_score, execution_status, confidence_cap_reason, raw_confidence").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(50),
         supabase.from("simulation_results").select("metric_type, expected_value, p10_value, p90_value, probability_negative, capped_confidence, confidence_cap_reason, raw_confidence, sample_size, data_sufficiency").eq("organization_id", currentOrgId).order("created_at", { ascending: false }).limit(10),
         activeDatasetId
           ? supabase.from("advisory_instances").select("title, action, priority, category, capped_confidence, raw_confidence, confidence_cap_reason, rationale, impact_score, source_evidence").eq("organization_id", currentOrgId).eq("dataset_id", activeDatasetId).in("status", ["open", "in_progress"]).order("created_at", { ascending: false }).limit(10)
@@ -146,23 +143,20 @@ const StrategyPack = () => {
       setLoading(false);
     };
     load();
-  }, [currentOrgId]);
+  }, [currentOrgId, activeDatasetId]);
 
   const maxRisk = roleRisks.reduce((m, r) => Math.max(m, r.score), 0);
-  // Risk scores are recomputed periodically (compute-executive-signals),
-  // so this pack and a board report generated moments apart can show
-  // genuinely different current numbers -- both correct, just different
-  // snapshots. Showing "today's date" instead of when the risk data was
-  // actually last computed made that look like an unexplained
-  // contradiction rather than a live-data timing difference.
   const riskDataAsOf = roleRisks.reduce<string | null>((latest, r) => {
     if (!r.last_updated) return latest;
     return !latest || r.last_updated > latest ? r.last_updated : latest;
   }, null);
   const posture = governancePosture(maxRisk, conflicts.length);
   const completedDecisions = decisions.filter(d => d.execution_status === "completed");
-  const successRate = completedDecisions.length > 0
-    ? (completedDecisions.filter(d => (d.outcome_delta || 0) > 0).length / completedDecisions.length * 100).toFixed(0)
+  const scoredDecisions = completedDecisions.filter(
+    d => d.prediction_accuracy_score != null && Number.isFinite(Number(d.prediction_accuracy_score)),
+  );
+  const decisionAccuracy = scoredDecisions.length > 0
+    ? (scoredDecisions.reduce((sum, d) => sum + Number(d.prediction_accuracy_score), 0) / scoredDecisions.length).toFixed(0)
     : null;
 
   const toggleDecisionSelect = (id: string) => {
@@ -188,7 +182,6 @@ const StrategyPack = () => {
     <DatasetRequired moduleName="Strategy Pack">
     <>
       <main className="flex-1 overflow-y-auto">
-        {/* Header */}
         <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-lg border-b border-border px-6 py-4 print:hidden">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -207,8 +200,6 @@ const StrategyPack = () => {
 
         <IntelligenceDisclaimer variant="banner" context="report" />
         <div className="p-6 max-w-6xl mx-auto space-y-8 print:p-0 print:max-w-none">
-
-          {/* ═══════ SLIDE 1: Executive Posture ═══════ */}
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4 print:mb-2">
               <Badge variant="outline" className="text-xs font-mono">01</Badge>
@@ -232,16 +223,14 @@ const StrategyPack = () => {
               </CardContent>
             </Card>
 
-            {/* Key metrics strip */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
               <MiniStat label="Convergence" value={convergence ? `${convergence.score}%` : "—"} sub={convergence?.alignment_status || ""} />
               <MiniStat label="Active Conflicts" value={String(conflicts.length)} sub={conflicts.length > 0 ? "Unresolved" : "None"} />
-              <MiniStat label="Decision Success" value={successRate ? `${successRate}%` : "—"} sub={`${completedDecisions.length} completed`} />
+              <MiniStat label="Decision Accuracy" value={decisionAccuracy ? `${decisionAccuracy}%` : "—"} sub={`${scoredDecisions.length} evaluated`} />
               <MiniStat label="Open Advisories" value={String(advisories.length)} sub={advisories.filter(a => a.priority === "high").length + " high priority"} />
             </div>
           </section>
 
-          {/* ═══════ SLIDE 2: Risk Heatmap ═══════ */}
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">02</Badge>
@@ -279,9 +268,7 @@ const StrategyPack = () => {
                               const val = r?.components?.[dim] ?? null;
                               return (
                                 <td key={dim} className="py-3 px-4 text-center">
-                                  {val !== null ? (
-                                    <HeatCell value={val} />
-                                  ) : <span className="text-muted-foreground text-xs">—</span>}
+                                  {val !== null ? <HeatCell value={val} /> : <span className="text-muted-foreground text-xs">—</span>}
                                 </td>
                               );
                             })}
@@ -302,7 +289,6 @@ const StrategyPack = () => {
             </Card>
           </section>
 
-          {/* ═══════ SLIDE 3: Probabilistic Outlook ═══════ */}
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">03</Badge>
@@ -320,28 +306,12 @@ const StrategyPack = () => {
                         <ConfidenceBadge raw={sim.raw_confidence} capped={sim.capped_confidence} reason={sim.confidence_cap_reason} />
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-                        <div>
-                          <p className="text-xs text-muted-foreground">Expected</p>
-                          <p className="font-mono font-semibold">{fmt(sim.expected_value)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">P10 Downside</p>
-                          <p className="font-mono font-semibold text-destructive">{fmt(sim.p10_value)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">P90 Upside</p>
-                          <p className="font-mono font-semibold text-primary">{fmt(sim.p90_value)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Decline Risk</p>
-                          <p className="font-mono font-semibold">{Math.round(sim.probability_negative)}%</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Data Quality</p>
-                          <p className="font-mono font-semibold capitalize">{sim.data_sufficiency}</p>
-                        </div>
+                        <div><p className="text-xs text-muted-foreground">Expected</p><p className="font-mono font-semibold">{fmt(sim.expected_value)}</p></div>
+                        <div><p className="text-xs text-muted-foreground">P10 Downside</p><p className="font-mono font-semibold text-destructive">{fmt(sim.p10_value)}</p></div>
+                        <div><p className="text-xs text-muted-foreground">P90 Upside</p><p className="font-mono font-semibold text-primary">{fmt(sim.p90_value)}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Decline Risk</p><p className="font-mono font-semibold">{Math.round(sim.probability_negative)}%</p></div>
+                        <div><p className="text-xs text-muted-foreground">Data Quality</p><p className="font-mono font-semibold capitalize">{sim.data_sufficiency}</p></div>
                       </div>
-                      {/* Confidence transparency */}
                       <div className="mt-3 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground flex items-start gap-2">
                         <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                         <p>{confidenceLabel(sim.raw_confidence, sim.capped_confidence, sim.confidence_cap_reason)}</p>
@@ -353,7 +323,6 @@ const StrategyPack = () => {
             )}
           </section>
 
-          {/* ═══════ SLIDE 4: Decision Comparison ═══════ */}
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">04</Badge>
@@ -361,7 +330,6 @@ const StrategyPack = () => {
               <span className="text-xs text-muted-foreground ml-2">Select up to 4 decisions to compare</span>
             </div>
 
-            {/* Selection list */}
             <Card className="mb-4">
               <CardContent className="p-4 max-h-60 overflow-y-auto">
                 <div className="space-y-1">
@@ -369,13 +337,9 @@ const StrategyPack = () => {
                     <button
                       key={d.id}
                       onClick={() => toggleDecisionSelect(d.id)}
-                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        selectedDecisions.includes(d.id) ? "bg-primary/10 text-primary" : "hover:bg-muted/50"
-                      }`}
+                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${selectedDecisions.includes(d.id) ? "bg-primary/10 text-primary" : "hover:bg-muted/50"}`}
                     >
-                      <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                        selectedDecisions.includes(d.id) ? "bg-primary border-primary" : "border-border"
-                      }`}>
+                      <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${selectedDecisions.includes(d.id) ? "bg-primary border-primary" : "border-border"}`}>
                         {selectedDecisions.includes(d.id) && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
                       </span>
                       <span className="truncate flex-1">{d.recommended_action}</span>
@@ -386,7 +350,6 @@ const StrategyPack = () => {
               </CardContent>
             </Card>
 
-            {/* Comparison table */}
             {comparedDecisions.length >= 2 ? (
               <Card>
                 <CardContent className="p-0 overflow-x-auto">
@@ -407,7 +370,8 @@ const StrategyPack = () => {
                       <CompRow label="Confidence" values={comparedDecisions.map(d => d.capped_confidence != null ? `${Math.round(d.capped_confidence)}%` : "—")} />
                       <CompRow label="ROI Prob." values={comparedDecisions.map(d => d.predicted_roi_probability != null ? `${Number(d.predicted_roi_probability).toFixed(0)}%` : "—")} />
                       <CompRow label="Net Impact" values={comparedDecisions.map(d => d.predicted_net_impact != null ? fmt(Number(d.predicted_net_impact)) : "—")} />
-                      <CompRow label="Outcome Δ" values={comparedDecisions.map(d => d.outcome_delta != null ? `${Number(d.outcome_delta) > 0 ? "+" : ""}${Number(d.outcome_delta).toFixed(1)}%` : "—")} />
+                      <CompRow label="Metric Δ" values={comparedDecisions.map(d => d.outcome_delta != null ? `${Number(d.outcome_delta) > 0 ? "+" : ""}${Number(d.outcome_delta).toFixed(1)}%` : "—")} />
+                      <CompRow label="Accuracy" values={comparedDecisions.map(d => d.prediction_accuracy_score != null ? `${Number(d.prediction_accuracy_score).toFixed(0)}%` : "—")} />
                       <CompRow label="Execution" values={comparedDecisions.map(d => d.execution_status.replace(/_/g, " "))} />
                     </tbody>
                   </table>
@@ -418,7 +382,6 @@ const StrategyPack = () => {
             )}
           </section>
 
-          {/* ═══════ SLIDE 5: Recommendations & Transparency ═══════ */}
           <section className="print:break-after-page">
             <div className="flex items-center gap-2 mb-4">
               <Badge variant="outline" className="text-xs font-mono">05</Badge>
@@ -437,14 +400,11 @@ const StrategyPack = () => {
                           <p className="text-sm text-muted-foreground mt-1">{adv.action}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant={adv.priority === "high" ? "destructive" : adv.priority === "medium" ? "default" : "secondary"} className="text-xs">
-                            {adv.priority}
-                          </Badge>
+                          <Badge variant={adv.priority === "high" ? "destructive" : adv.priority === "medium" ? "default" : "secondary"} className="text-xs">{adv.priority}</Badge>
                           <ConfidenceBadge raw={adv.raw_confidence} capped={adv.capped_confidence} reason={adv.confidence_cap_reason} />
                         </div>
                       </div>
 
-                      {/* "Why this recommendation?" transparency panel */}
                       <details className="group">
                         <summary className="flex items-center gap-2 text-xs text-primary cursor-pointer hover:underline">
                           <Eye className="w-3.5 h-3.5" />
@@ -452,20 +412,14 @@ const StrategyPack = () => {
                         </summary>
                         <div className="mt-3 p-4 rounded-lg bg-muted/50 space-y-3 text-sm">
                           {adv.rationale && (
-                            <div>
-                              <p className="text-xs font-medium text-muted-foreground mb-1">Rationale</p>
-                              <p>{adv.rationale}</p>
-                            </div>
+                            <div><p className="text-xs font-medium text-muted-foreground mb-1">Rationale</p><p>{adv.rationale}</p></div>
                           )}
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-1">Confidence Explanation</p>
                             <p className="text-xs">{confidenceLabel(adv.raw_confidence, adv.capped_confidence, adv.confidence_cap_reason)}</p>
                           </div>
                           {adv.impact_score != null && (
-                            <div>
-                              <p className="text-xs font-medium text-muted-foreground mb-1">Impact Score</p>
-                              <p>{adv.impact_score}/100</p>
-                            </div>
+                            <div><p className="text-xs font-medium text-muted-foreground mb-1">Impact Score</p><p>{adv.impact_score}/100</p></div>
                           )}
                           {adv.source_evidence && Array.isArray(adv.source_evidence) && adv.source_evidence.length > 0 && (
                             <div>
@@ -486,7 +440,6 @@ const StrategyPack = () => {
             )}
           </section>
 
-          {/* Footer */}
           <div className="text-center py-8 text-xs text-muted-foreground border-t border-border print:border-none">
             <p>Confidential — {orgName} — Quantivis Strategy Pack</p>
             <p className="mt-1">{new Date().toISOString()}</p>
@@ -506,8 +459,6 @@ const StrategyPack = () => {
     </DatasetRequired>
   );
 };
-
-// ─── Sub-components ───
 
 function MiniStat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
