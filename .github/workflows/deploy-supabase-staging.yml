@@ -19,6 +19,7 @@ on:
       - "src/hooks/useSubscriptionGate.ts"
       - "src/components/SubscriptionGate.tsx"
       - "src/components/auth/RouteEntitlement.tsx"
+      - "src/components/landing/**"
       - "src/routes/**"
       - "supabase/migrations/**"
       - "supabase/config.toml"
