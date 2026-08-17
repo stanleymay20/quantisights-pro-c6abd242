@@ -18,6 +18,8 @@ on:
       - "tests/tenant-isolation/**"
       - "src/test/staging-supabase-security.test.ts"
       - "src/test/release-certification-chain.test.ts"
+      - "src/test/privileged-edge-ci-coverage.test.ts"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/deploy-supabase-staging.yml"
       - ".github/workflows/ga-staging-validation.yml"
       - ".github/workflows/ga-readiness.yml"

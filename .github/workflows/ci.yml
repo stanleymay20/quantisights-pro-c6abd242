@@ -47,11 +47,15 @@ jobs:
       - name: Typecheck privileged Edge functions
         run: |
           deno check --config supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/delete-account/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-scheduler/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/api-ingest/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-pull/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/connector-bigquery-pull/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/connector-snowflake-pull/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/connector-s3-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-discover/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-hubspot-pull/index.ts
