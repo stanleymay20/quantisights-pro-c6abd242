@@ -1,65 +1,42 @@
-import { forwardRef, Fragment } from "react";
+import { forwardRef } from "react";
 import { motion } from "framer-motion";
-import { COMMERCIAL_TERMS, formatEuro } from "@/lib/stripe-tiers";
 import { Check, X } from "lucide-react";
 
-const comparisons = [
+const fitRows = [
   {
-    category: "Decision Intelligence",
-    rows: [
-      { feature: "Causal inference (not just correlation)", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Counterfactual simulation ('what if we hadn't acted?')", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Prescriptive optimization (not just 'what happened')", quantivis: true, mckinsey: "Manual", tableau: false, mosaic: false },
-      { feature: "Self-correcting confidence scores", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Cognitive bias detection & mitigation", quantivis: true, mckinsey: "Manual", tableau: false, mosaic: false },
-    ],
+    need: "Governed decision record",
+    quantivis: "Core focus",
+    alternative: "BI: usually not the primary record",
   },
   {
-    category: "Decision Governance",
-    rows: [
-      { feature: "DROI / TCI quantification", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Value of Information (VoI) analysis", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Decision Velocity Curve optimization", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Audit-ready decision trail", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Decision Maturity Assessment", quantivis: true, mckinsey: "Manual", tableau: false, mosaic: false },
-    ],
+    need: "Evidence + human approval trail",
+    quantivis: "Built into the decision workflow",
+    alternative: "Often assembled across workflow, ticketing or document tools",
   },
   {
-    category: "Board Defensibility",
-    rows: [
-      { feature: "Decision Fitness Framework (7S adapted)", quantivis: true, mckinsey: true, tableau: false, mosaic: false },
-      { feature: "Role-based risk scoring", quantivis: true, mckinsey: "Manual", tableau: false, mosaic: false },
-      { feature: "One-click board reports", quantivis: true, mckinsey: true, tableau: "Manual", mosaic: "Basic" },
-      { feature: "Corrected probability disclosures", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-    ],
+    need: "Predicted vs observed outcome tracking",
+    quantivis: "Built into the decision lifecycle",
+    alternative: "Often modelled or analysed separately",
   },
   {
-    category: "Data & Visualization",
-    rows: [
-      { feature: "Interactive dashboards & drag-drop charts", quantivis: "Basic", mckinsey: false, tableau: true, mosaic: true },
-      { feature: "SQL-level ad hoc queries", quantivis: false, mckinsey: false, tableau: true, mosaic: "Limited" },
-      { feature: "Polished pixel-perfect report design", quantivis: false, mckinsey: true, tableau: true, mosaic: false },
-    ],
+    need: "Interactive ad-hoc visual exploration",
+    quantivis: "Supported, but not the primary design goal",
+    alternative: "Dedicated BI tools are typically stronger",
   },
   {
-    category: "Cost & Speed",
-    rows: [
-      { feature: "Time to first insight", quantivis: "5 min", mckinsey: "4–6 weeks", tableau: "Days", mosaic: "Hours" },
-      { feature: "Monthly cost", quantivis: `From ${formatEuro(COMMERCIAL_TERMS.entryMonthly)}`, mckinsey: "€50K+/project", tableau: "€70/user", mosaic: "€800+" },
-      { feature: "No implementation required", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-      { feature: "Continuously learning system", quantivis: true, mckinsey: false, tableau: false, mosaic: false },
-    ],
+    need: "Deep bespoke strategic engagement",
+    quantivis: "Software-led recurring workflow",
+    alternative: "A consulting engagement may be the better fit",
   },
-];
-
-const renderCellIcon = (value: boolean | string) => {
-  if (value === true) return <Check className="w-4 h-4 text-primary mx-auto" />;
-  if (value === false) return <X className="w-4 h-4 text-muted-foreground/30 mx-auto" />;
-  return <span className="text-xs font-medium text-foreground">{value}</span>;
-};
+  {
+    need: "Budgeting and financial planning",
+    quantivis: "Can consume and govern relevant decision inputs",
+    alternative: "Dedicated FP&A tools are typically stronger",
+  },
+] as const;
 
 const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inline = false }, ref) => (
-  <section className={inline ? "max-w-5xl mx-auto" : "py-20"}>
+  <section ref={ref} className={inline ? "max-w-5xl mx-auto" : "py-20"}>
     <div className={inline ? "" : "container mx-auto px-6"}>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -67,13 +44,13 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
         viewport={{ once: true }}
         className="text-center mb-10"
       >
-        <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Traditional BI vs Decision Intelligence</p>
+        <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Choose the right layer</p>
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">
-          From Describing Data to <span className="gradient-text">Diagnosing Businesses</span>
+          Decision Governance, Not a Replacement for <span className="gradient-text">Every Analytics Tool</span>
         </h2>
-        <p className="text-muted-foreground text-sm max-w-xl mx-auto">
-          Traditional analytics answers "what happened." Quantivis answers "why it happened, what to do next, 
-          and how confident you should be." The strategic defensibility gap is measured in billions.
+        <p className="text-muted-foreground text-sm max-w-2xl mx-auto leading-relaxed">
+          Quantivis is designed to sit between evidence, AI-assisted recommendations and accountable human decisions.
+          BI, consulting and FP&amp;A products can remain part of the surrounding stack where they are the better specialist tool.
         </p>
       </motion.div>
 
@@ -82,50 +59,29 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-4 px-4 md:px-6 text-muted-foreground font-medium w-[35%]">Capability</th>
-                <th className="text-center py-4 px-3 md:px-4 font-semibold text-primary">
-                  <div>Quantivis</div>
-                  <div className="text-[10px] font-normal text-primary/70">Decision Governance</div>
-                </th>
-                <th className="text-center py-4 px-3 md:px-4 font-semibold">
-                  <div>McKinsey</div>
-                  <div className="text-[10px] font-normal text-muted-foreground">Consulting</div>
-                </th>
-                <th className="text-center py-4 px-3 md:px-4 font-semibold hidden sm:table-cell">
-                  <div>Tableau</div>
-                  <div className="text-[10px] font-normal text-muted-foreground">BI Tool</div>
-                </th>
-                <th className="text-center py-4 px-3 md:px-4 font-semibold hidden sm:table-cell">
-                  <div>Mosaic</div>
-                  <div className="text-[10px] font-normal text-muted-foreground">FP&A</div>
-                </th>
+                <th className="text-left py-4 px-4 md:px-6 text-muted-foreground font-medium w-[30%]">Customer need</th>
+                <th className="text-left py-4 px-4 md:px-6 font-semibold text-primary w-[35%]">Quantivis position</th>
+                <th className="text-left py-4 px-4 md:px-6 font-semibold w-[35%]">When another specialist may fit better</th>
               </tr>
             </thead>
             <tbody>
-              {comparisons.map((group) => (
-                <Fragment key={group.category}>
-                  <tr>
-                    <td colSpan={5} className="py-3 px-4 md:px-6 text-xs uppercase tracking-widest text-primary font-semibold bg-primary/[0.03] border-b border-border/50">
-                      {group.category}
-                    </td>
-                  </tr>
-                  {group.rows.map((row) => (
-                    <tr key={row.feature} className="border-b border-border/20 hover:bg-card/50 transition-colors">
-                      <td className="py-3 px-4 md:px-6 font-medium text-xs md:text-sm">{row.feature}</td>
-                      <td className="text-center py-3 px-3 md:px-4 bg-primary/[0.02]">{renderCellIcon(row.quantivis)}</td>
-                      <td className="text-center py-3 px-3 md:px-4">{renderCellIcon(row.mckinsey)}</td>
-                      <td className="text-center py-3 px-3 md:px-4 hidden sm:table-cell">{renderCellIcon(row.tableau)}</td>
-                      <td className="text-center py-3 px-3 md:px-4 hidden sm:table-cell">{renderCellIcon(row.mosaic)}</td>
-                    </tr>
-                  ))}
-                </Fragment>
+              {fitRows.map((row) => (
+                <tr key={row.need} className="border-b border-border/20 hover:bg-card/50 transition-colors align-top">
+                  <td className="py-4 px-4 md:px-6 font-medium">{row.need}</td>
+                  <td className="py-4 px-4 md:px-6 text-muted-foreground">
+                    <span className="inline-flex items-start gap-2">
+                      <Check className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                      <span>{row.quantivis}</span>
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 md:px-6 text-muted-foreground">{row.alternative}</td>
+                </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Honesty section — builds trust */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -136,17 +92,20 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex items-start gap-2">
             <X className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
-            <span><strong className="text-foreground">Ad hoc data exploration</strong> — If you need SQL-level queries or pixel-perfect report design, a dedicated BI tool (Tableau, Looker) is stronger.</span>
+            <span><strong className="text-foreground">Ad-hoc BI as the primary job</strong> — teams that mainly need SQL exploration or pixel-perfect dashboard design should use a dedicated BI product.</span>
           </li>
           <li className="flex items-start gap-2">
             <X className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
-            <span><strong className="text-foreground">One-off decisions</strong> — Quantivis is built for teams making recurring strategic calls, not single isolated choices.</span>
+            <span><strong className="text-foreground">A one-time bespoke strategy engagement</strong> — a specialist advisory team can be a better fit when the need is not a recurring governed workflow.</span>
           </li>
           <li className="flex items-start gap-2">
             <X className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
-            <span><strong className="text-foreground">Unstructured data only</strong> — The platform requires structured operational data (CSV, database, or API) to deliver calibrated insights.</span>
+            <span><strong className="text-foreground">Financial planning as the primary system of record</strong> — dedicated FP&amp;A software remains the better specialist layer for budgeting and planning.</span>
           </li>
         </ul>
+        <p className="text-[11px] text-muted-foreground/70 mt-4 leading-relaxed">
+          This comparison describes product positioning, not a claim about every feature or price offered by any specific third-party vendor. Buyers should verify current vendor capabilities against their own requirements.
+        </p>
       </motion.div>
     </div>
   </section>
