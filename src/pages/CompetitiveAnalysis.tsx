@@ -1,90 +1,211 @@
 import { forwardRef } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { ArrowRight, CheckCircle2, Layers3, Scale, ShieldCheck, Target, Workflow } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  CircleAlert,
+  Layers3,
+  Scale,
+  ShieldCheck,
+  Target,
+  Workflow,
+} from "lucide-react";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
+import {
+  COMPETITIVE_SEGMENTS,
+  COMPETITIVE_VENDORS,
+  QUANTIVIS_BUYER_REASONS,
+} from "@/data/competitive-landscape";
 
-type Segment = "Decision intelligence" | "BI & analytics" | "Planning & EPM" | "Enterprise AI & data" | "Decision automation" | "Process & operations" | "Risk & GRC";
-type Competitor = { name: string; segment: Segment; strength: string; quantivisAngle: string };
+const ICONS = [Target, ShieldCheck, Workflow, Layers3, Scale, CheckCircle2];
 
-const COMPETITORS: Competitor[] = [
-  { name: "Palantir", segment: "Decision intelligence", strength: "Ontology-led operational AI and complex enterprise workflows", quantivisAngle: "Choose Quantivis when the buying problem is executive decision governance, evidence, outcomes and learning rather than building a broad operational data/AI platform." },
-  { name: "Pyramid Analytics", segment: "Decision intelligence", strength: "Unified analytics, semantic modelling and decision intelligence", quantivisAngle: "Choose Quantivis when the decision record itself — rationale, evidence, approval, execution and measured outcome — must be the system of record." },
-  { name: "Aera Technology", segment: "Decision intelligence", strength: "Decision automation, especially operational and supply-chain use cases", quantivisAngle: "Choose Quantivis for a cross-functional executive decision layer with explicit governance and organizational learning." },
-  { name: "Quantexa", segment: "Decision intelligence", strength: "Contextual decision intelligence, entity resolution and risk use cases", quantivisAngle: "Choose Quantivis when the primary need is governing consequential management decisions rather than entity-centric investigation and contextual data infrastructure." },
-  { name: "Tellius", segment: "Decision intelligence", strength: "AI-assisted analytics and automated insight discovery", quantivisAngle: "Choose Quantivis when insight must continue into a governed decision, accountable execution and outcome review." },
-  { name: "ThoughtSpot", segment: "BI & analytics", strength: "Conversational and agentic analytics for business users", quantivisAngle: "Choose Quantivis when trusted answers are only the beginning and the organization needs a durable decision lifecycle after the analysis." },
-  { name: "Microsoft Power BI / Fabric", segment: "BI & analytics", strength: "Broad Microsoft data, BI and Copilot ecosystem", quantivisAngle: "Choose Quantivis as the decision-governance layer when teams already have BI but still lack one place to record why a decision was made, who approved it and whether it worked." },
-  { name: "Tableau", segment: "BI & analytics", strength: "Visualization, self-service analytics and Salesforce ecosystem", quantivisAngle: "Choose Quantivis when the deliverable is an auditable decision and learning loop, not another dashboard." },
-  { name: "Qlik", segment: "BI & analytics", strength: "Associative analytics, data integration and AI-assisted BI", quantivisAngle: "Choose Quantivis when management needs decision accountability and evidence lineage across the full decision lifecycle." },
-  { name: "Looker", segment: "BI & analytics", strength: "Governed semantic analytics in the Google Cloud ecosystem", quantivisAngle: "Choose Quantivis when governed metrics must feed governed decisions, approvals, interventions and outcomes." },
-  { name: "Domo", segment: "BI & analytics", strength: "Cloud BI, data apps and AI-assisted analytics", quantivisAngle: "Choose Quantivis when executive decision workflow and institutional learning are more important than general-purpose BI delivery." },
-  { name: "Sisense", segment: "BI & analytics", strength: "Embedded and composable analytics", quantivisAngle: "Choose Quantivis for an opinionated end-to-end decision operating model rather than an embedded analytics toolkit." },
-  { name: "Alteryx", segment: "BI & analytics", strength: "Analytics automation and data preparation", quantivisAngle: "Choose Quantivis when the bottleneck is trusted decision execution and governance rather than analyst workflow automation." },
-  { name: "MicroStrategy / Strategy", segment: "BI & analytics", strength: "Enterprise analytics and governed BI", quantivisAngle: "Choose Quantivis when decision provenance and post-decision learning need to be first-class objects." },
-  { name: "SAS Visual Analytics", segment: "BI & analytics", strength: "Enterprise analytics within the SAS ecosystem", quantivisAngle: "Choose Quantivis for a focused executive decision layer that connects analysis to accountable action and outcome measurement." },
-  { name: "Anaplan", segment: "Planning & EPM", strength: "Connected enterprise planning", quantivisAngle: "Choose Quantivis when the question extends beyond what to plan into why a decision was approved, what evidence supported it and what the organization learned afterward." },
-  { name: "Pigment", segment: "Planning & EPM", strength: "Modern real-time business planning with AI agents", quantivisAngle: "Choose Quantivis when the core system must govern decisions across functions, not primarily models, budgets and plans." },
-  { name: "Board", segment: "Planning & EPM", strength: "Financial and operational planning with AI", quantivisAngle: "Choose Quantivis when decision traceability, evidence contracts and outcome replay are central requirements." },
-  { name: "Workday Adaptive Planning", segment: "Planning & EPM", strength: "Financial and workforce planning", quantivisAngle: "Choose Quantivis for broader strategic and operational decision governance beyond planning cycles." },
-  { name: "Planful", segment: "Planning & EPM", strength: "FP&A, close and financial performance management", quantivisAngle: "Choose Quantivis when the buyer is solving an enterprise decision-accountability problem rather than primarily an FP&A problem." },
-  { name: "OneStream", segment: "Planning & EPM", strength: "Corporate performance management and finance workflows", quantivisAngle: "Choose Quantivis when decisions need cross-functional evidence, approvals, execution and learning outside the finance system of record." },
-  { name: "Jedox", segment: "Planning & EPM", strength: "Enterprise performance management, planning and analytics", quantivisAngle: "Choose Quantivis for a decision-centric operating layer rather than a planning-centric one." },
-  { name: "Prophix", segment: "Planning & EPM", strength: "Financial planning and performance management", quantivisAngle: "Choose Quantivis when executive decisions span risk, strategy, operations and governance as well as finance." },
-  { name: "Vena", segment: "Planning & EPM", strength: "FP&A workflows with spreadsheet familiarity", quantivisAngle: "Choose Quantivis when the organization needs a governed decision ledger rather than a finance planning workflow." },
-  { name: "Kepion", segment: "Planning & EPM", strength: "Planning, budgeting and performance management", quantivisAngle: "Choose Quantivis for enterprise-wide decision governance and outcome learning rather than planning administration." },
-  { name: "C3 AI", segment: "Enterprise AI & data", strength: "Enterprise AI applications, ontology and agentic workflows", quantivisAngle: "Choose Quantivis when the priority is a focused decision-management product that business leaders can use without first creating a broad enterprise AI application estate." },
-  { name: "Dataiku", segment: "Enterprise AI & data", strength: "Enterprise AI development, governance and analytics", quantivisAngle: "Choose Quantivis when the product owner is the decision-maker and the desired artifact is a governed decision, not primarily a model or AI project." },
-  { name: "Databricks AI/BI", segment: "Enterprise AI & data", strength: "Lakehouse-native AI, governed analytics and conversational BI", quantivisAngle: "Choose Quantivis above the data platform when the missing layer is executive decision provenance, approval and outcome learning." },
-  { name: "Snowflake Cortex AI", segment: "Enterprise AI & data", strength: "AI and analytics close to governed cloud data", quantivisAngle: "Choose Quantivis when customers want a decision application rather than assembling decision workflows from data-platform primitives." },
-  { name: "IBM watsonx", segment: "Enterprise AI & data", strength: "Enterprise AI development and governance", quantivisAngle: "Choose Quantivis when the use case is specifically decision governance, evidence and measurable organizational learning." },
-  { name: "H2O.ai", segment: "Enterprise AI & data", strength: "Machine learning and enterprise AI", quantivisAngle: "Choose Quantivis when the hard problem is not model building but converting evidence into accountable, reviewable business decisions." },
-  { name: "DataRobot", segment: "Enterprise AI & data", strength: "Enterprise AI lifecycle and model operations", quantivisAngle: "Choose Quantivis when decision lifecycle management matters more than the ML lifecycle itself." },
-  { name: "Domino Data Lab", segment: "Enterprise AI & data", strength: "Enterprise data-science and model governance", quantivisAngle: "Choose Quantivis for executive-facing decision governance rather than data-science workbench governance." },
-  { name: "Oracle Analytics Cloud", segment: "Enterprise AI & data", strength: "Analytics integrated with the Oracle enterprise stack", quantivisAngle: "Choose Quantivis when the customer wants a vendor-neutral decision layer with explicit decision records and learning loops." },
-  { name: "SAP Analytics Cloud", segment: "Enterprise AI & data", strength: "Analytics and planning integrated with SAP", quantivisAngle: "Choose Quantivis when decisions span systems and evidence sources beyond the SAP planning and analytics estate." },
-  { name: "SAS Intelligent Decisioning", segment: "Decision automation", strength: "Real-time operational decision automation using rules, AI and ML", quantivisAngle: "Choose Quantivis when human executive decisions, deliberation, evidence and post-outcome learning are as important as automated operational decisions." },
-  { name: "FICO Platform", segment: "Decision automation", strength: "Decision management, optimization and risk-intensive use cases", quantivisAngle: "Choose Quantivis when the target is a broader executive decision operating system rather than specialized high-volume decision engines." },
-  { name: "Pega", segment: "Decision automation", strength: "Real-time decisioning, workflow and customer engagement", quantivisAngle: "Choose Quantivis when the primary object is the enterprise decision record and its evidence/outcome trail rather than customer interaction orchestration." },
-  { name: "Salesforce Agentforce / Tableau Next", segment: "Decision automation", strength: "Agentic CRM workflows and analytics", quantivisAngle: "Choose Quantivis when decision governance must remain cross-functional and independent of a CRM-centered operating model." },
-  { name: "ServiceNow", segment: "Decision automation", strength: "Enterprise workflows, AI agents and service operations", quantivisAngle: "Choose Quantivis when the customer wants a purpose-built decision ledger and executive learning loop instead of a general workflow platform." },
-  { name: "Celonis", segment: "Process & operations", strength: "Process intelligence and process optimization", quantivisAngle: "Choose Quantivis when the organization needs to govern strategic decisions across processes, not only discover and improve process behavior." },
-  { name: "UiPath", segment: "Process & operations", strength: "Automation, agents and process mining", quantivisAngle: "Choose Quantivis when accountable human decision-making and evidence are the center of gravity rather than task automation." },
-  { name: "Kinaxis Maestro", segment: "Process & operations", strength: "AI-powered end-to-end supply-chain orchestration", quantivisAngle: "Choose Quantivis for cross-enterprise decision governance; choose Kinaxis when deep supply-chain orchestration is the principal requirement." },
-  { name: "o9 Solutions", segment: "Process & operations", strength: "Integrated business and supply-chain planning", quantivisAngle: "Choose Quantivis when the customer needs a general decision-governance and learning layer across functions rather than a supply-chain/planning digital brain." },
-  { name: "Blue Yonder", segment: "Process & operations", strength: "Supply-chain planning, execution and optimization", quantivisAngle: "Choose Quantivis for cross-functional executive decisions; choose a specialist when deep supply-chain execution is the buying center." },
-  { name: "Coupa Supply Chain", segment: "Process & operations", strength: "Supply-chain design, planning and spend ecosystem", quantivisAngle: "Choose Quantivis when the decision lifecycle must span procurement, finance, risk, strategy and operations rather than live inside spend/supply-chain tooling." },
-  { name: "MetricStream", segment: "Risk & GRC", strength: "Enterprise GRC, risk and compliance workflows", quantivisAngle: "Choose Quantivis when governance must be embedded directly into business decisions and their outcomes, not maintained primarily as a compliance process." },
-  { name: "LogicGate", segment: "Risk & GRC", strength: "Flexible risk and compliance workflow platform", quantivisAngle: "Choose Quantivis when the customer wants decision intelligence with governance built in, rather than configuring a general risk workflow platform." },
-  { name: "Archer", segment: "Risk & GRC", strength: "Enterprise risk and GRC management", quantivisAngle: "Choose Quantivis when risk evidence needs to participate in a broader decision record, execution plan and learning loop." },
-  { name: "Riskonnect", segment: "Risk & GRC", strength: "Integrated risk management", quantivisAngle: "Choose Quantivis when the central problem is decision quality and accountability across the enterprise rather than risk administration alone." },
-];
-
-const SEGMENTS: Segment[] = ["Decision intelligence", "BI & analytics", "Planning & EPM", "Enterprise AI & data", "Decision automation", "Process & operations", "Risk & GRC"];
-const REASONS = [
-  { icon: Target, title: "The decision is the system of record", body: "Evidence, rationale, approval, execution, outcome and learning are first-class parts of the workflow — not just the dashboard, model or meeting that preceded the choice." },
-  { icon: ShieldCheck, title: "Trust is built into the workflow", body: "Evidence provenance, auditability, role-aware access and governance help answer who knew what, why a choice was made and what happened next." },
-  { icon: Workflow, title: "Closed-loop learning", body: "Decision Replay, outcome tracking, calibration and review turn past choices into reusable organizational knowledge instead of leaving them buried in slides and chat." },
-  { icon: Layers3, title: "Works above the existing stack", body: "Quantivis can complement warehouses, BI tools, planning systems and operational platforms as the governed layer connecting evidence to action." },
-  { icon: Scale, title: "Focused adoption story", body: "For organizations that do not need a giant data/AI transformation, the proposition is narrower and clearer: improve the quality, traceability and follow-through of consequential decisions." },
-];
+const segmentDescription: Record<(typeof COMPETITIVE_SEGMENTS)[number], string> = {
+  "AI governance":
+    "The closest governance alternatives. These products tend to govern AI systems, models, agents, policies, risk and compliance. Quantivis wins when the missing object is the governed business decision and its outcome.",
+  "Decision intelligence":
+    "Platforms that model, automate, augment or orchestrate decisions. Quantivis differentiates through evidence provenance, human/AI accountability, approval history, outcome measurement and replay.",
+  "Adjacent enterprise platform":
+    "BI, data/AI, planning, automation, supply-chain and GRC platforms that often compete for the same budget. They can be excellent complements rather than replacements when Quantivis sits above them as the decision layer.",
+};
 
 const CompetitiveAnalysis = forwardRef<HTMLDivElement>((_, ref) => (
   <div ref={ref} className="min-h-dvh bg-background flex flex-col">
     <Navbar />
-    <main className="flex-1 pt-20 pb-16"><div className="container mx-auto px-5 sm:px-6">
-      <motion.header initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="max-w-4xl mx-auto text-center mb-14">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold uppercase tracking-wider mb-4">2026 competitive landscape</div>
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-5">50 alternatives. One clear question: <span className="gradient-text">what happens after the insight?</span></h1>
-        <p className="text-base sm:text-lg text-muted-foreground max-w-3xl mx-auto">Many competitors are exceptional at BI, planning, AI infrastructure, automation, supply chain or GRC. Quantivis is differentiated when the customer needs one governed place to turn evidence into a decision, carry it through execution, measure the outcome and learn from it.</p>
-      </motion.header>
-      <section className="mb-14"><h2 className="text-2xl font-bold mb-5">Why a customer should choose Quantivis</h2><div className="grid md:grid-cols-2 lg:grid-cols-5 gap-4">{REASONS.map(({ icon: Icon, title, body }) => <div key={title} className="rounded-2xl border border-border/60 bg-card/50 p-5"><Icon className="w-5 h-5 text-primary mb-3"/><h3 className="font-semibold mb-2">{title}</h3><p className="text-sm text-muted-foreground">{body}</p></div>)}</div></section>
-      <section className="rounded-2xl border border-primary/25 bg-primary/5 p-6 sm:p-8 mb-14"><div className="flex gap-3"><CheckCircle2 className="w-6 h-6 text-primary shrink-0 mt-0.5"/><div><h2 className="text-xl font-bold mb-2">The buyer-safe positioning</h2><p className="text-muted-foreground">“Keep the systems you already use. Quantivis becomes the governed decision layer above them — preserving the evidence, rationale, ownership, execution and outcome of consequential decisions so the organization can prove what worked and improve what comes next.”</p></div></div></section>
-      <section><div className="flex items-end justify-between gap-4 mb-6"><div><h2 className="text-2xl font-bold">50-competitor landscape</h2><p className="text-sm text-muted-foreground mt-1">Specialist strengths are acknowledged rather than erased; the Quantivis angle explains when it is the better fit.</p></div><div className="text-sm font-semibold text-primary">{COMPETITORS.length} reviewed</div></div><div className="space-y-10">{SEGMENTS.map(segment => <div key={segment}><h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">{segment}</h3><div className="grid md:grid-cols-2 gap-3">{COMPETITORS.filter(c => c.segment === segment).map(c => <article key={c.name} className="rounded-xl border border-border/60 bg-card/40 p-5"><div className="flex items-start justify-between gap-3 mb-2"><h4 className="font-bold">{c.name}</h4><span className="text-[11px] rounded-full border border-border px-2 py-0.5 text-muted-foreground">{c.segment}</span></div><p className="text-sm mb-3"><span className="font-medium">Known for:</span> <span className="text-muted-foreground">{c.strength}</span></p><p className="text-sm"><span className="font-medium text-primary">Quantivis fit:</span> <span className="text-muted-foreground">{c.quantivisAngle}</span></p></article>)}</div></div>)}</div></section>
-      <section className="mt-14 border-t border-border pt-10 text-center max-w-3xl mx-auto"><h2 className="text-2xl font-bold mb-3">Do not sell Quantivis as “better at everything.”</h2><p className="text-muted-foreground mb-6">Sell it as the missing decision-accountability layer. That message is more credible in procurement, easier to defend against mature incumbents, and clearer for executives who already own analytics, planning and workflow tools.</p><div className="flex flex-col sm:flex-row justify-center gap-3"><Link to="/demo" className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-5 py-3 font-semibold">See the decision loop <ArrowRight className="w-4 h-4"/></Link><Link to="/pricing" className="inline-flex items-center justify-center rounded-lg border border-border px-5 py-3 font-semibold">View plans</Link></div></section>
-    </div></main><Footer />
+    <main className="flex-1 pt-20 pb-16">
+      <div className="container mx-auto px-5 sm:px-6">
+        <motion.header
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-5xl mx-auto text-center mb-14"
+        >
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold uppercase tracking-wider mb-4">
+            2026 competitive landscape · 50 vendors
+          </div>
+          <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-5">
+            Most platforms govern the AI, automate the decision, or analyze the data.{" ""}
+            <span className="gradient-text">Quantivis governs the decision itself.</span>
+          </h1>
+          <p className="text-base sm:text-lg text-muted-foreground max-w-4xl mx-auto leading-relaxed">
+            The buyer question is not “does another platform have AI?” It is: after an insight or AI recommendation appears,
+            can your organization prove what evidence supported the choice, who approved it, what action followed, what
+            outcome was expected, what actually happened, and what should be learned next time?
+          </p>
+        </motion.header>
+
+        <section className="mb-14" aria-labelledby="why-quantivis">
+          <div className="max-w-3xl mb-6">
+            <h2 id="why-quantivis" className="text-2xl sm:text-3xl font-bold mb-2">
+              Why a client should choose Quantivis
+            </h2>
+            <p className="text-muted-foreground">
+              These are the strongest defensible reasons — not “we do everything better.” Quantivis is most compelling when
+              the customer has a trusted-decision shortage rather than a dashboard, model or workflow shortage.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {QUANTIVIS_BUYER_REASONS.map(({ title, body }, index) => {
+              const Icon = ICONS[index];
+              return (
+                <article key={title} className="rounded-2xl border border-border/60 bg-card/60 p-5">
+                  <Icon className="w-5 h-5 text-primary mb-3" aria-hidden="true" />
+                  <h3 className="font-semibold mb-2">{title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-primary/25 bg-primary/5 p-6 sm:p-8 mb-14">
+          <div className="grid lg:grid-cols-[1.4fr_1fr] gap-8 items-start">
+            <div>
+              <div className="flex gap-3 items-start">
+                <CheckCircle2 className="w-6 h-6 text-primary shrink-0 mt-0.5" aria-hidden="true" />
+                <div>
+                  <h2 className="text-xl font-bold mb-2">The buyer-safe positioning</h2>
+                  <p className="text-muted-foreground leading-relaxed">
+                    “Keep the systems you already use. Quantivis becomes the governed decision layer above them — connecting
+                    evidence to recommendation, approval, execution, measured outcome and organizational learning.”
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/80 p-5">
+              <div className="flex gap-2 items-start mb-2">
+                <CircleAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" aria-hidden="true" />
+                <h3 className="font-semibold">Do not oversell</h3>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                If a prospect needs deep model governance, a full data lakehouse, specialist credit decisioning, process mining,
+                enterprise planning or supply-chain execution, a specialist may be the better primary platform. Quantivis should
+                win by owning the cross-system decision record — not by pretending those categories do not matter.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-16" aria-labelledby="landscape-heading">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
+            <div>
+              <h2 id="landscape-heading" className="text-2xl sm:text-3xl font-bold mb-2">50 competitors and alternatives</h2>
+              <p className="text-muted-foreground max-w-3xl">
+                Direct and adjacent vendors are separated so a buyer can see where the competition is truly like-for-like and
+                where Quantivis is better positioned as a complementary decision-governance layer.
+              </p>
+            </div>
+            <div className="text-sm font-semibold text-primary">{COMPETITIVE_VENDORS.length} vendors reviewed</div>
+          </div>
+
+          <div className="space-y-12">
+            {COMPETITIVE_SEGMENTS.map((segment) => {
+              const vendors = COMPETITIVE_VENDORS.filter((vendor) => vendor.segment === segment);
+              return (
+                <div key={segment}>
+                  <div className="mb-5">
+                    <div className="flex flex-wrap gap-3 items-baseline mb-2">
+                      <h3 className="text-xl sm:text-2xl font-bold">{segment}</h3>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary bg-primary/10 px-2.5 py-1 rounded-full">
+                        {vendors.length} vendors
+                      </span>
+                    </div>
+                    <p className="text-sm sm:text-base text-muted-foreground max-w-4xl leading-relaxed">
+                      {segmentDescription[segment]}
+                    </p>
+                  </div>
+
+                  <div className="grid lg:grid-cols-2 gap-4">
+                    {vendors.map((vendor, index) => (
+                      <motion.article
+                        key={vendor.name}
+                        initial={{ opacity: 0, y: 8 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true, margin: "-60px" }}
+                        transition={{ delay: Math.min(index * 0.015, 0.15) }}
+                        className="rounded-2xl border border-border/60 bg-card/50 p-5 sm:p-6"
+                      >
+                        <div className="flex items-start justify-between gap-4 mb-4">
+                          <h4 className="text-lg font-bold">{vendor.name}</h4>
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground border border-border/70 rounded-full px-2 py-1 shrink-0">
+                            {vendor.segment}
+                          </span>
+                        </div>
+                        <div className="space-y-4 text-sm leading-relaxed">
+                          <div>
+                            <div className="font-semibold text-foreground mb-1">Where they are strong</div>
+                            <p className="text-muted-foreground">{vendor.strength}</p>
+                          </div>
+                          <div className="rounded-xl bg-primary/5 border border-primary/15 p-4">
+                            <div className="font-semibold text-primary mb-1">Choose Quantivis when</div>
+                            <p className="text-muted-foreground">{vendor.chooseQuantivisWhen}</p>
+                          </div>
+                          <div>
+                            <div className="font-semibold text-foreground mb-1">Choose them when</div>
+                            <p className="text-muted-foreground">{vendor.chooseThemWhen}</p>
+                          </div>
+                        </div>
+                      </motion.article>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-3xl bg-foreground text-background p-7 sm:p-10">
+          <div className="grid lg:grid-cols-[1.4fr_0.6fr] gap-8 items-center">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] opacity-70 mb-3">The decisive demo</div>
+              <h2 className="text-2xl sm:text-3xl font-bold mb-3">Do not demo features. Demo one decision end to end.</h2>
+              <p className="opacity-80 leading-relaxed max-w-3xl">
+                Start with a real executive question, show the source evidence, produce the recommendation, capture human
+                approval and rationale, assign execution, then show how Quantivis records the outcome and replays what was
+                learned. That is the clearest separation from dashboards, GRC registers and model-governance tools.
+              </p>
+            </div>
+            <div className="flex lg:justify-end">
+              <Link
+                to="/#demo"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-5 py-3 font-semibold hover:brightness-110 transition"
+              >
+                Request a decision demo <ArrowRight className="w-4 h-4" aria-hidden="true" />
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <p className="text-xs text-muted-foreground mt-6 max-w-5xl leading-relaxed">
+          Competitive positioning is intentionally conservative. Product roadmaps, certifications, pricing and deployment
+          options change frequently; verify vendor-specific claims during procurement. Inclusion here means a vendor can appear
+          in the same RFP, budget conversation or architectural decision — not that every product is a feature-for-feature substitute.
+        </p>
+      </div>
+    </main>
+    <Footer />
   </div>
 ));
+
 CompetitiveAnalysis.displayName = "CompetitiveAnalysis";
 export default CompetitiveAnalysis;
