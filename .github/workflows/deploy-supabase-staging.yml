@@ -13,6 +13,8 @@ on:
       - "src/lib/**"
       - "supabase/migrations/**"
       - "supabase/config.toml"
+      - "package.json"
+      - "package-lock.json"
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
       - "tests/tenant-isolation/**"
