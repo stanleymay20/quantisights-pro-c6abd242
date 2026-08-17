@@ -7,6 +7,10 @@ const gaStaging = readFileSync(
   resolve(root, ".github/workflows/ga-staging-validation.yml"),
   "utf8",
 );
+const clientAcceptance = readFileSync(
+  resolve(root, ".github/workflows/client-acceptance.yml"),
+  "utf8",
+);
 const gaReadiness = readFileSync(
   resolve(root, ".github/workflows/ga-readiness.yml"),
   "utf8",
@@ -29,13 +33,24 @@ describe("release certification chain", () => {
     expect(gaStaging).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
   });
 
-  it("resolves GA Readiness SHA from tenant-isolation proof, not workflow head metadata", () => {
+  it("requires real client acceptance after tenant isolation and publishes an exact-SHA proof", () => {
+    expect(clientAcceptance).toContain("workflow_run:");
+    expect(clientAcceptance).toContain('workflows: ["GA Staging Validation"]');
+    expect(clientAcceptance).toContain("ga-staging-validation-proof");
+    expect(clientAcceptance).toContain("client-acceptance-proof");
+    expect(clientAcceptance).toContain("client_acceptance_run_id");
+    expect(clientAcceptance).toContain("Exercise Essentials, Governance, and Enterprise as customers");
+    expect(clientAcceptance).toContain("Teardown disposable tier customers");
+  });
+
+  it("resolves GA Readiness SHA from client-acceptance proof, not workflow head metadata", () => {
     expect(gaReadiness).toContain("workflow_run:");
-    expect(gaReadiness).toContain('workflows: ["GA Staging Validation"]');
+    expect(gaReadiness).toContain('workflows: ["Client Acceptance"]');
     expect(gaReadiness).toContain("github.event.workflow_run.conclusion == 'success'");
     expect(gaReadiness).toContain("actions: read");
+    expect(gaReadiness).toContain("client_acceptance_run_id");
     expect(gaReadiness).toContain("ga_staging_run_id");
-    expect(gaReadiness).toContain("ga-staging-validation-proof");
+    expect(gaReadiness).toContain("client-acceptance-proof");
     expect(gaReadiness).toContain("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093");
     expect(gaReadiness).toContain("CERTIFIED_SHA=$certified_sha");
     expect(gaReadiness).not.toContain("CERTIFIED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha");
@@ -44,14 +59,17 @@ describe("release certification chain", () => {
     expect(gaReadiness).toContain("ref: ${{ env.CERTIFIED_SHA }}");
   });
 
-  it("publishes GA Readiness proof only after release gate and live security", () => {
+  it("publishes GA Readiness proof only after client review, release gate and live security", () => {
+    const clientSource = gaReadiness.indexOf("Verify client-acceptance and staging-validation source runs");
     const releaseGate = gaReadiness.indexOf("Run official GA release gate");
     const liveSecurity = gaReadiness.indexOf("Verify live GA security baseline");
     const publishProof = gaReadiness.indexOf("Publish GA certification proof");
-    expect(releaseGate).toBeGreaterThan(-1);
+    expect(clientSource).toBeGreaterThan(-1);
+    expect(releaseGate).toBeGreaterThan(clientSource);
     expect(liveSecurity).toBeGreaterThan(releaseGate);
     expect(publishProof).toBeGreaterThan(liveSecurity);
     expect(gaReadiness).toContain("ga-readiness-proof");
+    expect(gaReadiness).toContain("client_acceptance_run_id");
     expect(gaReadiness).toContain("ga_readiness_run_id");
   });
 
@@ -72,9 +90,11 @@ describe("release certification chain", () => {
     expect(production).toContain('select(.head_sha == $sha)');
   });
 
-  it("routes release-pipeline changes through staging on main only", () => {
+  it("routes client-experience and release-pipeline changes through staging on main only", () => {
     expect(staging).toContain("branches: [main]");
     expect(staging).not.toContain("agent/fix-staging-edge-imports");
+    expect(staging).toContain('"tests/client-acceptance/**"');
+    expect(staging).toContain('".github/workflows/client-acceptance.yml"');
     expect(staging).toContain('".github/workflows/ga-staging-validation.yml"');
     expect(staging).toContain('".github/workflows/ga-readiness.yml"');
     expect(staging).toContain('".github/workflows/deploy-edge-functions.yml"');
