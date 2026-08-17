@@ -27,7 +27,7 @@ describe("plan entitlement enforcement", () => {
     const routes = read("src/routes/index.tsx");
     for (const [path, feature] of Object.entries(GATED_ROUTES)) {
       const routePattern = new RegExp(
-        `\\{[^}]*path:\\s*[\"']${escapeRegExp(path)}[\"'][^}]*feature:\\s*[\"']${escapeRegExp(feature)}[\"'][^}]*\\}`,
+        `\\{[^}]*path:\\s*["']${escapeRegExp(path)}["'][^}]*feature:\\s*["']${escapeRegExp(feature)}["'][^}]*\\}`,
       );
       expect(routes, `route ${path} is not gated by ${feature}`).toMatch(routePattern);
     }
@@ -50,8 +50,8 @@ describe("plan entitlement enforcement", () => {
 
   it("keeps representative growth and enterprise tier boundaries explicit", () => {
     const tiers = read("src/hooks/useSubscriptionGate.ts");
-    expect(tiers).toMatch(/simulations:\s*\[\"growth\",\s*\"enterprise\"\]/);
-    expect(tiers).toMatch(/biasDetection:\s*\[\"enterprise\"\]/);
+    expect(tiers).toMatch(/simulations:\s*\["growth",\s*"enterprise"\]/);
+    expect(tiers).toMatch(/biasDetection:\s*\["enterprise"\]/);
     expect(tiers).toContain("requiredTierFor");
   });
 
