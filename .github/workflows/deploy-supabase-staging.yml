@@ -11,6 +11,7 @@ on:
     paths:
       - "supabase/functions/**"
       - "src/lib/**"
+      - "src/integrations/supabase/**"
       - "supabase/migrations/**"
       - "supabase/config.toml"
       - "package.json"
@@ -19,6 +20,7 @@ on:
       - "scripts/verify-supabase-functions.sh"
       - "tests/tenant-isolation/**"
       - "src/test/staging-supabase-security.test.ts"
+      - "src/test/entitlement-enforcement.test.ts"
       - "src/test/release-certification-chain.test.ts"
       - "src/test/privileged-edge-ci-coverage.test.ts"
       - ".github/workflows/ci.yml"
