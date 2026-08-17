@@ -50,7 +50,7 @@ test("paid-plan registration ribbon matches current commercial offer", async ({ 
   await expect(page.locator("body")).toContainText(/14-day trial/i);
 });
 
-test("procurement and legal trust links resolve to real public pages", async ({ page }) => {
+test("procurement, legal and competitive trust pages resolve publicly", async ({ page }) => {
   const routes = [
     ["/trust", /trust|security/i],
     ["/security", /security/i],
@@ -61,6 +61,7 @@ test("procurement and legal trust links resolve to real public pages", async ({ 
     ["/terms", /terms/i],
     ["/subprocessors", /subprocessor/i],
     ["/impressum", /impressum/i],
+    ["/competitive-analysis", /50 competitors and alternatives/i],
   ] as const;
 
   for (const [path, expected] of routes) {
@@ -70,6 +71,24 @@ test("procurement and legal trust links resolve to real public pages", async ({ 
     await expect(page.locator("body"), `${path} content`).toContainText(expected);
     await expect(page.locator("body")).not.toContainText(/page not found|something went wrong|application error/i);
   }
+});
+
+test("competitive analysis gives a buyer-safe 50-vendor market map", async ({ page }) => {
+  await page.goto(`${BASE}/competitive-analysis`);
+  const body = page.locator("body");
+  await expect(body).toContainText(/50 vendors reviewed/i);
+  await expect(body).toContainText(/AI governance/i);
+  await expect(body).toContainText(/Decision intelligence/i);
+  await expect(body).toContainText(/Adjacent enterprise platform/i);
+  await expect(body).toContainText("Credo AI");
+  await expect(body).toContainText("OneTrust AI Governance");
+  await expect(body).toContainText("Aera Technology");
+  await expect(body).toContainText("FICO");
+  await expect(body).toContainText("Palantir");
+  await expect(body).toContainText(/Choose Quantivis when/i);
+  await expect(body).toContainText(/Choose them when/i);
+  await expect(body).toContainText(/Do not oversell/i);
+  await assertAccessible(page);
 });
 
 test("homepage demo request creates a real staging lead and confirms success", async ({ page }) => {
@@ -86,12 +105,17 @@ test("homepage demo request creates a real staging lead and confirms success", a
   await expect(page.locator("body")).not.toContainText(/Something went wrong/i);
 });
 
-test("registration remains usable on a phone viewport", async ({ page }) => {
+test("registration and competitive analysis remain usable on a phone viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/register?pilot=1`);
   await expect(page.getByRole("heading", { name: /Create your workspace/i })).toBeVisible();
   await expect(page.getByLabel(/Full name/i)).toBeVisible();
   await expect(page.getByLabel(/Work email/i)).toBeVisible();
   await expect(page.getByLabel(/^Password$/i)).toBeVisible();
+  await assertAccessible(page);
+
+  await page.goto(`${BASE}/competitive-analysis`);
+  await expect(page.getByRole("heading", { name: /Quantivis governs the decision itself/i })).toBeVisible();
+  await expect(page.locator("body")).toContainText(/50 vendors reviewed/i);
   await assertAccessible(page);
 });
