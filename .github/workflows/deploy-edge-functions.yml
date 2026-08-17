@@ -3,15 +3,19 @@ name: Deploy Supabase Production
 # Production promotion is deliberately manual. Configure the `production`
 # GitHub Environment with required reviewers and environment-scoped secrets:
 # SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD.
-# The requested release SHA must already have successful CI, staging deployment,
-# tenant-isolation validation, and GA Readiness runs. The same immutable SHA is
-# re-certified here before any production database or Edge mutation.
+# The requested release SHA must match the run-scoped proof artifact from a
+# successful GA Readiness run. The same immutable SHA is re-certified here
+# before any production database or Edge mutation.
 
 on:
   workflow_dispatch:
     inputs:
       release_sha:
         description: Full 40-character commit SHA that passed all GA gates
+        required: true
+        type: string
+      ga_readiness_run_id:
+        description: Successful GA Readiness run ID whose proof certifies release_sha
         required: true
         type: string
       confirm_project_ref:
@@ -36,6 +40,7 @@ jobs:
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: izgfrekdamlgigehxoqs
       RELEASE_SHA: ${{ inputs.release_sha }}
+      GA_READINESS_RUN_ID: ${{ inputs.ga_readiness_run_id }}
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
       SUPABASE_FUNCTION_DEPLOY_BASE_DELAY_SECONDS: "5"
       SUPABASE_FUNCTION_DEPLOY_PACE_SECONDS: "2"
@@ -52,8 +57,67 @@ jobs:
             echo "::error::release_sha must be a full 40-character Git commit SHA"
             exit 1
           fi
+          if ! [[ "$GA_READINESS_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::ga_readiness_run_id must be a numeric workflow run ID"
+            exit 1
+          fi
 
-      - name: Verify certified release workflow gates
+      - name: Download GA certification proof
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ga-readiness-proof
+          path: artifacts/ga-readiness-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.ga_readiness_run_id }}
+
+      - name: Verify run-scoped GA certification proof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          proof="artifacts/ga-readiness-source/proof.json"
+          test -s "$proof"
+          proof_sha="$(jq -r '.certified_sha // empty' "$proof")"
+          proof_run_id="$(jq -r '.ga_readiness_run_id // empty' "$proof")"
+          ga_staging_run_id="$(jq -r '.ga_staging_run_id // empty' "$proof")"
+          if [ "$proof_sha" != "$RELEASE_SHA" ]; then
+            echo "::error::GA certification proof SHA does not match requested release_sha"
+            exit 1
+          fi
+          if [ "$proof_run_id" != "$GA_READINESS_RUN_ID" ]; then
+            echo "::error::GA certification proof run ID does not match selected GA Readiness run"
+            exit 1
+          fi
+          if ! [[ "$ga_staging_run_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::GA certification proof is missing its staging-validation provenance"
+            exit 1
+          fi
+
+          readiness_payload="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GA_READINESS_RUN_ID}")"
+          if [ "$(jq -r '.path // empty' <<<"$readiness_payload")" != ".github/workflows/ga-readiness.yml" ] \
+            || [ "$(jq -r '.status // empty' <<<"$readiness_payload")" != "completed" ] \
+            || [ "$(jq -r '.conclusion // empty' <<<"$readiness_payload")" != "success" ]; then
+            echo "::error::Selected run is not a successful GA Readiness run"
+            exit 1
+          fi
+
+          staging_payload="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${ga_staging_run_id}")"
+          if [ "$(jq -r '.path // empty' <<<"$staging_payload")" != ".github/workflows/ga-staging-validation.yml" ] \
+            || [ "$(jq -r '.status // empty' <<<"$staging_payload")" != "completed" ] \
+            || [ "$(jq -r '.conclusion // empty' <<<"$staging_payload")" != "success" ]; then
+            echo "::error::GA proof references an invalid staging-validation run"
+            exit 1
+          fi
+
+      - name: Verify exact-SHA CI and staging deployment gates
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -82,8 +146,6 @@ jobs:
           }
           require_gate "ci.yml" "CI"
           require_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"
-          require_gate "ga-staging-validation.yml" "GA Staging Validation"
-          require_gate "ga-readiness.yml" "GA Readiness"
 
       - name: Verify required secrets
         run: |

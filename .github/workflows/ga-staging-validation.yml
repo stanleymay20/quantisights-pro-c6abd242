@@ -3,6 +3,9 @@ name: GA Staging Validation
 # Runs deployment-dependent GA evidence after a successful Supabase staging
 # promotion. This gate intentionally fails when the dedicated staging test
 # credentials are absent; tenant-isolation evidence must never be fabricated.
+# A successful run publishes a run-scoped proof containing the exact staging
+# SHA. Downstream certification must consume that proof instead of trusting the
+# workflow run's top-level head_sha, which can reflect a newer default-branch tip.
 
 on:
   workflow_run:
@@ -35,10 +38,15 @@ jobs:
           CURRENT_SHA: ${{ github.sha }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "sha=$WORKFLOW_RUN_SHA" >> "$GITHUB_OUTPUT"
+            resolved_sha="$WORKFLOW_RUN_SHA"
           else
-            echo "sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
+            resolved_sha="$CURRENT_SHA"
           fi
+          if ! [[ "$resolved_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Staging validation requires a full 40-character commit SHA"
+            exit 1
+          fi
+          echo "sha=$resolved_sha" >> "$GITHUB_OUTPUT"
 
       - name: Verify staging test credentials
         run: |
@@ -56,6 +64,16 @@ jobs:
         with:
           ref: ${{ steps.release.outputs.sha }}
           persist-credentials: false
+
+      - name: Verify checked-out staging target
+        env:
+          VALIDATED_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$VALIDATED_SHA" ]; then
+            echo "::error::Checked-out SHA $actual_sha does not match staged target $VALIDATED_SHA"
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -76,3 +94,25 @@ jobs:
       - name: Teardown tenant-isolation fixtures
         if: ${{ always() && steps.seed.outcome != 'skipped' }}
         run: npm run tenant-isolation:teardown
+
+      - name: Record validated release SHA
+        if: ${{ success() }}
+        env:
+          VALIDATED_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          mkdir -p artifacts/ga-staging-proof
+          printf '%s\n' "$VALIDATED_SHA" > artifacts/ga-staging-proof/validated-sha.txt
+          jq -n \
+            --arg validated_sha "$VALIDATED_SHA" \
+            --arg staging_validation_run_id "$GITHUB_RUN_ID" \
+            '{validated_sha: $validated_sha, staging_validation_run_id: $staging_validation_run_id}' \
+            > artifacts/ga-staging-proof/proof.json
+
+      - name: Publish tenant-isolation SHA proof
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ga-staging-validation-proof
+          path: artifacts/ga-staging-proof
+          if-no-files-found: error
+          retention-days: 30
