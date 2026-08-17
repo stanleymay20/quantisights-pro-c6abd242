@@ -1,0 +1,190 @@
+name: Client Acceptance
+
+# Buyer/reviewer-style browser validation for the exact SHA that already passed
+# real staging tenant isolation. This gate builds the frontend locally but points
+# it at the real staging Supabase project, then exercises disposable Essentials,
+# Governance, and Enterprise customer identities through Chromium.
+
+on:
+  workflow_run:
+    workflows: ["GA Staging Validation"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ga_staging_run_id:
+        description: Successful GA Staging Validation run ID to test as a client
+        required: true
+        type: string
+
+concurrency:
+  group: client-acceptance
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: staging
+    permissions:
+      contents: read
+      actions: read
+    env:
+      LOAD_TARGET: staging
+      LOAD_SUPABASE_URL: https://cmnihsbdbpubznlkmjbc.supabase.co
+      LOAD_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CLIENT_ACCEPTANCE_BASE_URL: http://127.0.0.1:4173
+      CLIENT_ACCEPTANCE_STATE: tests/client-acceptance/.state.json
+      PLAYWRIGHT_HTML_REPORT: artifacts/client-acceptance/playwright-report
+    steps:
+      - name: Resolve tenant-isolation evidence run
+        id: staging_evidence
+        env:
+          SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.ga_staging_run_id }}
+        run: |
+          if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Client acceptance requires a numeric GA Staging Validation run ID"
+            exit 1
+          fi
+          echo "run_id=$SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "GA_STAGING_RUN_ID=$SOURCE_RUN_ID" >> "$GITHUB_ENV"
+
+      - name: Verify staging client-test credentials
+        run: |
+          if [ -z "$LOAD_SUPABASE_ANON_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_ANON_KEY is required"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_SERVICE_ROLE_KEY is required"
+            exit 1
+          fi
+
+      - name: Download tenant-isolation SHA proof
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ga-staging-validation-proof
+          path: artifacts/ga-staging-source
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.staging_evidence.outputs.run_id }}
+
+      - name: Resolve exact client-test SHA
+        run: |
+          set -Eeuo pipefail
+          proof="artifacts/ga-staging-source/proof.json"
+          test -s "$proof"
+          validated_sha="$(jq -r '.validated_sha // empty' "$proof")"
+          proof_run_id="$(jq -r '.staging_validation_run_id // empty' "$proof")"
+          if ! [[ "$validated_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Tenant-isolation proof has no full validated SHA"
+            exit 1
+          fi
+          if [ "$proof_run_id" != "$GA_STAGING_RUN_ID" ]; then
+            echo "::error::Tenant-isolation proof does not belong to the selected run"
+            exit 1
+          fi
+          echo "CLIENT_ACCEPTANCE_SHA=$validated_sha" >> "$GITHUB_ENV"
+
+      - name: Verify staging-validation source run
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          payload="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GA_STAGING_RUN_ID}")"
+          if [ "$(jq -r '.path // empty' <<<"$payload")" != ".github/workflows/ga-staging-validation.yml" ] \
+            || [ "$(jq -r '.status // empty' <<<"$payload")" != "completed" ] \
+            || [ "$(jq -r '.conclusion // empty' <<<"$payload")" != "success" ]; then
+            echo "::error::Selected source is not a successful GA Staging Validation run"
+            exit 1
+          fi
+
+      - name: Checkout validated release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CLIENT_ACCEPTANCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify checked-out client-test target
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CLIENT_ACCEPTANCE_SHA" ]; then
+            echo "::error::Checked-out SHA $actual_sha does not match client-test target $CLIENT_ACCEPTANCE_SHA"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed disposable tier customers
+        id: seed
+        run: node tests/client-acceptance/seed.mjs
+
+      - name: Build staging-backed frontend
+        env:
+          VITE_SUPABASE_URL: ${{ env.LOAD_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ env.LOAD_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      - name: Start client-test frontend
+        run: |
+          nohup npm run preview -- --host 127.0.0.1 --port 4173 >/tmp/quantivis-client-preview.log 2>&1 &
+          echo $! > /tmp/quantivis-client-preview.pid
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent "$CLIENT_ACCEPTANCE_BASE_URL/" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/quantivis-client-preview.log || true
+          echo "::error::Client-test frontend did not become ready"
+          exit 1
+
+      - name: Exercise Essentials, Governance, and Enterprise as customers
+        run: npx playwright test tests/client-acceptance/tier-journeys.spec.ts --reporter=line,html
+
+      - name: Record client-acceptance SHA proof
+        if: ${{ success() }}
+        run: |
+          mkdir -p artifacts/client-acceptance-proof
+          jq -n \
+            --arg validated_sha "$CLIENT_ACCEPTANCE_SHA" \
+            --arg ga_staging_run_id "$GA_STAGING_RUN_ID" \
+            --arg client_acceptance_run_id "$GITHUB_RUN_ID" \
+            '{validated_sha: $validated_sha, ga_staging_run_id: $ga_staging_run_id, client_acceptance_run_id: $client_acceptance_run_id}' \
+            > artifacts/client-acceptance-proof/proof.json
+          printf '%s\n' "$CLIENT_ACCEPTANCE_SHA" > artifacts/client-acceptance-proof/validated-sha.txt
+
+      - name: Teardown disposable tier customers
+        if: ${{ always() && steps.seed.outcome != 'skipped' }}
+        run: node tests/client-acceptance/teardown.mjs
+
+      - name: Publish client review report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: client-acceptance-report
+          path: artifacts/client-acceptance
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish client-acceptance proof
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: client-acceptance-proof
+          path: artifacts/client-acceptance-proof
+          if-no-files-found: error
+          retention-days: 90
