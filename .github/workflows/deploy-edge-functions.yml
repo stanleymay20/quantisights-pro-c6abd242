@@ -3,15 +3,15 @@ name: Deploy Supabase Production
 # Production promotion is deliberately manual. Configure the `production`
 # GitHub Environment with required reviewers and environment-scoped secrets:
 # SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD.
-#
-# Promote the exact SHA that passed staging. The same SHA is re-certified in
-# this workflow before any production migration or Edge Function deployment.
+# The requested release SHA must already have successful CI, staging deployment,
+# tenant-isolation validation, and GA Readiness runs. The same immutable SHA is
+# re-certified here before any production database or Edge mutation.
 
 on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: Full 40-character commit SHA that passed staging
+        description: Full 40-character commit SHA that passed all GA gates
         required: true
         type: string
       confirm_project_ref:
@@ -30,6 +30,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      actions: read
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -51,6 +52,38 @@ jobs:
             echo "::error::release_sha must be a full 40-character Git commit SHA"
             exit 1
           fi
+
+      - name: Verify certified release workflow gates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          require_gate() {
+            local workflow="$1" label="$2" attempt payload matching status conclusion run_id
+            for attempt in $(seq 1 12); do
+              payload="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?per_page=100")"
+              matching="$(jq -c --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)][0] // empty' <<<"$payload")"
+              if [ -z "$matching" ]; then
+                if [ "$attempt" -lt 12 ]; then sleep 10; continue; fi
+                echo "::error::No ${label} run found for ${RELEASE_SHA}"; exit 1
+              fi
+              status="$(jq -r '.status' <<<"$matching")"
+              conclusion="$(jq -r '.conclusion // ""' <<<"$matching")"
+              run_id="$(jq -r '.id' <<<"$matching")"
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" != "success" ]; then
+                  echo "::error::${label} run ${run_id} for ${RELEASE_SHA} concluded ${conclusion}"; exit 1
+                fi
+                echo "Verified ${label} run ${run_id} for ${RELEASE_SHA}"; return 0
+              fi
+              if [ "$attempt" -lt 12 ]; then sleep 10; fi
+            done
+            echo "::error::${label} did not complete successfully for ${RELEASE_SHA}"; exit 1
+          }
+          require_gate "ci.yml" "CI"
+          require_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"
+          require_gate "ga-staging-validation.yml" "GA Staging Validation"
+          require_gate "ga-readiness.yml" "GA Readiness"
 
       - name: Verify required secrets
         run: |

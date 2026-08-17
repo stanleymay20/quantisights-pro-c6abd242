@@ -1,13 +1,13 @@
 name: Deploy Supabase Staging
 
-# Every Supabase change reaches staging first. Configure the `staging` GitHub
-# Environment with environment-scoped SUPABASE_ACCESS_TOKEN and
+# Every Supabase or release-pipeline change reaches staging first. Configure the
+# `staging` GitHub Environment with environment-scoped SUPABASE_ACCESS_TOKEN and
 # SUPABASE_DB_PASSWORD secrets. Production credentials must never be placed in
 # this environment.
 
 on:
   push:
-    branches: [main, agent/fix-staging-edge-imports]
+    branches: [main]
     paths:
       - "supabase/functions/**"
       - "src/lib/**"
@@ -16,7 +16,12 @@ on:
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
       - "tests/tenant-isolation/**"
+      - "src/test/staging-supabase-security.test.ts"
+      - "src/test/release-certification-chain.test.ts"
       - ".github/workflows/deploy-supabase-staging.yml"
+      - ".github/workflows/ga-staging-validation.yml"
+      - ".github/workflows/ga-readiness.yml"
+      - ".github/workflows/deploy-edge-functions.yml"
   workflow_dispatch: {}
 
 concurrency:

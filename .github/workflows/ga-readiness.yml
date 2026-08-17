@@ -1,42 +1,88 @@
 name: GA Readiness
 
-# Runs the repository's official heavy release gate before production promotion.
-# This workflow is intentionally separate from normal CI so 1M-row certification
-# is available as an explicit release signal without slowing every commit.
+# Heavy GA certification is chained behind real staging validation. Manual runs
+# remain available, but they must name an exact SHA that already has successful
+# CI, staging deployment, and tenant-isolation validation runs.
 
 on:
-  workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/ga-readiness.yml"
-      - ".github/workflows/deploy-supabase-staging.yml"
-      - ".github/workflows/deploy-edge-functions.yml"
-      - "scripts/deploy-supabase-functions-resilient.sh"
-      - "scripts/verify-supabase-functions.sh"
-      - "scripts/verify-live-ga-security.mjs"
-      - "scripts/build-supplier-risk-edge-runtime.mjs"
-      - "config/security-policy.mjs"
-      - "package.json"
-      - "package-lock.json"
+  workflow_run:
+    workflows: ["GA Staging Validation"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full 40-character commit SHA that already passed staging validation
+        required: true
+        type: string
 
 concurrency:
-  group: ga-readiness
-  cancel-in-progress: true
+  group: ga-readiness-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.release_sha }}
+  cancel-in-progress: false
 
 jobs:
   certify:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
     env:
+      CERTIFIED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.release_sha }}
       QV_CERTIFY_REPORT: ${{ github.workspace }}/artifacts/quantivis-certification-report.md
     steps:
-      - name: Checkout
+      - name: Validate certified SHA
+        run: |
+          if ! [[ "$CERTIFIED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::GA certification requires a full 40-character commit SHA"
+            exit 1
+          fi
+          echo "Certifying release candidate $CERTIFIED_SHA"
+
+      - name: Verify exact-SHA prerequisite workflow gates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          wait_for_gate() {
+            local workflow="$1" label="$2" attempt payload matching status conclusion run_id
+            for attempt in $(seq 1 30); do
+              payload="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?per_page=100")"
+              matching="$(jq -c --arg sha "$CERTIFIED_SHA" '[.workflow_runs[] | select(.head_sha == $sha)][0] // empty' <<<"$payload")"
+              if [ -z "$matching" ]; then
+                if [ "$attempt" -lt 30 ]; then sleep 10; continue; fi
+                echo "::error::No ${label} run found for ${CERTIFIED_SHA}"; exit 1
+              fi
+              status="$(jq -r '.status' <<<"$matching")"
+              conclusion="$(jq -r '.conclusion // ""' <<<"$matching")"
+              run_id="$(jq -r '.id' <<<"$matching")"
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" != "success" ]; then
+                  echo "::error::${label} run ${run_id} for ${CERTIFIED_SHA} concluded ${conclusion}"; exit 1
+                fi
+                echo "Verified ${label} run ${run_id} for ${CERTIFIED_SHA}"; return 0
+              fi
+              if [ "$attempt" -lt 30 ]; then sleep 10; fi
+            done
+            echo "::error::${label} did not complete successfully for ${CERTIFIED_SHA} within the verification window"; exit 1
+          }
+          wait_for_gate "ci.yml" "CI"
+          wait_for_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"
+          wait_for_gate "ga-staging-validation.yml" "GA Staging Validation"
+
+      - name: Checkout certified release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CERTIFIED_SHA }}
           persist-credentials: false
+
+      - name: Verify checked-out certification target
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CERTIFIED_SHA" ]; then
+            echo "::error::Checked-out SHA $actual_sha does not match certification target $CERTIFIED_SHA"
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
