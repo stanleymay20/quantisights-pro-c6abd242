@@ -25,6 +25,15 @@ const sb = createClient(URL, SERVICE_KEY, { auth: { persistSession: false } });
 const state = JSON.parse(readFileSync(STATE, "utf8"));
 let failed = false;
 
+if (state.run_tag) {
+  const leadEmail = `${state.run_tag}@quantivis.test`;
+  const { error: leadError } = await sb.from("enterprise_leads").delete().eq("work_email", leadEmail);
+  if (leadError) {
+    failed = true;
+    console.error(`teardown enterprise lead ${leadEmail}: ${leadError.message}`);
+  }
+}
+
 for (const customer of Object.values(state.customers || {})) {
   if (customer.org_id) {
     for (const table of ["decision_ledger", "subscriptions", "organization_members"]) {
@@ -51,4 +60,4 @@ for (const customer of Object.values(state.customers || {})) {
 
 if (failed) throw new Error("Client-acceptance teardown was incomplete");
 rmSync(STATE, { force: true });
-console.log("Client-acceptance fixtures removed cleanly.");
+console.log("Client-acceptance fixtures and synthetic demo lead removed cleanly.");
