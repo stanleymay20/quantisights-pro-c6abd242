@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSubscriptionGate } from "@/hooks/useSubscriptionGate";
+import { useSubscriptionGate, type FeatureKey } from "@/hooks/useSubscriptionGate";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import UpgradeModal from "@/components/UpgradeModal";
 
 interface Props {
-  feature: string;
+  feature: FeatureKey;
   children: React.ReactNode;
   fallbackMessage?: string;
   requiredTier?: "growth" | "enterprise";
