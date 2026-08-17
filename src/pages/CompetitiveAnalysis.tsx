@@ -44,7 +44,7 @@ const CompetitiveAnalysis = forwardRef<HTMLDivElement>((_, ref) => (
             2026 competitive landscape · 50 vendors
           </div>
           <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-5">
-            Most platforms govern the AI, automate the decision, or analyze the data.{" ""}
+            Most platforms govern the AI, automate the decision, or analyze the data. {" "}
             <span className="gradient-text">Quantivis governs the decision itself.</span>
           </h1>
           <p className="text-base sm:text-lg text-muted-foreground max-w-4xl mx-auto leading-relaxed">
@@ -80,16 +80,14 @@ const CompetitiveAnalysis = forwardRef<HTMLDivElement>((_, ref) => (
 
         <section className="rounded-2xl border border-primary/25 bg-primary/5 p-6 sm:p-8 mb-14">
           <div className="grid lg:grid-cols-[1.4fr_1fr] gap-8 items-start">
-            <div>
-              <div className="flex gap-3 items-start">
-                <CheckCircle2 className="w-6 h-6 text-primary shrink-0 mt-0.5" aria-hidden="true" />
-                <div>
-                  <h2 className="text-xl font-bold mb-2">The buyer-safe positioning</h2>
-                  <p className="text-muted-foreground leading-relaxed">
-                    “Keep the systems you already use. Quantivis becomes the governed decision layer above them — connecting
-                    evidence to recommendation, approval, execution, measured outcome and organizational learning.”
-                  </p>
-                </div>
+            <div className="flex gap-3 items-start">
+              <CheckCircle2 className="w-6 h-6 text-primary shrink-0 mt-0.5" aria-hidden="true" />
+              <div>
+                <h2 className="text-xl font-bold mb-2">The buyer-safe positioning</h2>
+                <p className="text-muted-foreground leading-relaxed">
+                  “Keep the systems you already use. Quantivis becomes the governed decision layer above them — connecting
+                  evidence to recommendation, approval, execution, measured outcome and organizational learning.”
+                </p>
               </div>
             </div>
             <div className="rounded-xl border border-border/60 bg-background/80 p-5">
