@@ -70,10 +70,13 @@ try {
     });
     if (memberError) throw new Error(`Create ${tier} membership: ${memberError.message}`);
 
+    // These fixtures model paying customers, not evaluation pilots. Using a
+    // pilot_* subscription id would make useSubscription() set isPilot=true and
+    // would silently test the wrong pricing/upgrade experience.
     const { error: subscriptionError } = await sb.from("subscriptions").insert({
       organization_id: org.id,
       stripe_customer_id: `client_acceptance_${runTag}_${tier}`,
-      stripe_subscription_id: `pilot_client_acceptance_${runTag}_${tier}`,
+      stripe_subscription_id: `client_acceptance_paid_${runTag}_${tier}`,
       tier,
       status: "active",
       current_period_end: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
@@ -93,7 +96,7 @@ try {
   }
 
   persist();
-  console.log(`Seeded disposable client-acceptance customers for ${tiers.join(", ")}.`);
+  console.log(`Seeded disposable paid client-acceptance customers for ${tiers.join(", ")}.`);
 } catch (error) {
   persist();
   await cleanupPartial();
