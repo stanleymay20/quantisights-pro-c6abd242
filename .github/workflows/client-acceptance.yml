@@ -2,8 +2,8 @@ name: Client Acceptance
 
 # Buyer/reviewer-style browser validation for the exact SHA that already passed
 # real staging tenant isolation. This gate builds the frontend locally but points
-# it at the real staging Supabase project, then exercises disposable Essentials,
-# Governance, and Enterprise customer identities through Chromium.
+# it at the real staging Supabase project, then exercises public buyer journeys
+# plus disposable Essentials, Governance, and Enterprise customer identities.
 
 on:
   workflow_run:
@@ -152,8 +152,8 @@ jobs:
           echo "::error::Client-test frontend did not become ready"
           exit 1
 
-      - name: Exercise Essentials, Governance, and Enterprise as customers
-        run: npx playwright test tests/client-acceptance/tier-journeys.spec.ts --reporter=line,html
+      - name: Exercise public buyer and all paid-tier customer journeys
+        run: npx playwright test tests/client-acceptance/*.spec.ts --reporter=line,html
 
       - name: Record client-acceptance SHA proof
         if: ${{ success() }}
