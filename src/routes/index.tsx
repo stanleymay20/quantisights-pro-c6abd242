@@ -244,7 +244,8 @@ export const routes: RouteEntry[] = [
   { path: "/enterprise", element: <Navigate to="/enterprise/contact" replace />, layout: "none" },
   // layout: "none" — renders own Navbar/Footer (DS-0).
   { path: "/enterprise/contact", element: <EnterpriseContact />, layout: "none" },
-  { path: "/competitive-analysis", element: <CompetitiveAnalysis />, layout: "full" },
+  // layout: "none" — competitive analysis is a public marketing/procurement page and renders its own Navbar/Footer.
+  { path: "/competitive-analysis", element: <CompetitiveAnalysis />, layout: "none" },
   { path: "/trust", element: <SecurityTrustCenter />, layout: "public" },
   { path: "/enterprise/trust", element: <TrustCenter />, layout: "public" },
   { path: "/trust-center", element: <Navigate to="/trust" replace />, layout: "none" },
@@ -301,25 +302,22 @@ export const routes: RouteEntry[] = [
   { path: "/intelligence-dashboard", element: <IntelligenceDashboard />, layout: "full" },
   { path: "/intelligence-inbox", element: <IntelligenceInbox />, layout: "full" },
   { path: "/executive-intelligence", element: <ExecutiveIntelligence />, layout: "full" },
-  { path: "/contradictions", element: <ExecutiveContradictions />, layout: "full" },
+  { path: "/executive/contradictions", element: <ExecutiveContradictions />, layout: "full" },
   { path: "/industrial-operations", element: <IndustrialOperations />, layout: "full" },
   { path: "/interventions", element: <Interventions />, layout: "full" },
-  { path: "/narratives", element: <NarrativeCockpit />, layout: "full" },
+  { path: "/narrative-cockpit", element: <NarrativeCockpit />, layout: "full" },
   { path: "/operational-graph", element: <OperationalGraph />, layout: "full" },
-  { path: "/boardroom", element: <Boardroom />, layout: "minimal" },
+  { path: "/boardroom", element: <Boardroom />, layout: "full" },
+
   // ══════ Decision System ══════
-  { path: "/executive-brief", element: <ExecutiveBrief />, layout: "full" },
   { path: "/decisions", element: <DecisionLedger />, layout: "full" },
-  { path: "/decisions/:id/review", element: <DecisionReview />, layout: "full" },
-  { path: "/decisions/:id/outcome", element: <DecisionOutcome />, layout: "full" },
-  { path: "/evidence-pack/:decisionId", element: <EvidencePack />, layout: "full" },
-  // ══════ ST-1 Scenario Templates ══════
-  // Mounted under /enterprise/* — "/scenarios" is already the live financial
-  // what-if scenario simulator (src/pages/Scenarios.tsx); this avoids colliding
-  // with it, the same way /enterprise/trust avoided colliding with /trust.
-  { path: "/enterprise/scenarios", element: <ScenarioTemplates />, layout: "full" },
-  { path: "/enterprise/scenarios/:templateId", element: <ScenarioTemplateDetail />, layout: "full" },
-  { path: "/deliberation", element: <Deliberation />, layout: "full" },
+  { path: "/executive-brief", element: <ExecutiveBrief />, layout: "full" },
+  { path: "/decision-review/:id", element: <DecisionReview />, layout: "full" },
+  { path: "/decision-outcome/:id", element: <DecisionOutcome />, layout: "full" },
+  { path: "/evidence-pack/:id", element: <EvidencePack />, layout: "full" },
+  { path: "/scenario-templates", element: <ScenarioTemplates />, layout: "full" },
+  { path: "/scenario-templates/:id", element: <ScenarioTemplateDetail />, layout: "full" },
+  { path: "/deliberation/:id", element: <Deliberation />, layout: "full" },
   { path: "/ai-boardroom", element: <AIBoardroom />, layout: "full" },
   { path: "/decision-intelligence", element: <DecisionIntelligence />, layout: "full" },
   { path: "/decision-fitness", element: <DecisionFitness />, layout: "full" },
@@ -341,7 +339,7 @@ export const routes: RouteEntry[] = [
   // ══════ Data ══════
   { path: "/data-upload", element: <DataUpload />, layout: "full" },
   { path: "/data-sources", element: <DataSources />, layout: "full" },
-  { path: "/data-connectors", element: <DataConnectors />, layout: "full" },
+  { path: "/data-connectors", element: <DataConnectors />, layout: "full", feature: "dataConnectors" },
   { path: "/dataset-explorer", element: <DatasetExplorer />, layout: "full" },
   { path: "/data-catalog", element: <DataCatalog />, layout: "full" },
   { path: "/lineage", element: <DataLineage />, layout: "full", feature: "dataLineage" },
@@ -380,18 +378,16 @@ export const routes: RouteEntry[] = [
   { path: "/admin/data-vendors", element: <DataVendors />, layout: "full" },
   { path: "/admin/internal-data", element: <InternalData />, layout: "full" },
   { path: "/admin/connectors", element: <AdminConnectors />, layout: "full" },
-  { path: "/admin/ingestion-observability", element: <IngestionObservability />, layout: "full" },
+  { path: "/admin/ingestion", element: <IngestionObservability />, layout: "full" },
   { path: "/admin/connector-health", element: <ConnectorHealth />, layout: "full" },
-  { path: "/admin/connectors/sap", element: <SapConnector />, layout: "full" },
+  { path: "/admin/aicis-sync", element: <AicisSync />, layout: "full" },
+  { path: "/admin/sap-connector", element: <SapConnector />, layout: "full" },
   { path: "/admin/localization-audit", element: <LocalizationAudit />, layout: "full" },
   { path: "/admin/context-packs", element: <ContextPacks />, layout: "full" },
   { path: "/admin/governance-simulation", element: <GovernanceSimulation />, layout: "full" },
   { path: "/admin/governance-audit", element: <GovernanceAudit />, layout: "full" },
 
-  // ══════ Catch-all ══════
-  // ── Redirects for anchor-based sections accessed as standalone URLs ──
-  { path: "/case-studies", element: <Navigate to="/#case-studies" replace />, layout: "none" },
-  { path: "/capabilities", element: <Navigate to="/#features" replace />, layout: "none" },
-
-  { path: "*", element: <NotFound />, layout: "public" },
+  // Catch-all is supplied by App.tsx so it can use the shared NotFound component.
 ];
+
+export { NotFound };
