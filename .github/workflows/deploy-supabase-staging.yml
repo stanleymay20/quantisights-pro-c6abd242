@@ -19,6 +19,7 @@ on:
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
       - "tests/tenant-isolation/**"
+      - "tests/client-acceptance/**"
       - "src/test/staging-supabase-security.test.ts"
       - "src/test/entitlement-enforcement.test.ts"
       - "src/test/release-certification-chain.test.ts"
@@ -26,6 +27,7 @@ on:
       - ".github/workflows/ci.yml"
       - ".github/workflows/deploy-supabase-staging.yml"
       - ".github/workflows/ga-staging-validation.yml"
+      - ".github/workflows/client-acceptance.yml"
       - ".github/workflows/ga-readiness.yml"
       - ".github/workflows/deploy-edge-functions.yml"
   workflow_dispatch: {}
