@@ -120,7 +120,24 @@ async function expectLogoutWorks(page: Page) {
   await expect(page).toHaveURL(/\/login/);
 }
 
-test("public buyer surface matches in-app commercial tiers", async ({ page }) => {
+test("homepage is commercially honest and source-of-truth aligned", async ({ page }) => {
+  await page.goto(BASE);
+  const body = page.locator("body");
+  await expect(body).toContainText("Essentials");
+  await expect(body).toContainText("Governance");
+  await expect(body).toContainText("Enterprise");
+  await expect(body).toContainText("3 data connectors");
+  await expect(body).toContainText(/30-day no-card Governance pilot/i);
+  await expect(body).toContainText(/high-risk AI systems/i);
+  await expect(body).not.toContainText(/5 enterprise connectors/i);
+  await expect(body).not.toContainText(/DAX-listed industrial group/i);
+  await expect(body).not.toContainText(/GDPR Compliant/i);
+  await expect(body).not.toContainText(/SCIM \+ SSO available when configured/i);
+  await page.screenshot({ path: "artifacts/client-acceptance/public-homepage.png", fullPage: true });
+  await assertAccessible(page);
+});
+
+test("public pricing surface matches in-app commercial tiers", async ({ page }) => {
   await page.goto(`${BASE}/pricing`);
   await expect(page.locator("body")).toContainText("Essentials");
   await expect(page.locator("body")).toContainText("Governance");
@@ -139,6 +156,11 @@ test("public buyer surface remains usable on a phone viewport", async ({ page })
   await expect(page.getByText("Enterprise", { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
   await assertAccessible(page);
+
+  await page.goto(BASE);
+  await expect(page.getByText("Quantivis", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /request demo/i }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
 });
 
 test.describe("Essentials customer", () => {
