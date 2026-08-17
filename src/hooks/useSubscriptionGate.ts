@@ -11,7 +11,7 @@ import { TierKey } from "@/lib/stripe-tiers";
  *   Governance (growth):   Full Decision Ledger, Unlimited Copilot, all 15 connectors, 15 seats
  *   Enterprise:            Everything + multi-org, SSO, bias detection, counterfactual, war room
  */
-const FEATURE_TIERS: Record<string, TierKey[]> = {
+export const FEATURE_TIERS = {
   // Governance + Enterprise only (starter gets core versions of these)
   simulations:      ["growth", "enterprise"],   // Monte Carlo; starter gets basic sim (5/day)
   convergence:      ["growth", "enterprise"],
@@ -41,7 +41,13 @@ const FEATURE_TIERS: Record<string, TierKey[]> = {
   marketIntelligence: ["enterprise"],
   multiOrg:         ["enterprise"],
   onPremise:        ["enterprise"],
-};
+} satisfies Record<string, TierKey[]>;
+
+export type FeatureKey = keyof typeof FEATURE_TIERS;
+
+/** Lowest paid tier that unlocks a feature — drives upgrade messaging. */
+export const requiredTierFor = (feature: FeatureKey): "growth" | "enterprise" =>
+  (FEATURE_TIERS[feature] as readonly TierKey[]).includes("growth") ? "growth" : "enterprise";
 
 export const useSubscriptionGate = () => {
   const { subscribed, tier, loading, isPilot } = useSubscription();
@@ -50,11 +56,11 @@ export const useSubscriptionGate = () => {
   // Demo users bypass all subscription gates
   const isDemoUser = Boolean(user?.user_metadata?.is_demo);
 
-  const canAccess = (feature: keyof typeof FEATURE_TIERS): boolean => {
+  const canAccess = (feature: FeatureKey): boolean => {
     if (isDemoUser) return true;
     if (loading) return false;
     if (!subscribed || !tier) return false;
-    const allowed = FEATURE_TIERS[feature];
+    const allowed = FEATURE_TIERS[feature] as readonly TierKey[] | undefined;
     if (!allowed) return true;
     return allowed.includes(tier);
   };

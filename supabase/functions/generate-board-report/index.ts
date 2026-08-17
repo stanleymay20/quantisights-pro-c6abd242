@@ -57,15 +57,16 @@ serve(async (req) => {
       });
     }
 
-    const { data: sub } = await serviceClient
-      .from("subscriptions").select("tier")
-      .eq("organization_id", organization_id).eq("status", "active").maybeSingle();
-    const tier = sub?.tier || "starter";
-    if (tier === "starter") {
-      return new Response(JSON.stringify({ error: "Board reports require Growth or Enterprise plan" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Entitlement is resolved centrally so trialing, pilot and grace-period
+    // subscriptions are treated correctly (the previous ad-hoc status="active"
+    // lookup denied board reports to paying customers inside their trial).
+    const access = await requireFeatureAccess(supabaseUrl, serviceKey, authHeader, "boardExport");
+    if (!access.ok) {
+      return new Response(JSON.stringify(access.body), {
+        status: access.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const tier = access.tier;
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

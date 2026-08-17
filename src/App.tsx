@@ -19,6 +19,7 @@ import CookieConsent from "@/components/CookieConsent";
 import SessionTimeout from "@/components/auth/SessionTimeout";
 import UpgradeModalProvider from "@/components/UpgradeModalProvider";
 import { routes, RouteLayout } from "@/routes";
+import RouteEntitlement from "@/components/auth/RouteEntitlement";
 import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
 import { metadataForPath } from "@/lib/page-metadata";
@@ -125,8 +126,14 @@ const App = () => (
             <UpgradeModalProvider />
             <Suspense fallback={<PageLoader />}>
             <Routes>
-              {routes.map(({ path, element, layout }) => (
-                <Route key={path} path={path} element={wrapLayout[layout](element)} />
+              {routes.map(({ path, element, layout, feature }) => (
+                <Route
+                  key={path}
+                  path={path}
+                  element={wrapLayout[layout](
+                    feature ? <RouteEntitlement feature={feature}>{element}</RouteEntitlement> : element,
+                  )}
+                />
               ))}
             </Routes>
             </Suspense>

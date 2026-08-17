@@ -10,6 +10,7 @@
  */
 
 import { lazy } from "react";
+import type { FeatureKey } from "@/hooks/useSubscriptionGate";
 import { Navigate } from "react-router-dom";
 
 // Eager: critical-path landing
@@ -191,6 +192,12 @@ export interface RouteEntry {
   path: string;
   element: React.ReactNode;
   layout: RouteLayout;
+  /**
+   * Optional entitlement key (see FEATURE_TIERS in useSubscriptionGate).
+   * When set, App.tsx wraps the route in <SubscriptionGate> so direct URL
+   * access cannot bypass the plan the customer actually pays for.
+   */
+  feature?: FeatureKey;
 }
 
 export const routes: RouteEntry[] = [
@@ -287,10 +294,10 @@ export const routes: RouteEntry[] = [
   { path: "/copilot/analytics", element: <CopilotAnalytics />, layout: "full" },
   { path: "/kpis", element: <KPIs />, layout: "full" },
   { path: "/diagnostics", element: <Diagnostics />, layout: "full" },
-  { path: "/advisory", element: <Advisory />, layout: "full" },
-  { path: "/forecasting", element: <Forecasting />, layout: "full" },
+  { path: "/advisory", element: <Advisory />, layout: "full", feature: "advisory" },
+  { path: "/forecasting", element: <Forecasting />, layout: "full", feature: "forecasting" },
   { path: "/ask", element: <NaturalLanguageQuery />, layout: "full" },
-  { path: "/market-intelligence", element: <MarketIntelligence />, layout: "full" },
+  { path: "/market-intelligence", element: <MarketIntelligence />, layout: "full", feature: "marketIntelligence" },
   { path: "/intelligence-dashboard", element: <IntelligenceDashboard />, layout: "full" },
   { path: "/intelligence-inbox", element: <IntelligenceInbox />, layout: "full" },
   { path: "/executive-intelligence", element: <ExecutiveIntelligence />, layout: "full" },
@@ -317,9 +324,9 @@ export const routes: RouteEntry[] = [
   { path: "/decision-intelligence", element: <DecisionIntelligence />, layout: "full" },
   { path: "/decision-fitness", element: <DecisionFitness />, layout: "full" },
   { path: "/execution", element: <ExecutionDashboard />, layout: "full" },
-  { path: "/cognitive-bias", element: <CognitiveBiasDetection />, layout: "full" },
-  { path: "/counterfactual", element: <CounterfactualExplanation />, layout: "full" },
-  { path: "/causal-inference", element: <CausalInference />, layout: "full" },
+  { path: "/cognitive-bias", element: <CognitiveBiasDetection />, layout: "full", feature: "biasDetection" },
+  { path: "/counterfactual", element: <CounterfactualExplanation />, layout: "full", feature: "counterfactual" },
+  { path: "/causal-inference", element: <CausalInference />, layout: "full", feature: "causalInference" },
   { path: "/misses", element: <Misses />, layout: "full" },
   { path: "/decision-accuracy", element: <DecisionAccuracy />, layout: "full" },
   { path: "/outcomes", element: <Outcomes />, layout: "full" },
@@ -328,8 +335,8 @@ export const routes: RouteEntry[] = [
 
   // ══════ Scenarios & Simulations ══════
   { path: "/scenarios", element: <Scenarios />, layout: "full" },
-  { path: "/simulations", element: <Simulations />, layout: "full" },
-  { path: "/branching", element: <ScenarioBranching />, layout: "full" },
+  { path: "/simulations", element: <Simulations />, layout: "full", feature: "simulations" },
+  { path: "/branching", element: <ScenarioBranching />, layout: "full", feature: "scenarioBranching" },
 
   // ══════ Data ══════
   { path: "/data-upload", element: <DataUpload />, layout: "full" },
@@ -337,10 +344,10 @@ export const routes: RouteEntry[] = [
   { path: "/data-connectors", element: <DataConnectors />, layout: "full" },
   { path: "/dataset-explorer", element: <DatasetExplorer />, layout: "full" },
   { path: "/data-catalog", element: <DataCatalog />, layout: "full" },
-  { path: "/lineage", element: <DataLineage />, layout: "full" },
+  { path: "/lineage", element: <DataLineage />, layout: "full", feature: "dataLineage" },
   { path: "/pipeline", element: <PipelineObservability />, layout: "full" },
   { path: "/data-hub", element: <DataHub />, layout: "full" },
-  { path: "/aicis-sync", element: <AicisSync />, layout: "full" },
+  { path: "/aicis-sync", element: <AicisSync />, layout: "full", feature: "aicisIntegration" },
   { path: "/admin/bridge-health", element: <BridgeHealth />, layout: "full" },
   { path: "/admin/observability-check", element: <ObservabilityCheck />, layout: "full" },
 
@@ -348,15 +355,15 @@ export const routes: RouteEntry[] = [
   { path: "/reports", element: <Reports />, layout: "full" },
   { path: "/executive", element: <Executive />, layout: "full" },
   { path: "/strategy-pack", element: <StrategyPack />, layout: "full" },
-  { path: "/benchmarking", element: <Benchmarking />, layout: "full" },
-  { path: "/okrs", element: <OKRs />, layout: "full" },
+  { path: "/benchmarking", element: <Benchmarking />, layout: "full", feature: "benchmarking" },
+  { path: "/okrs", element: <OKRs />, layout: "full", feature: "okrAlignment" },
   { path: "/portfolio", element: <Portfolio />, layout: "full" },
 
   // ══════ Governance & Compliance ══════
   { path: "/governance", element: <GovernanceCommandView />, layout: "full" },
   { path: "/governance-maturity", element: <GovernanceMaturity />, layout: "full" },
   { path: "/compliance", element: <Compliance />, layout: "full" },
-  { path: "/alert-playbooks", element: <AlertPlaybooks />, layout: "full" },
+  { path: "/alert-playbooks", element: <AlertPlaybooks />, layout: "full", feature: "alertPlaybooks" },
   { path: "/system-health", element: <SystemHealth />, layout: "full" },
   { path: "/fairness", element: <FairnessObservability />, layout: "full" },
   { path: "/decision-maturity", element: <DecisionMaturity />, layout: "full" },
@@ -367,7 +374,7 @@ export const routes: RouteEntry[] = [
   { path: "/clients", element: <Clients />, layout: "full" },
   { path: "/billing", element: <Billing />, layout: "full" },
   { path: "/settings", element: <Settings />, layout: "full" },
-  { path: "/sso", element: <SSOConfig />, layout: "full" },
+  { path: "/sso", element: <SSOConfig />, layout: "full", feature: "sso" },
   { path: "/privacy-dashboard", element: <PrivacyDashboard />, layout: "full" },
   { path: "/pilot-audit", element: <PilotAudit />, layout: "full" },
   { path: "/admin/data-vendors", element: <DataVendors />, layout: "full" },

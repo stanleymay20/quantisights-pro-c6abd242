@@ -73,6 +73,16 @@ serve(async (req) => {
       });
     }
 
+    // Paid capability: Monte Carlo is a Governance/Enterprise entitlement.
+    // Enforced server-side so direct API calls cannot bypass the UI gate.
+    const access = await requireFeatureAccess(supabaseUrl, serviceKey, authHeader, "simulations");
+    if (!access.ok) {
+      return new Response(JSON.stringify(access.body), {
+        status: access.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Dry run: validate contract only
     if (dry_run) {
       return new Response(JSON.stringify({ dry_run: true, status: "PASS", dataset_id, organization_id }), {
