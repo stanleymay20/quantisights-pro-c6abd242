@@ -1,9 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Response, type Request } from "@playwright/test";
 import axe from "axe-core";
 import { existsSync, readFileSync } from "node:fs";
 
 const BASE = process.env.CLIENT_ACCEPTANCE_BASE_URL || "http://127.0.0.1:4173";
 const STATE = process.env.CLIENT_ACCEPTANCE_STATE || "tests/client-acceptance/.state.json";
+const STAGING_SUPABASE_HOST = "cmnihsbdbpubznlkmjbc.supabase.co";
 if (!existsSync(STATE)) throw new Error(`Missing client-acceptance state at ${STATE}`);
 
 const state = JSON.parse(readFileSync(STATE, "utf8"));
@@ -29,6 +30,15 @@ const enterpriseRoutes = [
 ];
 const coreRoutes = ["/dashboard", "/decisions", "/data-catalog", "/reports", "/settings", "/billing"];
 
+const isFirstParty = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return url.startsWith(BASE) || parsed.hostname === STAGING_SUPABASE_HOST;
+  } catch {
+    return false;
+  }
+};
+
 async function login(page: Page, tier: "starter" | "growth" | "enterprise") {
   const customer = customers[tier];
   expect(customer, `missing ${tier} fixture`).toBeTruthy();
@@ -37,25 +47,39 @@ async function login(page: Page, tier: "starter" | "growth" | "enterprise") {
   await page.getByLabel(/password/i).fill(customer.password);
   await page.getByRole("button", { name: /sign in/i }).click();
   await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 20_000 });
+  await expect(page.locator("body")).not.toContainText(/multi-factor authentication required/i);
 }
 
 async function expectUsableRoute(page: Page, path: string) {
   const serverErrors: string[] = [];
+  const requestFailures: string[] = [];
   const pageErrors: string[] = [];
-  const onResponse = (response: any) => {
-    if (response.url().startsWith(BASE) && response.status() >= 500) serverErrors.push(`${response.status()} ${response.url()}`);
+  const onResponse = (response: Response) => {
+    if (isFirstParty(response.url()) && response.status() >= 500) {
+      serverErrors.push(`${response.status()} ${response.url()}`);
+    }
+  };
+  const onRequestFailed = (request: Request) => {
+    if (isFirstParty(request.url())) requestFailures.push(`${request.failure()?.errorText ?? "failed"} ${request.url()}`);
   };
   const onPageError = (error: Error) => pageErrors.push(error.message);
   page.on("response", onResponse);
+  page.on("requestfailed", onRequestFailed);
   page.on("pageerror", onPageError);
-  await page.goto(`${BASE}${path}`);
-  await expect(page).not.toHaveURL(/\/login/);
-  await expect(page.locator("body")).not.toContainText(/your current access level doesn't include this capability/i);
-  await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
-  expect(serverErrors, `${path} returned server errors`).toEqual([]);
-  expect(pageErrors, `${path} raised browser errors`).toEqual([]);
-  page.off("response", onResponse);
-  page.off("pageerror", onPageError);
+  try {
+    await page.goto(`${BASE}${path}`);
+    await expect(page).not.toHaveURL(/\/login/);
+    await expect(page.locator("body")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(/your current access level doesn't include this capability/i);
+    await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
+    expect(serverErrors, `${path} returned first-party server errors`).toEqual([]);
+    expect(requestFailures, `${path} had failed first-party requests`).toEqual([]);
+    expect(pageErrors, `${path} raised browser errors`).toEqual([]);
+  } finally {
+    page.off("response", onResponse);
+    page.off("requestfailed", onRequestFailed);
+    page.off("pageerror", onPageError);
+  }
 }
 
 async function expectLockedRoute(page: Page, path: string) {
@@ -65,7 +89,7 @@ async function expectLockedRoute(page: Page, path: string) {
   await expect(page.getByRole("button", { name: /see what's included/i })).toBeVisible();
 }
 
-async function assertNoCriticalA11y(page: Page) {
+async function assertAccessible(page: Page) {
   await page.addScriptTag({ content: axe.source });
   const violations = await page.evaluate(async () => {
     const result = await (window as any).axe.run(document, {
@@ -73,10 +97,27 @@ async function assertNoCriticalA11y(page: Page) {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
     });
     return result.violations
-      .filter((v: any) => v.impact === "critical")
+      .filter((v: any) => v.impact === "critical" || v.impact === "serious")
       .map((v: any) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length }));
   });
-  expect(violations, `critical accessibility violations: ${JSON.stringify(violations)}`).toEqual([]);
+  expect(violations, `serious/critical accessibility violations: ${JSON.stringify(violations)}`).toEqual([]);
+}
+
+async function expectPaidPlanPresentation(page: Page, tierName: string) {
+  await page.goto(`${BASE}/pricing`);
+  await expect(page.locator("body")).toContainText(tierName);
+  await expect(page.locator("body")).toContainText(/your plan/i);
+  await expect(page.locator("body")).not.toContainText(/pilot access/i);
+}
+
+async function expectLogoutWorks(page: Page) {
+  await page.goto(`${BASE}/settings`);
+  const button = page.getByRole("button", { name: /sign out|log out|logout/i }).first();
+  await expect(button).toBeVisible();
+  await button.click();
+  await page.waitForURL((url) => url.pathname === "/login" || url.pathname === "/", { timeout: 15_000 });
+  await page.goto(`${BASE}/dashboard`);
+  await expect(page).toHaveURL(/\/login/);
 }
 
 test("public buyer surface matches in-app commercial tiers", async ({ page }) => {
@@ -87,7 +128,17 @@ test("public buyer surface matches in-app commercial tiers", async ({ page }) =>
   await expect(page.locator("body")).toContainText("€499");
   await expect(page.locator("body")).toContainText("€1,999");
   await expect(page.locator("body")).toContainText(/3 data connectors|live data connectors/i);
-  await assertNoCriticalA11y(page);
+  await assertAccessible(page);
+});
+
+test("public buyer surface remains usable on a phone viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/pricing`);
+  await expect(page.getByText("Essentials", { exact: true })).toBeVisible();
+  await expect(page.getByText("Governance", { exact: true })).toBeVisible();
+  await expect(page.getByText("Enterprise", { exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
+  await assertAccessible(page);
 });
 
 test.describe("Essentials customer", () => {
@@ -95,13 +146,18 @@ test.describe("Essentials customer", () => {
 
   test("core paid experience is usable", async ({ page }) => {
     for (const route of coreRoutes) await expectUsableRoute(page, route);
+    await expectPaidPlanPresentation(page, "Essentials");
     await page.goto(`${BASE}/dashboard`);
     await page.screenshot({ path: "artifacts/client-acceptance/essentials-dashboard.png", fullPage: true });
-    await assertNoCriticalA11y(page);
+    await assertAccessible(page);
   });
 
   test("Governance and Enterprise capabilities remain honestly locked", async ({ page }) => {
     for (const route of [...growthRoutes, ...enterpriseRoutes]) await expectLockedRoute(page, route);
+  });
+
+  test("logout closes the paid session", async ({ page }) => {
+    await expectLogoutWorks(page);
   });
 });
 
@@ -110,8 +166,10 @@ test.describe("Governance customer", () => {
 
   test("core and Governance capabilities are usable", async ({ page }) => {
     for (const route of [...coreRoutes, ...growthRoutes]) await expectUsableRoute(page, route);
+    await expectPaidPlanPresentation(page, "Governance");
     await page.goto(`${BASE}/simulations`);
     await page.screenshot({ path: "artifacts/client-acceptance/governance-simulations.png", fullPage: true });
+    await assertAccessible(page);
   });
 
   test("Enterprise-only capabilities remain locked with upgrade guidance", async ({ page }) => {
@@ -124,8 +182,9 @@ test.describe("Enterprise customer", () => {
 
   test("all paid route tiers are reachable", async ({ page }) => {
     for (const route of [...coreRoutes, ...growthRoutes, ...enterpriseRoutes]) await expectUsableRoute(page, route);
+    await expectPaidPlanPresentation(page, "Enterprise");
     await page.goto(`${BASE}/market-intelligence`);
     await page.screenshot({ path: "artifacts/client-acceptance/enterprise-market-intelligence.png", fullPage: true });
-    await assertNoCriticalA11y(page);
+    await assertAccessible(page);
   });
 });
