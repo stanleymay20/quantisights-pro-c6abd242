@@ -15,6 +15,8 @@ on:
       - "src/pages/Index.tsx"
       - "src/pages/Pricing.tsx"
       - "src/pages/Register.tsx"
+      - "src/pages/CompetitiveAnalysis.tsx"
+      - "src/data/competitive-landscape.ts"
       - "src/hooks/useSubscription.ts"
       - "src/hooks/useSubscriptionGate.ts"
       - "src/components/SubscriptionGate.tsx"
