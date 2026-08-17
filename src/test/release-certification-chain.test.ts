@@ -3,26 +3,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
-const gaStaging = readFileSync(
-  resolve(root, ".github/workflows/ga-staging-validation.yml"),
-  "utf8",
-);
-const clientAcceptance = readFileSync(
-  resolve(root, ".github/workflows/client-acceptance.yml"),
-  "utf8",
-);
-const gaReadiness = readFileSync(
-  resolve(root, ".github/workflows/ga-readiness.yml"),
-  "utf8",
-);
-const staging = readFileSync(
-  resolve(root, ".github/workflows/deploy-supabase-staging.yml"),
-  "utf8",
-);
-const production = readFileSync(
-  resolve(root, ".github/workflows/deploy-edge-functions.yml"),
-  "utf8",
-);
+const gaStaging = readFileSync(resolve(root, ".github/workflows/ga-staging-validation.yml"), "utf8");
+const clientAcceptance = readFileSync(resolve(root, ".github/workflows/client-acceptance.yml"), "utf8");
+const gaReadiness = readFileSync(resolve(root, ".github/workflows/ga-readiness.yml"), "utf8");
+const staging = readFileSync(resolve(root, ".github/workflows/deploy-supabase-staging.yml"), "utf8");
+const production = readFileSync(resolve(root, ".github/workflows/deploy-edge-functions.yml"), "utf8");
 
 describe("release certification chain", () => {
   it("publishes run-scoped tenant-isolation proof for the exact staged SHA", () => {
@@ -39,7 +24,8 @@ describe("release certification chain", () => {
     expect(clientAcceptance).toContain("ga-staging-validation-proof");
     expect(clientAcceptance).toContain("client-acceptance-proof");
     expect(clientAcceptance).toContain("client_acceptance_run_id");
-    expect(clientAcceptance).toContain("Exercise Essentials, Governance, and Enterprise as customers");
+    expect(clientAcceptance).toContain("Exercise public buyer and all paid-tier customer journeys");
+    expect(clientAcceptance).toContain("tests/client-acceptance/*.spec.ts");
     expect(clientAcceptance).toContain("Teardown disposable tier customers");
   });
 
@@ -97,6 +83,8 @@ describe("release certification chain", () => {
     expect(staging).toContain("branches: [main]");
     expect(staging).not.toContain("agent/fix-staging-edge-imports");
     expect(staging).toContain('"tests/client-acceptance/**"');
+    expect(staging).toContain('"src/pages/Register.tsx"');
+    expect(staging).toContain('"src/routes/**"');
     expect(staging).toContain('".github/workflows/client-acceptance.yml"');
     expect(staging).toContain('".github/workflows/ga-staging-validation.yml"');
     expect(staging).toContain('".github/workflows/ga-readiness.yml"');
