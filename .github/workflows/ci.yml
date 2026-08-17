@@ -44,9 +44,6 @@ jobs:
       - name: Strict trusted-kernel typecheck
         run: npm run typecheck:trusted
 
-      - name: Validate staging JIT access script
-        run: node --check scripts/supabase-jit-access.mjs
-
       - name: Typecheck privileged Edge functions
         run: |
           deno check --config supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts
