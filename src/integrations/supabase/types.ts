@@ -12493,8 +12493,6 @@ export type Database = {
         Returns: {
           enforce_sso: boolean
           idp_sso_url: string
-          organization_id: string
-          provider_type: string
         }[]
       }
       try_cron_advisory_lock: { Args: { _lock_id: number }; Returns: boolean }

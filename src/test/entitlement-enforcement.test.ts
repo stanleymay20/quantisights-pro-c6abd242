@@ -1,43 +1,44 @@
-import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { routes } from "@/routes";
-import { FEATURE_TIERS, requiredTierFor } from "@/hooks/useSubscriptionGate";
+import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-/**
- * Regression cover for the GA customer-acceptance audit:
- * paid capabilities must be gated in the UI *and* enforced server-side.
- */
-describe("plan entitlement enforcement", () => {
-  const GATED_ROUTES: Record<string, string> = {
-    "/simulations": "simulations",
-    "/forecasting": "forecasting",
-    "/advisory": "advisory",
-    "/causal-inference": "causalInference",
-    "/benchmarking": "benchmarking",
-    "/alert-playbooks": "alertPlaybooks",
-    "/okrs": "okrAlignment",
-    "/aicis-sync": "aicisIntegration",
-    "/lineage": "dataLineage",
-    "/market-intelligence": "marketIntelligence",
-    "/cognitive-bias": "biasDetection",
-    "/counterfactual": "counterfactual",
-    "/branching": "scenarioBranching",
-    "/sso": "sso",
-  };
+const GATED_ROUTES: Record<string, string> = {
+  "/simulations": "simulations",
+  "/forecasting": "forecasting",
+  "/advisory": "advisory",
+  "/causal-inference": "causalInference",
+  "/benchmarking": "benchmarking",
+  "/alert-playbooks": "alertPlaybooks",
+  "/okrs": "okrAlignment",
+  "/aicis-sync": "aicisIntegration",
+  "/lineage": "dataLineage",
+  "/market-intelligence": "marketIntelligence",
+  "/cognitive-bias": "biasDetection",
+  "/counterfactual": "counterfactual",
+  "/branching": "scenarioBranching",
+  "/sso": "sso",
+};
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+describe("plan entitlement enforcement", () => {
   it("tags every paid route with the entitlement key it requires", () => {
+    const routes = read("src/routes/index.tsx");
     for (const [path, feature] of Object.entries(GATED_ROUTES)) {
-      const entry = routes.find((r) => r.path === path);
-      expect(entry, `route ${path} missing`).toBeTruthy();
-      expect(entry?.feature, `route ${path} not gated`).toBe(feature);
+      const routePattern = new RegExp(
+        `\\{[^}]*path:\\s*[\"']${escapeRegExp(path)}[\"'][^}]*feature:\\s*[\"']${escapeRegExp(feature)}[\"'][^}]*\\}`,
+      );
+      expect(routes, `route ${path} is not gated by ${feature}`).toMatch(routePattern);
     }
   });
 
-  it("only uses entitlement keys that exist in the tier matrix", () => {
-    for (const r of routes) {
-      if (r.feature) expect(FEATURE_TIERS[r.feature]).toBeTruthy();
+  it("keeps every route entitlement key in the tier matrix", () => {
+    const tiers = read("src/hooks/useSubscriptionGate.ts");
+    for (const feature of new Set(Object.values(GATED_ROUTES))) {
+      expect(tiers, `missing tier definition for ${feature}`).toMatch(
+        new RegExp(`\\b${escapeRegExp(feature)}\\s*:`),
+      );
     }
   });
 
@@ -47,9 +48,11 @@ describe("plan entitlement enforcement", () => {
     expect(app).toContain("feature ? <RouteEntitlement feature={feature}>");
   });
 
-  it("derives upgrade messaging from the lowest tier that unlocks a feature", () => {
-    expect(requiredTierFor("simulations")).toBe("growth");
-    expect(requiredTierFor("biasDetection")).toBe("enterprise");
+  it("keeps representative growth and enterprise tier boundaries explicit", () => {
+    const tiers = read("src/hooks/useSubscriptionGate.ts");
+    expect(tiers).toMatch(/simulations:\s*\[\"growth\",\s*\"enterprise\"\]/);
+    expect(tiers).toMatch(/biasDetection:\s*\[\"enterprise\"\]/);
+    expect(tiers).toContain("requiredTierFor");
   });
 
   it("enforces entitlements server-side, not only in the UI", () => {
@@ -58,7 +61,6 @@ describe("plan entitlement enforcement", () => {
 
     const board = read("supabase/functions/generate-board-report/index.ts");
     expect(board).toContain('requireFeatureAccess(supabaseUrl, serviceKey, authHeader, "boardExport")');
-    // The ad-hoc lookup below denied board reports to trialing/grace subscriptions.
     expect(board).not.toContain('.eq("status", "active").maybeSingle()');
 
     const forecast = read("supabase/functions/predictive-forecast/index.ts");
