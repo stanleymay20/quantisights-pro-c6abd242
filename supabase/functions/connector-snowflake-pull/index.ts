@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, getCorsHeaders } from "../_shared/cors.ts";
 import { shouldAllow, recordSuccess, recordFailure, deadLetter } from "../_shared/connector-isolation.ts";
+import { authorizeConnectorInvocation } from "../_shared/connector-invocation-auth.ts";
 import { upsertCanonicalMetrics } from "../_shared/canonical-mapper.ts";
 import { enforceLimit, assertSelectOnly, logConnectorEvent, rowToCanonicalMetric, validateMapping, type SnowflakeConfig } from "../_shared/warehouse-config.ts";
 
@@ -11,7 +12,12 @@ const GATEWAY = "https://connector-gateway.lovable.dev/snowflake";
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const cors = getCorsHeaders(req);
-  const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    return json({ error: "Snowflake pull service unavailable" }, 503, cors);
+  }
+  const svc = createClient(supabaseUrl, serviceRoleKey);
 
   try {
     const { connector_id } = await req.json();
@@ -19,6 +25,27 @@ serve(async (req) => {
 
     const { data: connector, error: cErr } = await svc.from("data_connectors").select("*").eq("id", connector_id).single();
     if (cErr || !connector) return json({ error: "connector not found" }, 404, cors);
+    if (connector.connector_type !== "snowflake") return json({ error: "not a Snowflake connector" }, 400, cors);
+    if (typeof connector.organization_id !== "string" || !connector.organization_id) {
+      return json({ error: "connector organization missing" }, 500, cors);
+    }
+
+    const authHeader = req.headers.get("authorization");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const userClient = anonKey
+      ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader ?? "" } } })
+      : null;
+    const invocation = await authorizeConnectorInvocation({
+      authHeader,
+      serviceRoleKey,
+      organizationId: connector.organization_id,
+      userClient,
+      membershipClient: svc,
+    });
+    if (!invocation.allowed) {
+      return json({ error: invocation.reason === "forbidden" ? "Forbidden" : "Unauthorized" }, invocation.status, cors);
+    }
+
     const cfg = (connector.config ?? {}) as SnowflakeConfig;
     const m = validateMapping(cfg.mapping);
     if (!m.ok) return json({ error: `config invalid: ${m.reason}` }, 400, cors);
