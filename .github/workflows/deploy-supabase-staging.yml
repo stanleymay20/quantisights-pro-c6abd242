@@ -1,6 +1,6 @@
 name: Deploy Supabase Staging
 
-# Every Supabase or release-pipeline change reaches staging first. Configure the
+# Every Supabase, client-experience, or release-pipeline change reaches staging first. Configure the
 # `staging` GitHub Environment with environment-scoped SUPABASE_ACCESS_TOKEN and
 # SUPABASE_DB_PASSWORD secrets. Production credentials must never be placed in
 # this environment.
@@ -12,6 +12,13 @@ on:
       - "supabase/functions/**"
       - "src/lib/**"
       - "src/integrations/supabase/**"
+      - "src/pages/Index.tsx"
+      - "src/pages/Pricing.tsx"
+      - "src/hooks/useSubscription.ts"
+      - "src/hooks/useSubscriptionGate.ts"
+      - "src/components/SubscriptionGate.tsx"
+      - "src/components/auth/RouteEntitlement.tsx"
+      - "src/routes.tsx"
       - "supabase/migrations/**"
       - "supabase/config.toml"
       - "package.json"
