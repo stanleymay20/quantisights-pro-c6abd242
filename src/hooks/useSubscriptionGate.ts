@@ -12,6 +12,9 @@ import { TierKey } from "@/lib/stripe-tiers";
  *   Enterprise:            Everything + multi-org, SSO, bias detection, counterfactual, war room
  */
 export const FEATURE_TIERS = {
+  // All paid tiers can access the connectors surface; per-tier connector counts are
+  // enforced by TIER_LIMITS rather than by hiding the route entirely.
+  dataConnectors:   ["starter", "growth", "enterprise"],
   // Governance + Enterprise only (starter gets core versions of these)
   simulations:      ["growth", "enterprise"],   // Monte Carlo; starter gets basic sim (5/day)
   convergence:      ["growth", "enterprise"],
