@@ -10,7 +10,7 @@ import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
 
 const PASSWORD_RULES = [
-  { label: "At least 8 characters", test: (p: string) => p.length >= 8 },
+  { label: "At least 12 characters", test: (p: string) => p.length >= 12 },
   { label: "Uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
   { label: "Lowercase letter", test: (p: string) => /[a-z]/.test(p) },
   { label: "Number", test: (p: string) => /\d/.test(p) },
