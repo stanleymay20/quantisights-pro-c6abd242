@@ -73,7 +73,7 @@ describe("release certification chain", () => {
     expect(gaReadiness).toContain("ga_readiness_run_id");
   });
 
-  it("requires run-scoped GA proof and exact-SHA CI/staging before production checkout", () => {
+  it("requires client-reviewed run-scoped GA proof and exact-SHA CI/staging before production checkout", () => {
     const proofStep = production.indexOf("Verify run-scoped GA certification proof");
     const gateStep = production.indexOf("Verify exact-SHA CI and staging deployment gates");
     const checkoutStep = production.indexOf("Checkout certified release");
@@ -83,6 +83,9 @@ describe("release certification chain", () => {
     expect(production).toContain("ga_readiness_run_id");
     expect(production).toContain("ga-readiness-proof");
     expect(production).toContain("proof_sha");
+    expect(production).toContain("client_acceptance_run_id");
+    expect(production).toContain('.github/workflows/client-acceptance.yml');
+    expect(production).toContain('.github/workflows/ga-staging-validation.yml');
     expect(production).toContain('require_gate "ci.yml" "CI"');
     expect(production).toContain('require_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"');
     expect(production).not.toContain('require_gate "ga-staging-validation.yml"');
