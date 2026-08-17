@@ -136,14 +136,13 @@ const Pricing = () => {
           >
             <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Pricing</p>
             <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
-              Priced Against the <span className="gradient-text">Alternative</span>
+              Governance that scales with <span className="gradient-text">decision risk</span>
             </h1>
             <p className="text-muted-foreground text-lg max-w-xl mx-auto mb-3">
-              EU AI Act fines reach €30M. McKinsey charges €50K for one governance project.
-              Building this internally costs €350K. Quantivis starts at €499/month.
+              The EU AI Act provides for administrative fines of up to €35M or 7% of worldwide annual turnover for certain infringements, with lower ceilings for other categories. Quantivis starts at €499/month and is designed to support continuous decision governance rather than a one-off compliance exercise.
             </p>
             <p className="text-xs text-muted-foreground/60 max-w-md mx-auto">
-              Every plan includes full audit trail, EU AI Act compliance documentation, and GDPR-ready infrastructure.
+              Every plan includes an audit trail, EU AI Act governance documentation, and GDPR-ready controls. Regulatory obligations and penalties vary by use case, role, infringement and organisation size.
             </p>
           </motion.div>
 
@@ -328,7 +327,7 @@ const Pricing = () => {
             )}
           </div>
 
-          {/* Price Anchoring Banner */}
+          {/* Value context — avoid unverifiable competitor-price claims. */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -336,11 +335,9 @@ const Pricing = () => {
             className="max-w-5xl mx-auto mb-16 text-center"
           >
             <div className="inline-flex flex-wrap items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 rounded-2xl sm:rounded-full border border-border/50 bg-card/30">
-              <span className="text-xs sm:text-sm text-muted-foreground">vs. McKinsey governance project:</span>
-              <span className="text-xs sm:text-sm font-bold line-through text-muted-foreground/60">€50,000+ one-time</span>
-              <span className="text-xs text-muted-foreground">→</span>
-              <span className="text-xs sm:text-sm font-bold text-primary">From €499/mo continuous</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">100× cheaper, always on</span>
+              <span className="text-xs sm:text-sm text-muted-foreground">Continuous governance from</span>
+              <span className="text-xs sm:text-sm font-bold text-primary">€499/month</span>
+              <span className="text-xs text-muted-foreground">with a no-card evaluation path before purchase</span>
             </div>
           </motion.div>
 
@@ -415,8 +412,8 @@ const Pricing = () => {
           <div className="space-y-6">
             {[
               {
-                q: "Why is Quantivis priced at €499/month when other SaaS tools are cheaper?",
-                a: "Because Quantivis is not a dashboard tool — it is a governance platform. EU AI Act fines reach €30M. McKinsey charges €50,000–€500,000 for a one-time governance project. Building this internally costs €350,000+ in Year 1. At €499/month (€5,988/year), Quantivis delivers continuous governance at less than 1.2% of the minimum consulting engagement cost.",
+                q: "Why does Quantivis start at €499/month?",
+                a: "Quantivis is designed as a decision-governance platform rather than a dashboard add-on. The price reflects the governed decision record, evidence and approval workflow, auditability, outcome tracking, enterprise integrations and compliance-support controls included in the platform. For context, the EU AI Act permits administrative fines up to €35 million or 7% of worldwide annual turnover for certain infringements, while other categories carry lower ceilings. The exact regulatory exposure depends on the infringement, company size and applicable role.",
               },
               {
                 q: `What is the ${PILOT_TERMS.days}-day pilot?`,
@@ -435,24 +432,24 @@ const Pricing = () => {
                 a: "Yes. Upgrades take effect immediately with prorated billing. Downgrades apply at the next billing cycle.",
               },
               {
-                q: "Is EU AI Act compliance included in every plan?",
-                a: "Yes. Every plan includes the sha256-hashed audit trail, human-in-the-loop approval documentation, EU AI Act risk classification, and the compliance evidence required for Articles 13 and 14. The Trust Center at quantivis.io/trust shows the live compliance state — no login required.",
+                q: "What EU AI Act support is included?",
+                a: "Every plan includes decision audit trails, human-oversight documentation, risk-classification support and governance evidence designed to help customers document applicable transparency and human-oversight processes. Quantivis is a governance tool, not legal advice or an automatic guarantee of regulatory compliance; customers remain responsible for determining their obligations for each AI system and use case.",
               },
               {
                 q: "What about customers outside the EU — Americas, Asia, Africa?",
-                a: "Quantivis works globally. The dashboard and all features are fully available regardless of location. For customers in the US, Canada, and UK, we can invoice in USD or GBP on Enterprise plans. For organisations in Asia and Africa, contact sales for regional pricing — the EU AI Act is increasingly being mirrored by regulators in Singapore (MAS), India (DPDP Act), and South Africa (POPIA), making governance infrastructure relevant globally.",
+                a: "Quantivis is designed for global organisations. The core platform is available regardless of customer location, subject to contracted service, data-residency and regulatory requirements. Enterprise customers can discuss invoicing, residency and procurement requirements with sales.",
               },
               {
                 q: "Do you offer annual billing?",
-                a: "Yes — annual billing saves 20% (Essentials: €399/mo billed yearly = €4,788/yr; Governance: €1,599/mo billed yearly = €19,188/yr). Toggle Annual on the pricing page and you'll be charged the annual amount directly at checkout.",
+                a: "Yes — annual billing saves 20% (Essentials: €399/mo billed yearly = €4,788/yr; Governance: €1,599/mo billed yearly = €19,188/yr). Toggle Annual on the pricing page to use the configured annual checkout price.",
               },
               {
                 q: "Is there a DPA for enterprise procurement?",
-                a: "Yes. A standard DPA (EN) and AVV (DE) are available for download in the Trust Center. Custom DPAs and MSAs are available on Enterprise plans.",
+                a: "Yes. A standard DPA (EN) and AVV (DE) are available in the Trust Center. Custom DPAs and MSAs are available on Enterprise plans.",
               },
               {
                 q: "What data do you store and where?",
-                a: "Primary customer data is stored in the configured EU Supabase region. We do not use customer data to train Quantivis models. Subprocessor locations, safeguards, and provider certifications are documented individually in the public subprocessor registry.",
+                a: "Primary customer data is stored in the configured EU Supabase region. Quantivis does not use customer data to train its own models. Subprocessor locations, safeguards and provider certifications are documented in the public subprocessor registry.",
               },
             ].map(({ q, a }) => (
               <div key={q} className="glass-card p-6">
@@ -487,7 +484,7 @@ const Pricing = () => {
             </button>
           </div>
           <p className="text-xs text-muted-foreground mt-6">
-            All plans include full audit trail · Data encrypted at rest &amp; in transit · No vendor lock-in
+            All plans include an audit trail · Data encrypted at rest &amp; in transit · Export and portability options documented in the Trust Center
           </p>
         </div>
       </section>
