@@ -1,7 +1,11 @@
 import { test, expect } from "@playwright/test";
 import axe from "axe-core";
+import { readFileSync } from "node:fs";
 
 const BASE = process.env.CLIENT_ACCEPTANCE_BASE_URL || "http://127.0.0.1:4173";
+const STATE = process.env.CLIENT_ACCEPTANCE_STATE || "tests/client-acceptance/.state.json";
+const state = JSON.parse(readFileSync(STATE, "utf8"));
+const leadEmail = `${state.run_tag}@quantivis.test`;
 
 async function assertAccessible(page: import("@playwright/test").Page) {
   await page.addScriptTag({ content: axe.source });
@@ -68,17 +72,18 @@ test("procurement and legal trust links resolve to real public pages", async ({ 
   }
 });
 
-test("homepage demo request form is understandable without submitting a real lead", async ({ page }) => {
+test("homepage demo request creates a real staging lead and confirms success", async ({ page }) => {
   await page.goto(`${BASE}/#demo`);
   await expect(page.getByLabel(/Full name/i)).toBeVisible();
   await expect(page.getByLabel(/Work email/i)).toBeVisible();
   await expect(page.getByLabel(/Company/i)).toBeVisible();
-  await expect(page.getByRole("button", { name: /Request a Demo/i })).toBeVisible();
   await page.getByLabel(/Full name/i).fill("Client Acceptance Reviewer");
-  await page.getByLabel(/Work email/i).fill("reviewer@quantivis.test");
+  await page.getByLabel(/Work email/i).fill(leadEmail);
   await page.getByLabel(/Company/i).fill("Quantivis Acceptance Test");
-  await expect(page.getByRole("button", { name: /Request a Demo/i })).toBeEnabled();
-  await assertAccessible(page);
+  await page.getByLabel(/What are you trying to govern/i).fill(`Automated client acceptance ${state.run_tag}`);
+  await page.getByRole("button", { name: /Request a Demo/i }).click();
+  await expect(page.locator("body")).toContainText(/Request received/i, { timeout: 15_000 });
+  await expect(page.locator("body")).not.toContainText(/Something went wrong/i);
 });
 
 test("registration remains usable on a phone viewport", async ({ page }) => {
