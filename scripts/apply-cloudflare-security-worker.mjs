@@ -3,8 +3,14 @@ import { contentSecurityPolicy, permissionsPolicy } from "./apply-cloudflare-sec
 
 const API_BASE = "https://api.cloudflare.com/client/v4";
 const HOSTNAME = "www.quantivis.io";
+const APEX_HOSTNAME = "quantivis.io";
 const WORKER_NAME = "quantivis-enterprise-security-headers";
-const WORKER_ROUTE_PATTERNS = [`https://${HOSTNAME}/*`, `${HOSTNAME}/*`];
+const WORKER_ROUTE_PATTERNS = [
+  `https://${HOSTNAME}/*`,
+  `${HOSTNAME}/*`,
+  `https://${APEX_HOSTNAME}/*`,
+  `${APEX_HOSTNAME}/*`,
+];
 
 export const workerSecurityHeaders = {
   "Content-Security-Policy": contentSecurityPolicy,
@@ -68,6 +74,8 @@ async function cloudflareRequest(path, options = {}, env = readCloudflareEnviron
 
 export function buildSecurityWorkerScript(headers = workerSecurityHeaders) {
   return `const SECURITY_HEADERS = ${JSON.stringify(headers, null, 2)};
+const CANONICAL_HOSTNAME = ${JSON.stringify(HOSTNAME)};
+const APEX_HOSTNAME = ${JSON.stringify(APEX_HOSTNAME)};
 const OAUTH_BROKER_PATH_PREFIX = ${JSON.stringify(OAUTH_BROKER_PATH_PREFIX)};
 const OAUTH_CALLBACK_PATH = ${JSON.stringify(OAUTH_CALLBACK_PATH)};
 
@@ -76,6 +84,13 @@ addEventListener("fetch", (event) => {
 });
 
 async function handleRequest(request) {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.hostname === APEX_HOSTNAME) {
+    requestUrl.hostname = CANONICAL_HOSTNAME;
+    requestUrl.protocol = "https:";
+    return Response.redirect(requestUrl.toString(), 301);
+  }
+
   try {
     const originResponse = await fetch(request);
     return withSecurityHeaders(originResponse, request);
