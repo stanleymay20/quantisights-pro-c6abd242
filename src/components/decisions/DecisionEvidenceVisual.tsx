@@ -11,7 +11,30 @@ interface DecisionEvidenceVisualProps {
   selection: DecisionVisualizationSelection;
 }
 
+const DataTable = ({ selection }: { selection: DecisionVisualizationSelection }) => (
+  <table className="w-full text-sm" aria-label="Decision visual data table">
+    <thead>
+      <tr className="border-b text-left text-xs text-muted-foreground">
+        <th className="py-2 pr-3 font-medium">Measure</th>
+        <th className="py-2 font-medium">Recorded value</th>
+      </tr>
+    </thead>
+    <tbody>
+      {selection.data.map((item) => (
+        <tr key={item.source} className="border-b border-border/40 last:border-0">
+          <td className="py-2 pr-3">{item.label}</td>
+          <td className="py-2 font-medium">{item.displayValue}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
 const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisualProps) => {
+  const chartDescription = `${selection.title}. ${selection.data
+    .map((item) => `${item.label}: ${item.displayValue}`)
+    .join(". ")}`;
+
   return (
     <section
       className="rounded-xl border border-border/50 bg-card p-5 shadow-sm"
@@ -50,11 +73,7 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
 
         {selection.kind === "actual_vs_expected" && (
           <div className="space-y-3">
-            <div
-              className="h-64 w-full"
-              role="img"
-              aria-label={`${selection.title}. ${selection.data.map((item) => `${item.label}: ${item.displayValue}`).join(". ")}`}
-            >
+            <div className="h-64 w-full" role="img" aria-label={chartDescription}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={selection.data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -65,24 +84,32 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <table className="w-full text-sm" aria-label="Decision visual data table">
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="py-2 pr-3 font-medium">Measure</th>
-                  <th className="py-2 font-medium">Recorded value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selection.data.map((item) => (
-                  <tr key={item.source} className="border-b border-border/40 last:border-0">
-                    <td className="py-2 pr-3">{item.label}</td>
-                    <td className="py-2 font-medium">{item.displayValue}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable selection={selection} />
           </div>
         )}
+
+        {selection.kind === "horizontal_bar" && (
+          <div className="space-y-3">
+            <div className="h-72 w-full" role="img" aria-label={chartDescription}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={selection.data}
+                  layout="vertical"
+                  margin={{ top: 8, right: 16, left: 16, bottom: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickLine={false} axisLine={false} />
+                  <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={140} />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <DataTable selection={selection} />
+          </div>
+        )}
+
+        {selection.kind === "comparison_table" && <DataTable selection={selection} />}
 
         {selection.kind === "none" && (
           <div className="flex items-start gap-3 rounded-lg border border-dashed border-border/60 bg-muted/20 p-4">
@@ -129,9 +156,7 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-4">
         <div className="text-xs text-muted-foreground">
-          <p>
-            This visualization is a representation of recorded evidence, not source evidence itself.
-          </p>
+          <p>This visualization is a representation of recorded evidence, not source evidence itself.</p>
           <p className="mt-1 break-words font-mono text-[10px]">
             {selection.provenance.length > 0 ? selection.provenance.join(" · ") : "No renderable numeric provenance fields"}
           </p>

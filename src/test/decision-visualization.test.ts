@@ -46,20 +46,22 @@ describe("Automatic Decision Visualization Engine", () => {
     expect(selection.reasons.join(" ")).toMatch(/one or two|2 decision-critical/i);
   });
 
-  it("refuses to manufacture a chart when structured quantitative evidence is absent", () => {
+  it("prefers the same-ledger decision-time expected value and actual value when both are recorded", () => {
     const selection = selectDecisionVisualization({
       ...baseDecision,
-      predicted_net_impact: null,
-      predicted_roi_probability: null,
-    });
+      expected_value_at_decision: 100,
+      actual_value: 112,
+    } as DecisionRoomDecision & { expected_value_at_decision: number });
 
-    expect(selection.kind).toBe("none");
-    expect(selection.unavailableReason).toMatch(/insufficient recorded evidence/i);
-    expect(selection.data).toEqual([]);
-    expect(selection.reasons.join(" ")).toMatch(/will not parse numbers out of narrative/i);
+    expect(selection.kind).toBe("actual_vs_expected");
+    expect(selection.data.map((item) => item.value)).toEqual([100, 112]);
+    expect(selection.provenance).toEqual([
+      "decision_ledger.expected_value_at_decision",
+      "decision_ledger.actual_value",
+    ]);
   });
 
-  it("selects expected-versus-observed only when both records refer to the same metric", () => {
+  it("selects expected-versus-observed only when both outcome records refer to the same metric", () => {
     const outcome: DecisionOutcomeEvidence = {
       expected_metric: "gross_margin_pct",
       expected_change: 4,
@@ -77,7 +79,7 @@ describe("Automatic Decision Visualization Engine", () => {
     expect(selection.provenance).toContain("decision_outcomes.expected_change");
   });
 
-  it("does not compare expected and observed values when the metrics differ", () => {
+  it("does not compare outcome values when the metrics differ", () => {
     const outcome: DecisionOutcomeEvidence = {
       expected_metric: "gross_margin_pct",
       expected_change: 4,
@@ -89,6 +91,51 @@ describe("Automatic Decision Visualization Engine", () => {
     const selection = selectDecisionVisualization(baseDecision, outcome);
     expect(selection.kind).toBe("simple_text");
     expect(selection.rejected.find((item) => item.kind === "actual_vs_expected")?.reason).toMatch(/different metrics|incomplete/i);
+  });
+
+  it("uses a horizontal bar for a manageable set of structured comparable alternatives", () => {
+    const selection = selectDecisionVisualization({
+      ...baseDecision,
+      explanation_metadata: {
+        alternatives_considered: [
+          { label: "Renegotiate", value: 42, unit: "EUR" },
+          { label: "Dual source", value: 31, unit: "EUR" },
+          { label: "Switch supplier", value: 55, unit: "EUR" },
+        ],
+      },
+    });
+
+    expect(selection.kind).toBe("horizontal_bar");
+    expect(selection.data.map((item) => item.label)).toEqual(["Renegotiate", "Dual source", "Switch supplier"]);
+    expect(selection.analyticalIntent).toBe("compare");
+  });
+
+  it("uses a comparison table rather than overcrowding a chart for many structured alternatives", () => {
+    const selection = selectDecisionVisualization({
+      ...baseDecision,
+      explanation_metadata: {
+        alternatives_considered: Array.from({ length: 13 }, (_, index) => ({
+          label: `Option ${index + 1}`,
+          value: index + 1,
+        })),
+      },
+    });
+
+    expect(selection.kind).toBe("comparison_table");
+    expect(selection.data).toHaveLength(13);
+  });
+
+  it("refuses to manufacture a chart when structured quantitative evidence is absent", () => {
+    const selection = selectDecisionVisualization({
+      ...baseDecision,
+      predicted_net_impact: null,
+      predicted_roi_probability: null,
+    });
+
+    expect(selection.kind).toBe("none");
+    expect(selection.unavailableReason).toMatch(/insufficient recorded evidence/i);
+    expect(selection.data).toEqual([]);
+    expect(selection.reasons.join(" ")).toMatch(/will not parse numbers out of narrative/i);
   });
 
   it("does not select line, scatter, waterfall, heatmap, or forecast without their required structures", () => {
