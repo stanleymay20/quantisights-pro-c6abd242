@@ -125,14 +125,21 @@ const DecisionReview = () => {
   return (
     <div className="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">
       <div className="mb-5 space-y-1">
-        <div className="flex items-center gap-2">
-          <SidebarMobileToggle />
-          <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-muted-foreground" asChild>
-            <Link to="/executive-brief">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Executive Brief
-            </Link>
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <SidebarMobileToggle />
+            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-muted-foreground" asChild>
+              <Link to="/executive-brief">
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Executive Brief
+              </Link>
+            </Button>
+          </div>
+          {!isDemo && id && (
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/decisions/${id}/room`}>Open Decision Room</Link>
+            </Button>
+          )}
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">Review Decision</h1>
         <p className="text-sm text-muted-foreground">
