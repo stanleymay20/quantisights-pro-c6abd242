@@ -84,15 +84,69 @@ try {
     });
     if (subscriptionError) throw new Error(`Create ${tier} subscription: ${subscriptionError.message}`);
 
-    const { error: decisionError } = await sb.from("decision_ledger").insert({
-      organization_id: org.id,
-      recommended_action: `Client acceptance decision for ${tier}`,
-      decision_type: "operational",
-      decision_status: "pending",
-      decided_by: userId,
-      evidence_sources: [{ source_type: "internal", source_name: `${runTag}-${tier}-evidence`, ref: "client-acceptance" }],
-    });
-    if (decisionError) throw new Error(`Create ${tier} decision: ${decisionError.message}`);
+    const { data: decision, error: decisionError } = await sb
+      .from("decision_ledger")
+      .insert({
+        organization_id: org.id,
+        recommended_action: `Renegotiate the primary supplier agreement for ${tier}`,
+        decision_type: "operational",
+        decision_status: "pending",
+        source_insight_summary: "Supplier cost increased 14% across two consecutive quarters.",
+        recommendation_logic_type: "rule_based",
+        raw_confidence: 79,
+        capped_confidence: 72,
+        confidence_at_decision: 72,
+        confidence_cap_reason: "Only two quarters of history are available.",
+        predicted_net_impact: 42000,
+        predicted_roi_probability: 68,
+        evidence_sources: [
+          { source_type: "internal", source_name: `${runTag}-${tier}-evidence`, ref: "client-acceptance" },
+        ],
+        explanation_metadata: {
+          source_data: {
+            dataset_name: `${tier} supplier spend`,
+            dataset_id: `client-acceptance-${tier}`,
+            time_range: "Q1-Q2 2026",
+            rows_analyzed: 1200,
+            key_metrics: ["supplier_cost"],
+          },
+          statistical_basis: {
+            method: "EWMA baseline deviation",
+            z_score: 2.4,
+            data_points_used: 180,
+            note: "Supplier cost moved above its historical band.",
+          },
+          triggering_insight: {
+            metric_name: "supplier_cost",
+            description: "Supplier cost increased 14%.",
+            change_value: "14%",
+            change_direction: "increase",
+          },
+          reasoning: {
+            what_happened: "Supplier cost increased.",
+            why_it_matters: "Margins are exposed.",
+            why_this_recommendation: "Renegotiation targets the concentrated spend.",
+          },
+          expected_impact: {
+            range: "€30,000 – €55,000 annualized",
+            basis: "Contract benchmark spread.",
+          },
+          assumptions: ["Benchmark pricing remains available."],
+          limitations: ["Only two quarters of history are available."],
+          confidence_explanation: {
+            score: 72,
+            meaning: "Moderate-to-high decision-time confidence.",
+            capped: true,
+            cap_reason: "Limited history.",
+          },
+        },
+      })
+      .select("id")
+      .single();
+    if (decisionError || !decision?.id) throw new Error(`Create ${tier} decision: ${decisionError?.message || "no id"}`);
+
+    state.customers[tier].decision_id = decision.id;
+    persist();
   }
 
   persist();
