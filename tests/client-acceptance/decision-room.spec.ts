@@ -57,6 +57,19 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
     await expect(page.getByText(/Only stages backed by stored records are marked recorded/i)).toBeVisible();
     await expect(page.getByText(/No alternatives are stored on this decision. Quantivis will not invent them./i)).toBeVisible();
 
+    const decisionVisual = page.getByTestId("decision-visual");
+    await expect(decisionVisual).toBeVisible();
+    await expect(decisionVisual.getByRole("heading", { name: "Decision Visual" })).toBeVisible();
+    await expect(decisionVisual.getByText("Auto-selected")).toBeVisible();
+    await expect(decisionVisual.getByText(/Predicted net impact/i)).toBeVisible();
+    await expect(decisionVisual.getByText(/€42,000/)).toBeVisible();
+    await expect(decisionVisual.getByText(/ROI probability/i)).toBeVisible();
+    await expect(decisionVisual.getByText(/68%/)).toBeVisible();
+    await expect(decisionVisual.getByText(/representation of recorded evidence, not source evidence itself/i)).toBeVisible();
+    await decisionVisual.getByText("Why this visualization?").click();
+    await expect(decisionVisual.getByText(/chart would add visual machinery without adding meaning/i)).toBeVisible();
+    await expect(decisionVisual.getByText(/No ordered time-series points are stored/i)).toBeVisible();
+
     await expect(page.getByRole("link", { name: "Evidence Pack" })).toHaveAttribute(
       "href",
       `/evidence-pack/${customer.decision_id}`,
@@ -64,6 +77,10 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
     await expect(page.getByRole("link", { name: "Review decision" })).toHaveAttribute(
       "href",
       `/decisions/${customer.decision_id}/review`,
+    );
+    await expect(decisionVisual.getByRole("link", { name: "Inspect source evidence" })).toHaveAttribute(
+      "href",
+      `/evidence-pack/${customer.decision_id}`,
     );
 
     await assertAccessible(page);
@@ -73,6 +90,7 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
       await page.reload();
       await expect(page.getByRole("heading", { name: "Executive Decision Room" })).toBeVisible();
       await expect(page.getByRole("link", { name: "Evidence Pack" })).toBeVisible();
+      await expect(page.getByTestId("decision-visual")).toBeVisible();
       await page.screenshot({ path: "artifacts/client-acceptance/enterprise-decision-room-mobile.png", fullPage: true });
       await assertAccessible(page);
     }

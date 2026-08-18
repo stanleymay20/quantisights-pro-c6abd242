@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import DecisionEvidenceVisual from "@/components/decisions/DecisionEvidenceVisual";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,10 @@ import {
   type DecisionRoomDecision,
   type DecisionRoomStageStatus,
 } from "@/lib/executive-decision-room";
+import {
+  selectDecisionVisualization,
+  type DecisionOutcomeEvidence,
+} from "@/lib/decision-visualization";
 
 const statusIcon = (status: DecisionRoomStageStatus) => {
   if (status === "recorded") return <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />;
@@ -34,6 +39,7 @@ const ExecutiveDecisionRoom = () => {
   const { id } = useParams<{ id: string }>();
   const { currentOrgId } = useOrganization();
   const [decision, setDecision] = useState<DecisionRoomDecision | null>(null);
+  const [outcome, setOutcome] = useState<DecisionOutcomeEvidence | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +50,7 @@ const ExecutiveDecisionRoom = () => {
     const load = async () => {
       setLoading(true);
       setError(null);
+      setOutcome(null);
       const { data, error: queryError } = await supabase
         .from("decision_ledger")
         .select("*")
@@ -55,12 +62,29 @@ const ExecutiveDecisionRoom = () => {
       if (queryError) {
         setError("The decision could not be loaded. Try again or return to the Decision Ledger.");
         setDecision(null);
-      } else if (!data) {
+        setLoading(false);
+        return;
+      }
+      if (!data) {
         setError("This decision is not available in your organization.");
         setDecision(null);
-      } else {
-        setDecision(data as unknown as DecisionRoomDecision);
+        setLoading(false);
+        return;
       }
+
+      setDecision(data as unknown as DecisionRoomDecision);
+
+      const { data: outcomeData } = await supabase
+        .from("decision_outcomes")
+        .select("expected_metric, expected_change, expected_direction, observed_metric, observed_value_before, observed_value_after, outcome_status")
+        .eq("organization_id", currentOrgId)
+        .eq("decision_id", id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (cancelled) return;
+      setOutcome((outcomeData as DecisionOutcomeEvidence | null) ?? null);
       setLoading(false);
     };
 
@@ -71,6 +95,10 @@ const ExecutiveDecisionRoom = () => {
   }, [id, currentOrgId]);
 
   const model = useMemo(() => (decision ? buildDecisionRoomModel(decision) : null), [decision]);
+  const visualSelection = useMemo(
+    () => (decision ? selectDecisionVisualization(decision, outcome) : null),
+    [decision, outcome],
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-3 py-4 sm:px-6 sm:py-6">
@@ -116,7 +144,7 @@ const ExecutiveDecisionRoom = () => {
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Preparing the decision room…
         </div>
-      ) : error || !decision || !model ? (
+      ) : error || !decision || !model || !visualSelection ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6">
           <div className="flex items-start gap-3">
             <FileQuestion className="mt-0.5 h-5 w-5 text-destructive" aria-hidden="true" />
@@ -173,6 +201,8 @@ const ExecutiveDecisionRoom = () => {
               </ul>
             </article>
           </section>
+
+          <DecisionEvidenceVisual decisionId={id!} selection={visualSelection} />
 
           <section className="rounded-xl border border-border/50 bg-card p-5 shadow-sm" aria-labelledby="pipeline-title">
             <div className="mb-4 flex items-center gap-2">
