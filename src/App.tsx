@@ -18,7 +18,7 @@ import ProtectedLayout, { MinimalProtectedLayout } from "@/components/layout/Pro
 import CookieConsent from "@/components/CookieConsent";
 import SessionTimeout from "@/components/auth/SessionTimeout";
 import UpgradeModalProvider from "@/components/UpgradeModalProvider";
-import { routes, RouteLayout } from "@/routes";
+import { routes, RouteLayout, NotFound } from "@/routes";
 import RouteEntitlement from "@/components/auth/RouteEntitlement";
 import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
@@ -135,6 +135,8 @@ const App = () => (
                   )}
                 />
               ))}
+              {/* Catch-all: without this, unknown URLs render a blank page. */}
+              <Route path="*" element={wrapLayout.public(<NotFound />)} />
             </Routes>
             </Suspense>
           </AuthProvider>
