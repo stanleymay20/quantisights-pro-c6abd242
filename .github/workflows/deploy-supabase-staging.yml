@@ -16,6 +16,7 @@ on:
       - "src/App.tsx"
       - "src/pages/ExecutiveDecisionRoom.tsx"
       - "src/pages/EvidencePack.tsx"
+      - "src/pages/DecisionReview.tsx"
       - "src/pages/Index.tsx"
       - "src/pages/Pricing.tsx"
       - "src/pages/Register.tsx"
@@ -80,7 +81,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d342e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
