@@ -47,7 +47,7 @@ describe("DS-2 shared design primitives", () => {
     expect(homepage).toContain('<MarketingCTA href="#platform" variant="secondary"');
     expect(homepage).toContain('<MarketingCTA href="#demo"');
     expect(homepage).toContain('<Eyebrow style={{ marginBottom: 24 }}>The Problem</Eyebrow>');
-    expect(homepage).toContain('<Eyebrow tone="light" style={{ marginBottom: 24 }}>Compliance</Eyebrow>');
+    expect(homepage).toContain('<Eyebrow tone="light" style={{ marginBottom: 24 }}>Compliance support</Eyebrow>');
     expect(homepage).toContain('<TagBadge tone="Warning"');
     expect(homepage).toContain('<TagBadge tone="Success"');
     expect(homepage).not.toContain("qv-eyebrow");
