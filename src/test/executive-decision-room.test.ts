@@ -127,7 +127,7 @@ describe("Executive Decision Room model", () => {
     const model = buildDecisionRoomModel({
       ...baseDecision,
       explanation_metadata: {
-        ...(baseDecision.explanation_metadata ?? {}),
+        ...((baseDecision.explanation_metadata as Record<string, unknown>) ?? {}),
         dual_layer_enrichment: {
           client_confidence: 82,
           enriched_confidence: 60,
