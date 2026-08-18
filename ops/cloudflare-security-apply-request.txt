@@ -1,5 +1,6 @@
 GA Cloudflare security apply request
 Date: 2026-08-18
-Attempt: 5
-Purpose: production incident recovery for blank apex quantivis.io. Apply repository-managed DNS/Worker configuration so both quantivis.io and www.quantivis.io are proxied through Cloudflare, with apex canonicalized to https://www.quantivis.io while preserving path/query, then verify the live edge.
+Attempt: 6
+Purpose: production incident recovery for blank quantivis.io/www.quantivis.io observed on iOS Safari at approximately 13:19-13:26 CEST. Re-apply repository-managed DNS/Worker configuration so both quantivis.io and www.quantivis.io are proxied through Cloudflare, apex canonicalizes to https://www.quantivis.io while preserving path/query, and the live edge security verifier checks the resulting response.
+Context: main also includes commit 5357ef9eac13f6457a0c3a34591decc8e6e0d239 adding a static bootstrap recovery shell so a future frontend bootstrap failure cannot present a pure white page.
 Note: this is an edge/DNS recovery action only; it does not deploy a new production application build.
