@@ -269,7 +269,7 @@ serve(async (req) => {
         .limit(20),
       serviceClient
         .from("calibration_models")
-        .select("overall_calibration_score, overall_bias_direction, mean_absolute_error, band_corrections, model_version")
+        .select("overall_calibration_score, overall_bias_direction, mean_absolute_error, band_corrections, model_version, evidence_regime, prospective_decisions_count, excluded_decisions_count")
         .eq("organization_id", organization_id)
         .order("computed_at", { ascending: false })
         .limit(1),
@@ -372,12 +372,20 @@ serve(async (req) => {
 
     if (calibrationResult.data && calibrationResult.data.length > 0) {
       const cal = calibrationResult.data[0] as any;
-      contextParts.push(`ADAPTIVE CALIBRATION (v${cal.model_version}):
+      if (cal.evidence_regime === "prospective_only") {
+        contextParts.push(`ADAPTIVE CALIBRATION — PROSPECTIVE ONLY (v${cal.model_version}):
 - Overall Score: ${cal.overall_calibration_score}/100
 - Bias Direction: ${cal.overall_bias_direction}
 - Mean Absolute Error: ${cal.mean_absolute_error}pp
+- Prospective Decisions: ${cal.prospective_decisions_count ?? 0}
+- Retrospective/Legacy Decisions Excluded: ${cal.excluded_decisions_count ?? 0}
 - Band Corrections: ${JSON.stringify(cal.band_corrections)}
-When stating confidence levels, apply these learned corrections only if this calibration record is valid for the current organization and evaluation regime.`);
+This calibration is eligible to adjust confidence because its evidence regime is prospective_only.`);
+      } else {
+        contextParts.push(`CALIBRATION: A legacy/mixed calibration snapshot exists (v${cal.model_version}) but is EXCLUDED from confidence adjustment. Prospective-only recalibration is required before learned corrections may be applied.`);
+      }
+    } else {
+      contextParts.push("CALIBRATION: No prospective calibration model is available. Do not apply learned calibration corrections.");
     }
 
     contextParts.push(`ROLE: ${role_type.toUpperCase()}`);
