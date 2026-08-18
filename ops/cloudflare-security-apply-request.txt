@@ -1,5 +1,5 @@
 GA Cloudflare security apply request
-Date: 2026-08-15
-Attempt: 4
-Purpose: apply the repository-managed production security header policy and verify the live edge before GA promotion.
-Note: repository-level CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID are now configured in GitHub Actions. This run validates those repository secrets against the live Cloudflare API and must not be treated as a production application deployment.
+Date: 2026-08-18
+Attempt: 5
+Purpose: production incident recovery for blank apex quantivis.io. Apply repository-managed DNS/Worker configuration so both quantivis.io and www.quantivis.io are proxied through Cloudflare, with apex canonicalized to https://www.quantivis.io while preserving path/query, then verify the live edge.
+Note: this is an edge/DNS recovery action only; it does not deploy a new production application build.
