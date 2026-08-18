@@ -4,6 +4,7 @@ name: Deploy Supabase Staging
 # `staging` GitHub Environment with environment-scoped SUPABASE_ACCESS_TOKEN and
 # SUPABASE_DB_PASSWORD secrets. Production credentials must never be placed in
 # this environment.
+# Certification trigger note: workflow-source changes intentionally retrigger staging for the exact new SHA.
 
 on:
   push:
