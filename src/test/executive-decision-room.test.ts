@@ -142,9 +142,13 @@ describe("Executive Decision Room model", () => {
 });
 
 describe("Executive Decision Room route contract", () => {
-  it("registers the protected canonical decision-room route", () => {
+  it("registers the protected canonical decision-room route in the centralized router", () => {
+    const routeTable = readFileSync(resolve(process.cwd(), "src/routes/index.tsx"), "utf8");
     const app = readFileSync(resolve(process.cwd(), "src/App.tsx"), "utf8");
-    expect(app).toContain('path="/decisions/:id/room"');
-    expect(app).toContain("wrapLayout.full(<ExecutiveDecisionRoom />)");
+
+    expect(routeTable).toContain('const ExecutiveDecisionRoom = lazy(() => import("@/pages/ExecutiveDecisionRoom"));');
+    expect(routeTable).toContain('{ path: "/decisions/:id/room", element: <ExecutiveDecisionRoom />, layout: "full" }');
+    expect(app).not.toContain('path="/decisions/:id/room"');
+    expect(app).not.toContain('import("@/pages/ExecutiveDecisionRoom")');
   });
 });

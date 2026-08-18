@@ -1,4 +1,4 @@
-import { Suspense, ReactNode, lazy } from "react";
+import { Suspense, ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,8 +23,6 @@ import RouteEntitlement from "@/components/auth/RouteEntitlement";
 import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
 import { metadataForPath } from "@/lib/page-metadata";
-
-const ExecutiveDecisionRoom = lazy(() => import("@/pages/ExecutiveDecisionRoom"));
 
 // ═══════════════════════════════════════════════════════
 // QUERY CLIENT — production-hardened defaults
@@ -128,9 +126,6 @@ const App = () => (
             <UpgradeModalProvider />
             <Suspense fallback={<PageLoader />}>
             <Routes>
-              {/* Focused governed evidence workspace. Kept outside the legacy route table so the
-                  feature can ship without changing commercial entitlement contracts. */}
-              <Route path="/decisions/:id/room" element={wrapLayout.full(<ExecutiveDecisionRoom />)} />
               {routes.map(({ path, element, layout, feature }) => (
                 <Route
                   key={path}
