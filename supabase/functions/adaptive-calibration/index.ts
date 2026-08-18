@@ -8,17 +8,17 @@ import { makeDeadline, rotateForFairness } from "../_shared/cron-batch.ts";
 const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // calibration cadence
 
 /**
- * Adaptive Calibration Engine v3
+ * Adaptive Calibration Engine v4
  *
- * Calibration only learns from canonical prediction_accuracy_score values.
- * Raw outcome_delta is an observed metric change, not a universal success
- * signal: negative deltas are correct for lower-is-better KPIs. The outcome
- * evaluator now writes direction-aware accuracy and the migration backfills
- * legacy rows where a canonical direction exists.
+ * Calibration only learns from canonical prediction_accuracy_score values that
+ * are backed by prospectively committed decision_outcomes. Retrospective or
+ * backfilled evaluations remain available for diagnostics but cannot certify
+ * forecasting skill or alter confidence calibration.
  */
 
-const DECISION_COLUMNS = "execution_status, capped_confidence, raw_confidence, prediction_accuracy_score, created_at" as const;
+const DECISION_COLUMNS = "execution_status, capped_confidence, raw_confidence, prediction_accuracy_score, created_at, decision_outcomes(calibration_eligible, evidence_regime, outcome_status)" as const;
 const WINDOW_SIZE = 500;
+const SOURCE_WINDOW_SIZE = 1000;
 const MIN_DECISIONS = 5;
 const MIN_BAND_COUNT = 2;
 const SMOOTHING_ALPHA = 1; // Beta prior α
@@ -37,19 +37,45 @@ function computeSuccess(d: any): number | null {
   return Math.min(1, Math.max(0, accuracy / 100));
 }
 
+function isEvaluatedOutcome(outcome: any): boolean {
+  return Boolean(outcome) && !["pending", "not_evaluable"].includes(String(outcome.outcome_status ?? "pending"));
+}
+
+function hasProspectiveCalibrationEvidence(d: any): boolean {
+  const outcomes = Array.isArray(d.decision_outcomes) ? d.decision_outcomes : [];
+  const evaluated = outcomes.filter(isEvaluatedOutcome);
+  if (evaluated.length === 0) return false;
+
+  const hasEligible = evaluated.some(
+    (o: any) => o.calibration_eligible === true && o.evidence_regime === "prospective"
+  );
+  const hasIneligibleEvaluated = evaluated.some(
+    (o: any) => o.calibration_eligible !== true || o.evidence_regime !== "prospective"
+  );
+
+  // Conservative rule: because prediction_accuracy_score is stored at the
+  // decision level, mixed prospective/retrospective evaluated outcomes could
+  // make score provenance ambiguous. Exclude the decision entirely.
+  return hasEligible && !hasIneligibleEvaluated;
+}
+
 function computeCalibrationModel(decisions: any[]) {
-  // Never infer success from raw outcome_delta sign. A row becomes calibration
-  // evidence only after the direction-aware outcome evaluator has produced a
-  // canonical accuracy score.
-  const calibrated = decisions.filter(
+  const scored = decisions.filter(
     (d) =>
       d.capped_confidence != null &&
       d.prediction_accuracy_score != null &&
       Number.isFinite(Number(d.prediction_accuracy_score))
   );
 
+  const calibrated = scored.filter(hasProspectiveCalibrationEvidence);
+  const excludedNonProspective = scored.length - calibrated.length;
+
   if (calibrated.length < MIN_DECISIONS) {
-    return { insufficient: true, count: calibrated.length };
+    return {
+      insufficient: true,
+      count: calibrated.length,
+      excluded_nonprospective_count: excludedNonProspective,
+    };
   }
 
   const windowed = calibrated
@@ -124,6 +150,9 @@ function computeCalibrationModel(decisions: any[]) {
     total_decisions_analyzed: windowed.length,
     confidence_bands_count: bandsWithData,
     success_metric: "prediction_accuracy_score",
+    evidence_regime: "prospective_only",
+    prospective_decisions_count: windowed.length,
+    excluded_nonprospective_count: excludedNonProspective,
     window_start: windowStart,
     window_end: windowEnd,
     window_decisions_count: windowed.length,
@@ -147,9 +176,7 @@ serve(async (req) => {
 
     const body = await req.json();
 
-    // ── CRON: calibrate_all processes all orgs — requires service-role auth ──
     if (body.action === "calibrate_all" && body.cron === true) {
-      // Verify caller is service-role (cron) — reject anon/user tokens
       const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
       if (!authHeader || !authHeader.includes(serviceKey)) {
         const callerClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
@@ -166,7 +193,7 @@ serve(async (req) => {
       const guard = await cronGuard("adaptive-calibration");
       if (!guard.acquired) return guard.earlyResponse(corsHeaders);
 
-      log.info("Cron-triggered batch calibration starting");
+      log.info("Cron-triggered prospective calibration starting");
       const { data: orgs } = await svc.from("organizations").select("id");
       let calibrated = 0;
 
@@ -184,7 +211,7 @@ serve(async (req) => {
           .eq("organization_id", org.id)
           .not("decided_at", "is", null)
           .order("created_at", { ascending: false })
-          .limit(WINDOW_SIZE);
+          .limit(SOURCE_WINDOW_SIZE);
 
         if (!decisions?.length) continue;
 
@@ -211,6 +238,9 @@ serve(async (req) => {
           confidence_bands_count: result.confidence_bands_count,
           mean_absolute_error: result.mean_absolute_error,
           success_metric: result.success_metric,
+          evidence_regime: result.evidence_regime,
+          prospective_decisions_count: result.prospective_decisions_count,
+          excluded_decisions_count: result.excluded_nonprospective_count,
           window_start: result.window_start,
           window_end: result.window_end,
           window_decisions_count: result.window_decisions_count,
@@ -222,14 +252,13 @@ serve(async (req) => {
       }
 
       const truncated = orgsProcessed < rotatedOrgs.length;
-      log.info("Cron batch calibration complete", { calibrated, orgsProcessed, orgsTotal: rotatedOrgs.length, truncated });
-      await guard.succeed({ calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated });
-      return new Response(JSON.stringify({ success: true, calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated }), {
+      log.info("Cron batch prospective calibration complete", { calibrated, orgsProcessed, orgsTotal: rotatedOrgs.length, truncated });
+      await guard.succeed({ calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated, evidence_regime: "prospective_only" });
+      return new Response(JSON.stringify({ success: true, calibrated, orgs_processed: orgsProcessed, orgs_total: rotatedOrgs.length, truncated, evidence_regime: "prospective_only" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // ── Standard auth flow for user-initiated calibration ──
     const authHeader = req.headers.get("authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -274,14 +303,15 @@ serve(async (req) => {
       .eq("organization_id", organization_id)
       .not("decided_at", "is", null)
       .order("created_at", { ascending: false })
-      .limit(WINDOW_SIZE);
+      .limit(SOURCE_WINDOW_SIZE);
 
     if (!decisions || decisions.length === 0) {
       return new Response(
         JSON.stringify({
           model: null,
           insufficient_data: true,
-          message: "No direction-aware evaluated decisions found",
+          evidence_regime: "prospective_only",
+          message: "No evaluated decisions found",
           decisions_count: 0,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -295,14 +325,15 @@ serve(async (req) => {
         JSON.stringify({
           model: null,
           insufficient_data: true,
-          message: `Need at least ${MIN_DECISIONS} decisions with canonical direction-aware accuracy. Currently: ${result.count}`,
+          evidence_regime: "prospective_only",
+          message: `Need at least ${MIN_DECISIONS} decisions with prospectively committed, direction-aware evaluated outcomes. Currently: ${result.count}`,
           decisions_count: result.count,
+          excluded_nonprospective_count: result.excluded_nonprospective_count,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // AI narrative — only aggregated stats, never raw decision data
     let aiNarrative = "";
     if (lovableApiKey) {
       try {
@@ -317,7 +348,7 @@ serve(async (req) => {
             messages: [
               {
                 role: "system",
-                content: `You are an expert in decision science calibration. Given calibration band corrections and stats, write a concise 2-3 sentence executive summary: 1) Whether the organization is overconfident or underconfident, 2) Which bands need correction, 3) One actionable recommendation. Be direct and quantitative. Plain text only.`,
+                content: `You are an expert in decision science calibration. The statistics below are computed only from prospectively committed outcome evaluations. Write a concise 2-3 sentence executive summary: 1) Whether the organization is overconfident or underconfident, 2) Which bands need correction, 3) One actionable recommendation. Be direct and quantitative. Plain text only.`,
               },
               {
                 role: "user",
@@ -328,6 +359,8 @@ serve(async (req) => {
                   mae: result.mean_absolute_error,
                   total_decisions: result.total_decisions_analyzed,
                   success_metric: result.success_metric,
+                  evidence_regime: result.evidence_regime,
+                  excluded_nonprospective_count: result.excluded_nonprospective_count,
                   low_sample_bands: result.low_sample_bands,
                 }),
               },
@@ -366,6 +399,9 @@ serve(async (req) => {
       mean_absolute_error: result.mean_absolute_error,
       ai_narrative: aiNarrative || null,
       success_metric: result.success_metric,
+      evidence_regime: result.evidence_regime,
+      prospective_decisions_count: result.prospective_decisions_count,
+      excluded_decisions_count: result.excluded_nonprospective_count,
       window_start: result.window_start,
       window_end: result.window_end,
       window_decisions_count: result.window_decisions_count,
