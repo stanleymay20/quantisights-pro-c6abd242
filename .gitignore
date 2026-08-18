@@ -36,3 +36,7 @@ tests/load/reports/
 .env.loadtest
 tests/tenant-isolation/.state.json
 audit-artifacts/deployment-verification/
+
+# bun lockfile: repo standard is npm (package-lock.json)
+bun.lock
+bun.lockb
