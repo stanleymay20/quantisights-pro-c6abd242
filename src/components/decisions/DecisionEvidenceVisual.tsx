@@ -60,12 +60,7 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="label" tickLine={false} axisLine={false} />
                   <YAxis tickLine={false} axisLine={false} width={56} />
-                  <Tooltip
-                    formatter={(value: number, _name, context) => [
-                      context?.payload?.displayValue ?? String(value),
-                      context?.payload?.label ?? "Value",
-                    ]}
-                  />
+                  <Tooltip />
                   <Bar dataKey="value" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
