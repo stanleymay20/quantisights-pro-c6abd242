@@ -135,6 +135,8 @@ const App = () => (
                   )}
                 />
               ))}
+              {/* Catch-all: without this, unknown URLs render a blank page. */}
+              <Route path="*" element={wrapLayout.public(<NotFound />)} />
             </Routes>
             </Suspense>
           </AuthProvider>
