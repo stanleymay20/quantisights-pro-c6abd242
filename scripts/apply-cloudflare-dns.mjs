@@ -2,18 +2,15 @@ import { fileURLToPath } from "node:url";
 
 const API_BASE = "https://api.cloudflare.com/client/v4";
 const HOSTNAME = "www.quantivis.io";
+const APEX_HOSTNAME = "quantivis.io";
+const MANAGED_HOSTNAMES = [HOSTNAME, APEX_HOSTNAME];
 const PROHIBITED_LOVABLE_A_RECORD = "185.158.133.1";
 
 function readCloudflareEnvironment(env = process.env) {
   const { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, LOVABLE_PROXY_ORIGIN } = env;
 
-  if (!CLOUDFLARE_API_TOKEN) {
-    throw new Error("CLOUDFLARE_API_TOKEN is required.");
-  }
-
-  if (!CLOUDFLARE_ZONE_ID) {
-    throw new Error("CLOUDFLARE_ZONE_ID is required.");
-  }
+  if (!CLOUDFLARE_API_TOKEN) throw new Error("CLOUDFLARE_API_TOKEN is required.");
+  if (!CLOUDFLARE_ZONE_ID) throw new Error("CLOUDFLARE_ZONE_ID is required.");
 
   return { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, LOVABLE_PROXY_ORIGIN };
 }
@@ -30,7 +27,6 @@ async function cloudflareRequest(path, options = {}, env = readCloudflareEnviron
 
   const text = await response.text();
   const payload = text ? JSON.parse(text) : {};
-
   if (!response.ok || payload.success === false) {
     const messages = [
       ...(payload.errors ?? []).map((error) => `${error.code}: ${error.message}`),
@@ -42,7 +38,6 @@ async function cloudflareRequest(path, options = {}, env = readCloudflareEnviron
     error.payload = payload;
     throw error;
   }
-
   return payload.result;
 }
 
@@ -58,9 +53,9 @@ function describeRecord(record) {
   return `${record.type} ${record.name} -> ${record.content}; proxied=${String(record.proxied)}`;
 }
 
-export function evaluateWwwDnsState(records, lovableProxyOrigin) {
+function evaluateDnsState(records, lovableProxyOrigin, hostname) {
   const normalizedOrigin = normalizeOrigin(lovableProxyOrigin);
-  const activeRecords = records.filter((record) => record.name === HOSTNAME);
+  const activeRecords = records.filter((record) => record.name === hostname);
   const proxiedRecord = activeRecords.find((record) => record.proxied === true);
   const prohibitedARecord = activeRecords.find(
     (record) => record.type === "A" && record.content === PROHIBITED_LOVABLE_A_RECORD,
@@ -75,45 +70,38 @@ export function evaluateWwwDnsState(records, lovableProxyOrigin) {
     : null;
 
   if (matchingLovableCname) {
-    return {
-      ok: true,
-      action: "noop",
-      reason: `${HOSTNAME} already uses the Lovable proxy-mode CNAME with Cloudflare proxy enabled.`,
-    };
+    return { ok: true, action: "noop", reason: `${hostname} already uses the Lovable proxy-mode CNAME with Cloudflare proxy enabled.` };
   }
-
   if (normalizedOrigin) {
-    return {
-      ok: false,
-      action: "upsert-cname",
-      reason: `${HOSTNAME} must be converted to proxied CNAME ${normalizedOrigin}.`,
-    };
+    return { ok: false, action: "upsert-cname", reason: `${hostname} must be converted to proxied CNAME ${normalizedOrigin}.` };
   }
-
   if (proxiedRecord && !prohibitedARecord) {
-    return {
-      ok: true,
-      action: "noop",
-      reason: `${HOSTNAME} has a proxied Cloudflare DNS record.`,
-    };
+    return { ok: true, action: "noop", reason: `${hostname} has a proxied Cloudflare DNS record.` };
   }
-
   return {
     ok: false,
     action: "missing-origin",
     reason: [
-      `${HOSTNAME} is not safely proxied through this Cloudflare zone.`,
+      `${hostname} is not safely proxied through this Cloudflare zone.`,
       prohibitedARecord
-        ? `It still has the direct Lovable A record ${PROHIBITED_LOVABLE_A_RECORD}, which bypasses Worker/Transform execution when DNS-only and causes Cloudflare Error 1000 when proxied.`
-        : "No proxied DNS record was found for the buyer hostname.",
-      "Reconnect the domain in Lovable using 'Cloudflare or similar proxy' mode, then add the resulting hostname as the GitHub secret LOVABLE_PROXY_ORIGIN.",
+        ? `It still has the direct Lovable A record ${PROHIBITED_LOVABLE_A_RECORD}.`
+        : "No proxied DNS record was found for this hostname.",
+      "Set LOVABLE_PROXY_ORIGIN to the Lovable proxy-mode origin and rerun the Cloudflare workflow.",
     ].join(" "),
   };
 }
 
-async function listDnsRecords(env) {
+export function evaluateWwwDnsState(records, lovableProxyOrigin) {
+  return evaluateDnsState(records, lovableProxyOrigin, HOSTNAME);
+}
+
+export function evaluateApexDnsState(records, lovableProxyOrigin) {
+  return evaluateDnsState(records, lovableProxyOrigin, APEX_HOSTNAME);
+}
+
+async function listDnsRecords(env, hostname) {
   return await cloudflareRequest(
-    `/zones/${env.CLOUDFLARE_ZONE_ID}/dns_records?name=${encodeURIComponent(HOSTNAME)}&per_page=100`,
+    `/zones/${env.CLOUDFLARE_ZONE_ID}/dns_records?name=${encodeURIComponent(hostname)}&per_page=100`,
     {},
     env,
   );
@@ -123,14 +111,14 @@ async function deleteDnsRecord(env, record) {
   await cloudflareRequest(`/zones/${env.CLOUDFLARE_ZONE_ID}/dns_records/${record.id}`, { method: "DELETE" }, env);
 }
 
-async function createDnsRecord(env, origin) {
+async function createDnsRecord(env, origin, hostname) {
   return await cloudflareRequest(
     `/zones/${env.CLOUDFLARE_ZONE_ID}/dns_records`,
     {
       method: "POST",
       body: JSON.stringify({
         type: "CNAME",
-        name: HOSTNAME,
+        name: hostname,
         content: origin,
         proxied: true,
         ttl: 1,
@@ -141,14 +129,14 @@ async function createDnsRecord(env, origin) {
   );
 }
 
-async function updateDnsRecord(env, record, origin) {
+async function updateDnsRecord(env, record, origin, hostname) {
   return await cloudflareRequest(
     `/zones/${env.CLOUDFLARE_ZONE_ID}/dns_records/${record.id}`,
     {
       method: "PUT",
       body: JSON.stringify({
         type: "CNAME",
-        name: HOSTNAME,
+        name: hostname,
         content: origin,
         proxied: true,
         ttl: 1,
@@ -159,27 +147,19 @@ async function updateDnsRecord(env, record, origin) {
   );
 }
 
-export async function applyCloudflareDns(env = readCloudflareEnvironment()) {
-  const origin = normalizeOrigin(env.LOVABLE_PROXY_ORIGIN);
-  let records = await listDnsRecords(env);
-  const state = evaluateWwwDnsState(records, origin);
+async function ensureManagedHostname(env, origin, hostname) {
+  let records = await listDnsRecords(env, hostname);
+  let state = evaluateDnsState(records, origin, hostname);
 
-  console.log(`Cloudflare DNS state for ${HOSTNAME}:`);
-  if (records.length === 0) {
-    console.log("- <none>");
-  } else {
-    for (const record of records) console.log(`- ${describeRecord(record)}`);
-  }
+  console.log(`Cloudflare DNS state for ${hostname}:`);
+  if (records.length === 0) console.log("- <none>");
+  else for (const record of records) console.log(`- ${describeRecord(record)}`);
   console.log(state.reason);
 
   if (state.ok) return;
-
-  if (state.action !== "upsert-cname") {
-    throw new Error(state.reason);
-  }
+  if (state.action !== "upsert-cname") throw new Error(state.reason);
 
   const reusableCname = records.find((record) => record.type === "CNAME");
-
   for (const record of records) {
     if (record.id === reusableCname?.id) continue;
     await deleteDnsRecord(env, record);
@@ -187,17 +167,21 @@ export async function applyCloudflareDns(env = readCloudflareEnvironment()) {
   }
 
   const appliedRecord = reusableCname
-    ? await updateDnsRecord(env, reusableCname, origin)
-    : await createDnsRecord(env, origin);
-
+    ? await updateDnsRecord(env, reusableCname, origin, hostname)
+    : await createDnsRecord(env, origin, hostname);
   console.log(`Applied DNS record: ${describeRecord(appliedRecord)}`);
 
-  records = await listDnsRecords(env);
-  const verifiedState = evaluateWwwDnsState(records, origin);
-  if (!verifiedState.ok) {
-    throw new Error(`Cloudflare DNS verification failed after apply: ${verifiedState.reason}`);
+  records = await listDnsRecords(env, hostname);
+  state = evaluateDnsState(records, origin, hostname);
+  if (!state.ok) throw new Error(`Cloudflare DNS verification failed after apply: ${state.reason}`);
+  console.log(`DNS verified: ${state.reason}`);
+}
+
+export async function applyCloudflareDns(env = readCloudflareEnvironment()) {
+  const origin = normalizeOrigin(env.LOVABLE_PROXY_ORIGIN);
+  for (const hostname of MANAGED_HOSTNAMES) {
+    await ensureManagedHostname(env, origin, hostname);
   }
-  console.log(`DNS verified: ${verifiedState.reason}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
