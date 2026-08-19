@@ -61,9 +61,6 @@ async function expectUsableRoute(page: Page, path: string) {
   };
   const onRequestFailed = (request: Request) => {
     const errorText = request.failure()?.errorText ?? "failed";
-    // Full-page navigation legitimately aborts outstanding fetches from the page
-    // being replaced. Keep real first-party failures, but do not turn those
-    // browser-initiated cancellations into product defects.
     if (isFirstParty(request.url()) && errorText !== "net::ERR_ABORTED") {
       requestFailures.push(`${errorText} ${request.url()}`);
     }
@@ -124,7 +121,11 @@ async function expectPaidPlanPresentation(page: Page, tierName: string) {
 
 async function expectLogoutWorks(page: Page) {
   await page.goto(`${BASE}/settings`);
-  const button = page.getByRole("button", { name: /sign out|log out|logout/i }).first();
+  const mobileMenu = page.getByRole("button", { name: /open navigation menu/i });
+  if (await mobileMenu.isVisible().catch(() => false)) {
+    await mobileMenu.click();
+  }
+  const button = page.getByTestId("sign-out");
   await expect(button).toBeVisible();
   await button.click();
   await page.waitForURL((url) => url.pathname === "/login" || url.pathname === "/", { timeout: 15_000 });
@@ -163,9 +164,9 @@ test("public pricing surface matches in-app commercial tiers", async ({ page }) 
 test("public buyer surface remains usable on a phone viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/pricing`);
-  await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Governance" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Enterprise" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Essentials", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Governance", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Enterprise", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
   await assertAccessible(page);
 
