@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { execFileSync } from "node:child_process";
@@ -44,8 +44,23 @@ const releaseMetadata = {
   migrationVersion: "20260813124440",
 };
 
+// Public client configuration is safe to embed. Lovable normally injects these
+// values at build time; the fallbacks prevent a deployment from shipping an
+// unusable bootstrap bundle when that injection is unavailable.
+const CLOUD_URL_FALLBACK = "https://itpwpnwzzitkelffttyx.supabase.co";
+const CLOUD_PUBLISHABLE_KEY_FALLBACK = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0cHdwbnd6eml0a2VsZmZ0dHl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3OTIxNTMsImV4cCI6MjA4NzM2ODE1M30.sjrNIlSiU_udZXmE4o822K0bOmbhqNCk_47mSKK86xY";
+
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, import.meta.dirname, "VITE_");
+  const cloudUrl = process.env.VITE_SUPABASE_URL?.trim()
+    || env.VITE_SUPABASE_URL?.trim()
+    || CLOUD_URL_FALLBACK;
+  const cloudPublishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
+    || env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
+    || CLOUD_PUBLISHABLE_KEY_FALLBACK;
+
+  return ({
   server: {
     host: "::",
     port: 8080,
@@ -56,6 +71,8 @@ export default defineConfig(({ mode }) => ({
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   define: {
     __QUANTIVIS_RELEASE__: JSON.stringify(releaseMetadata),
+    "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(cloudUrl),
+    "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": JSON.stringify(cloudPublishableKey),
   },
   resolve: {
     alias: [
@@ -69,4 +86,5 @@ export default defineConfig(({ mode }) => ({
       },
     ],
   },
-}));
+  });
+});
