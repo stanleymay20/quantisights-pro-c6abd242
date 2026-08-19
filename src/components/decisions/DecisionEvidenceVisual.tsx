@@ -61,7 +61,12 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
 
       <div className="mt-4">
         {selection.kind === "simple_text" && (
-          <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="Decision-critical recorded values">
+          <div
+            className="grid gap-3 sm:grid-cols-2"
+            role="group"
+            aria-label="Decision-critical recorded values"
+            data-testid="decision-visual-values"
+          >
             {selection.data.map((item) => (
               <div key={item.source} className="rounded-lg border border-border/40 bg-muted/30 p-4">
                 <p className="text-xs font-medium text-muted-foreground">{item.label}</p>
