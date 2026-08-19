@@ -51,7 +51,7 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
           <p className="text-sm text-muted-foreground">{selection.title}</p>
         </div>
         <Badge variant="secondary" className="capitalize">
-          {selection.kind.replaceAll("_", " ")}
+          {selection.kind.replace(/_/g, " ")}
         </Badge>
       </div>
 
@@ -145,7 +145,7 @@ const DecisionEvidenceVisual = ({ decisionId, selection }: DecisionEvidenceVisua
             <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
               {selection.rejected.slice(0, 5).map((item) => (
                 <li key={item.kind}>
-                  <span className="font-medium text-foreground capitalize">{item.kind.replaceAll("_", " ")}:</span>{" "}
+                  <span className="font-medium text-foreground capitalize">{item.kind.replace(/_/g, " ")}:</span>{" "}
                   {item.reason}
                 </li>
               ))}
