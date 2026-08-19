@@ -24,6 +24,12 @@ jobs:
   review:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    # Keep browser binaries and their Linux system dependencies immutable with
+    # the Playwright version resolved by package-lock.json. This avoids relying
+    # on GitHub-hosted apt mirrors during the acceptance run.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
     timeout-minutes: 35
     environment: staging
     permissions:
@@ -125,8 +131,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
+      - name: Verify pinned Playwright runtime
+        run: |
+          set -Eeuo pipefail
+          resolved_version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
+          if [ "$resolved_version" != "1.61.1" ]; then
+            echo "::error::Playwright package $resolved_version does not match pinned CI image 1.61.1"
+            exit 1
+          fi
+          npx playwright --version
 
       - name: Seed disposable tier customers
         id: seed
