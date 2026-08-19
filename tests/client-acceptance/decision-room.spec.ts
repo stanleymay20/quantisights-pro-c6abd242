@@ -33,7 +33,13 @@ async function assertAccessible(page: Page) {
     });
     return result.violations
       .filter((v: any) => v.impact === "critical" || v.impact === "serious")
-      .map((v: any) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length }));
+      .map((v: any) => ({
+        id: v.id,
+        impact: v.impact,
+        help: v.help,
+        nodes: v.nodes.length,
+        targets: v.nodes.slice(0, 10).map((node: any) => node.target),
+      }));
   });
   expect(violations, `serious/critical accessibility violations: ${JSON.stringify(violations)}`).toEqual([]);
 }
