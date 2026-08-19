@@ -19,6 +19,19 @@ html:not(.dark) {
   --governance-compliance: 142 72% 29%;
 }
 
+/* The original dark primary (#2663f2-equivalent) was only ~3.5:1 against the
+   dark card surface, so small primary labels, outlined actions and icon text
+   repeatedly failed WCAG AA. A lighter semantic blue keeps the brand hue while
+   clearing 4.5:1 against both dark background and card surfaces. The dark
+   foreground remains appropriate on filled primary controls. */
+html.dark {
+  --primary: 217 91% 60%;
+  --accent: 217 91% 60%;
+  --brand-primary: 217 91% 60%;
+  --brand-accent: 217 91% 60%;
+  --muted-foreground: 215 20% 60%;
+}
+
 /* Tailwind alpha utilities below were used on 10–11px copy. The base muted
    token already meets AA; removing the extra opacity restores that contrast. */
 [class*="text-muted-foreground/60"],
