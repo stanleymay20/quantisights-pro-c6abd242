@@ -150,6 +150,23 @@ html.dark {
   color: rgba(255, 255, 255, 0.92) !important;
 }
 
+/* The dark Decision Brief has two 10px semantic badges. Their shared semantic
+   text tokens are intentionally deep enough for light cards, but that makes
+   them unreadable against this dark illustrative surface. Keep the tinted
+   semantic fills and use high-contrast light copy only in this dark card. */
+.qv-page .qv-grid-2 > div[style*="background: rgba(255, 255, 255, 0.04)"] > div:first-child > div:first-child > span[style*="--status-warning"],
+.qv-page .qv-grid-2 > div[style*="background: rgba(255, 255, 255, 0.04)"] > div:first-child > div:first-child > span[style*="--status-success"] {
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* Decision Visual metric labels sit on a muted card tint. At 12px the muted
+   foreground token is below AA in the light client theme. These are decision-
+   critical labels, so render them with normal foreground contrast while leaving
+   secondary explanatory copy muted elsewhere. */
+[data-testid="decision-visual-values"] .text-muted-foreground {
+  color: hsl(var(--foreground)) !important;
+}
+
 /* Competitive Analysis fades its text-bearing hero in with Framer Motion.
    Axe can otherwise sample the paragraph at an intermediate opacity and report
    the same .text-base node intermittently. Keep the movement, not the fade. */
