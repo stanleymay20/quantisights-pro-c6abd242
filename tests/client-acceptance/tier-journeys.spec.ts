@@ -122,8 +122,11 @@ async function expectPaidPlanPresentation(page: Page, tierName: string) {
 async function expectLogoutWorks(page: Page) {
   await page.goto(`${BASE}/settings`);
   const mobileMenu = page.getByRole("button", { name: /open navigation menu/i });
-  if (await mobileMenu.isVisible().catch(() => false)) {
+  const isMobileViewport = (page.viewportSize()?.width ?? 1280) < 768;
+  if (isMobileViewport) {
+    await expect(mobileMenu).toBeVisible({ timeout: 5_000 });
     await mobileMenu.click();
+    await expect(page.getByRole("button", { name: /close navigation/i })).toBeVisible();
   }
   const button = page.getByTestId("sign-out");
   await expect(button).toBeVisible();
