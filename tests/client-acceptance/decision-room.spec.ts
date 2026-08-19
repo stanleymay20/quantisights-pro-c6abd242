@@ -69,9 +69,10 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
     await expect(decisionVisual.getByRole("heading", { name: "Decision Visual" })).toBeVisible();
     await expect(decisionVisual.getByText("Auto-selected")).toBeVisible();
     await expect(decisionVisual.getByText("Predicted net impact", { exact: true })).toBeVisible();
-    await expect(decisionVisual.getByText(/€42,000/)).toBeVisible();
-    await expect(decisionVisual.getByText(/ROI probability/i)).toBeVisible();
-    await expect(decisionVisual.getByText(/68%/)).toBeVisible();
+    const recordedValues = decisionVisual.getByTestId("decision-visual-values");
+    await expect(recordedValues.getByText("€42,000", { exact: true })).toBeVisible();
+    await expect(recordedValues.getByText(/ROI probability/i)).toBeVisible();
+    await expect(recordedValues.getByText("68%", { exact: true })).toBeVisible();
     await expect(decisionVisual.getByText(/representation of recorded evidence, not source evidence itself/i)).toBeVisible();
     await decisionVisual.getByText("Why this visualization?").click();
     await expect(decisionVisual.getByText(/chart would add visual machinery without adding meaning/i)).toBeVisible();
