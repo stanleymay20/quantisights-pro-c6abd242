@@ -14,6 +14,8 @@ on:
       - "src/lib/**"
       - "src/integrations/supabase/**"
       - "src/App.tsx"
+      - "src/main.tsx"
+      - "src/*.css"
       - "src/pages/ExecutiveDecisionRoom.tsx"
       - "src/pages/EvidencePack.tsx"
       - "src/pages/DecisionReview.tsx"
