@@ -9,12 +9,13 @@ if (!existsSync(STATE)) throw new Error(`Missing client-acceptance state at ${ST
 const state = JSON.parse(readFileSync(STATE, "utf8"));
 const customers = state.customers as Record<
   string,
-  { email: string; password: string; tier: string; decision_id?: string }
+  { email: string; password: string; tier: string; org_id?: string; decision_id?: string }
 >;
 
 async function login(page: Page, tier: "starter" | "growth" | "enterprise") {
   const customer = customers[tier];
   expect(customer, `missing ${tier} fixture`).toBeTruthy();
+  expect(customer.org_id, `missing ${tier} canonical organization fixture`).toBeTruthy();
   expect(customer.decision_id, `missing ${tier} decision-room fixture`).toBeTruthy();
   await page.goto(`${BASE}/login`);
   await page.getByLabel(/email/i).fill(customer.email);
@@ -47,6 +48,12 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
     await expect(page.getByRole("heading", { name: "Executive Decision Room" })).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/your current access level doesn't include this capability/i);
     await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
+
+    // Resolve tenant/data loading before asserting the business content. If this
+    // fails, Playwright now reports the actual Decision Room state instead of a
+    // misleading downstream "recommendation text not found" timeout.
+    await expect(page.getByText("Preparing the decision room…")).toBeHidden({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: "Decision Room unavailable" })).not.toBeVisible();
 
     await expect(page.getByText(`Renegotiate the primary supplier agreement for ${tier}`)).toBeVisible();
     await expect(page.getByText("72% recorded confidence")).toBeVisible();
@@ -89,6 +96,8 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
       await expect(page.getByRole("heading", { name: "Executive Decision Room" })).toBeVisible();
+      await expect(page.getByText("Preparing the decision room…")).toBeHidden({ timeout: 10_000 });
+      await expect(page.getByRole("heading", { name: "Decision Room unavailable" })).not.toBeVisible();
       await expect(page.getByRole("link", { name: "Evidence Pack" })).toBeVisible();
       await expect(page.getByTestId("decision-visual")).toBeVisible();
       await page.screenshot({ path: "artifacts/client-acceptance/enterprise-decision-room-mobile.png", fullPage: true });
