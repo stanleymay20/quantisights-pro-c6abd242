@@ -132,3 +132,27 @@ html.dark {
 .qv-page [style*="brand-executive-navy) / 0.145"] {
   color: hsl(var(--brand-marketing-slate)) !important;
 }
+
+/* The desktop illustrative ledger used bright green fills behind 10px white
+   Approve copy. Darken only those filled action buttons so the illustrative
+   control itself clears AA without changing the product decision semantics. */
+.qv-page .qv-ledger-row button:first-child {
+  background-color: #166534 !important;
+}
+
+/* Homepage status badges sit on dark illustrative surfaces. The shared
+   light-surface semantic tokens are deliberately deep, so use high-contrast
+   light badge copy only inside the dark homepage mockups. */
+.qv-page .qv-mock-frame span[style*="--status-success"],
+.qv-page .qv-mock-frame span[style*="--status-warning"],
+.qv-page .qv-mock-frame span[style*="--decision-needs-review"],
+.qv-page .qv-mock-frame span[style*="--status-info"] {
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* Competitive Analysis fades its text-bearing hero in with Framer Motion.
+   Axe can otherwise sample the paragraph at an intermediate opacity and report
+   the same .text-base node intermittently. Keep the movement, not the fade. */
+header.max-w-5xl.mx-auto.text-center.mb-14[style*="opacity:"] {
+  opacity: 1 !important;
+}
