@@ -153,7 +153,9 @@ jobs:
           exit 1
 
       - name: Exercise public buyer and all paid-tier customer journeys
-        run: npx playwright test tests/client-acceptance/*.spec.ts --reporter=line,html
+        env:
+          E2E_BASE_URL: ${{ env.CLIENT_ACCEPTANCE_BASE_URL }}
+        run: npx playwright test --config=playwright.client-acceptance.config.ts --reporter=line,html
 
       - name: Record client-acceptance SHA proof
         if: ${{ success() }}
