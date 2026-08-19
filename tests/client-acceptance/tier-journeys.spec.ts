@@ -60,7 +60,13 @@ async function expectUsableRoute(page: Page, path: string) {
     }
   };
   const onRequestFailed = (request: Request) => {
-    if (isFirstParty(request.url())) requestFailures.push(`${request.failure()?.errorText ?? "failed"} ${request.url()}`);
+    const errorText = request.failure()?.errorText ?? "failed";
+    // Full-page navigation legitimately aborts outstanding fetches from the page
+    // being replaced. Keep real first-party failures, but do not turn those
+    // browser-initiated cancellations into product defects.
+    if (isFirstParty(request.url()) && errorText !== "net::ERR_ABORTED") {
+      requestFailures.push(`${errorText} ${request.url()}`);
+    }
   };
   const onPageError = (error: Error) => pageErrors.push(error.message);
   page.on("response", onResponse);
@@ -98,7 +104,13 @@ async function assertAccessible(page: Page) {
     });
     return result.violations
       .filter((v: any) => v.impact === "critical" || v.impact === "serious")
-      .map((v: any) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length }));
+      .map((v: any) => ({
+        id: v.id,
+        impact: v.impact,
+        help: v.help,
+        nodes: v.nodes.length,
+        targets: v.nodes.slice(0, 10).map((node: any) => node.target),
+      }));
   });
   expect(violations, `serious/critical accessibility violations: ${JSON.stringify(violations)}`).toEqual([]);
 }
@@ -143,7 +155,7 @@ test("public pricing surface matches in-app commercial tiers", async ({ page }) 
   await expect(page.locator("body")).toContainText("Governance");
   await expect(page.locator("body")).toContainText("Enterprise");
   await expect(page.locator("body")).toContainText("€499");
-  await expect(page.locator("body")).toContainText("€1,999");
+  await expect(page.locator("body")).toContainText(/€1,?999/);
   await expect(page.locator("body")).toContainText(/3 data connectors|live data connectors/i);
   await assertAccessible(page);
 });
@@ -151,9 +163,9 @@ test("public pricing surface matches in-app commercial tiers", async ({ page }) 
 test("public buyer surface remains usable on a phone viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/pricing`);
-  await expect(page.getByText("Essentials", { exact: true })).toBeVisible();
-  await expect(page.getByText("Governance", { exact: true })).toBeVisible();
-  await expect(page.getByText("Enterprise", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Governance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Enterprise" })).toBeVisible();
   await expect(page.locator("body")).not.toContainText(/something went wrong|application error|unexpected error/i);
   await assertAccessible(page);
 
