@@ -33,6 +33,7 @@ on:
       - "supabase/config.toml"
       - "package.json"
       - "package-lock.json"
+      - "playwright.client-acceptance.config.ts"
       - "scripts/deploy-supabase-functions-resilient.sh"
       - "scripts/verify-supabase-functions.sh"
       - "tests/tenant-isolation/**"
