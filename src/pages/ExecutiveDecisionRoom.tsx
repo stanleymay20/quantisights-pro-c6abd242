@@ -37,14 +37,34 @@ const statusIcon = (status: DecisionRoomStageStatus) => {
 
 const ExecutiveDecisionRoom = () => {
   const { id } = useParams<{ id: string }>();
-  const { currentOrgId } = useOrganization();
+  const { currentOrgId, loading: organizationLoading } = useOrganization();
   const [decision, setDecision] = useState<DecisionRoomDecision | null>(null);
   const [outcome, setOutcome] = useState<DecisionOutcomeEvidence | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id || !currentOrgId) return;
+    if (!id) {
+      setDecision(null);
+      setOutcome(null);
+      setError("No decision was specified for this Decision Room.");
+      setLoading(false);
+      return;
+    }
+
+    if (organizationLoading) {
+      setLoading(true);
+      return;
+    }
+
+    if (!currentOrgId) {
+      setDecision(null);
+      setOutcome(null);
+      setError("Your organization context could not be resolved. Refresh the page or sign in again before opening this decision.");
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     const load = async () => {
@@ -92,7 +112,7 @@ const ExecutiveDecisionRoom = () => {
     return () => {
       cancelled = true;
     };
-  }, [id, currentOrgId]);
+  }, [id, currentOrgId, organizationLoading]);
 
   const model = useMemo(() => (decision ? buildDecisionRoomModel(decision) : null), [decision]);
   const visualSelection = useMemo(
