@@ -1,0 +1,55 @@
+/* Client-facing accessibility hardening.
+   These overrides preserve the existing visual hierarchy while ensuring small
+   labels and marketing badges are not rendered with contrast-reducing alpha. */
+
+:root {
+  /* The former marketing accent (#3D5AFE) did not provide AA contrast with
+     white button text. This deeper brand blue keeps the same visual family. */
+  --brand-marketing-accent: 221 83% 53%;
+  /* Small marketing copy needs more margin than the former slate token. */
+  --brand-marketing-slate: 215 25% 35%;
+}
+
+html:not(.dark) {
+  /* #15803d-equivalent: AA-safe when success is used as text on light cards. */
+  --success: 142 72% 29%;
+  --status-success: 142 72% 29%;
+  --decision-approve: 142 72% 29%;
+  --evidence-high-confidence: 142 72% 29%;
+  --governance-compliance: 142 72% 29%;
+}
+
+/* Tailwind alpha utilities below were used on 10–11px copy. The base muted
+   token already meets AA; removing the extra opacity restores that contrast. */
+[class*="text-muted-foreground/60"],
+[class*="text-muted-foreground/70"] {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Primary text on a primary-tinted chip loses contrast after compositing.
+   Keep the chip tint but use normal foreground text for small labels. */
+[class*="bg-primary/10"][class*="text-primary"] {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Registration's divider label was the remaining static .bg-card violation. */
+.bg-card[class*="text-muted-foreground"] {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Homepage marketing CTAs use white copy. Force the darker accessible brand
+   accent even when a component supplies the old token via an inline style. */
+.qv-page .qv-primary-cta,
+.qv-page a[href="#demo"] {
+  background-color: hsl(var(--brand-marketing-accent)) !important;
+}
+
+/* Low-alpha white text on the dark marketing surfaces was below AA. */
+.qv-page [style*="color: rgba(255, 255, 255, 0.4)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.45)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.55)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.6)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.62)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.65)"] {
+  color: rgba(255, 255, 255, 0.82) !important;
+}
