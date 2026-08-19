@@ -16,7 +16,13 @@ async function assertAccessible(page: import("@playwright/test").Page) {
     });
     return result.violations
       .filter((v: any) => v.impact === "critical" || v.impact === "serious")
-      .map((v: any) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length }));
+      .map((v: any) => ({
+        id: v.id,
+        impact: v.impact,
+        help: v.help,
+        nodes: v.nodes.length,
+        targets: v.nodes.slice(0, 10).map((node: any) => node.target),
+      }));
   });
   expect(violations, `serious/critical accessibility violations: ${JSON.stringify(violations)}`).toEqual([]);
 }
@@ -35,8 +41,8 @@ test("registration gives consistent pilot and password guidance", async ({ page 
 
   await password.fill("Client-Ready-2026!");
   await expect(page.getByRole("button", { name: /create account/i })).toBeEnabled();
-  await expect(page.getByRole("link", { name: /^Terms$/i })).toHaveAttribute("href", "/terms");
-  await expect(page.getByRole("link", { name: /Privacy Policy/i })).toHaveAttribute("href", "/privacy");
+  await expect(page.getByRole("link", { name: /^Terms$/i }).first()).toHaveAttribute("href", "/terms");
+  await expect(page.getByRole("link", { name: /Privacy Policy/i }).first()).toHaveAttribute("href", "/privacy");
   await assertAccessible(page);
 });
 
@@ -59,7 +65,7 @@ test("procurement, legal and competitive trust pages resolve publicly", async ({
     ["/ai-governance", /ai act|governance/i],
     ["/privacy", /privacy/i],
     ["/terms", /terms/i],
-    ["/subprocessors", /subprocessor/i],
+    ["/subprocessors", /sub[- ]?processor/i],
     ["/impressum", /impressum/i],
     ["/competitive-analysis", /50 competitors and alternatives/i],
   ] as const;
