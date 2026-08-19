@@ -53,6 +53,16 @@ html.dark {
   opacity: 1 !important;
 }
 
+/* The public pricing hero and billing controls use very small semantic labels
+   on tinted backgrounds. The semantic hue is preserved by the surrounding
+   border/fill; use foreground text for the copy itself so the 10–12px labels
+   clear AA instead of relying on a borderline green/blue-on-tint ratio. */
+.pt-32.pb-16 [class*="tracking-[0.18em]"],
+.pt-32.pb-16 [class*="bg-success/15"][class*="text-success"],
+.pt-32.pb-16 [class*="bg-success/20"][class*="text-success"] {
+  color: hsl(var(--foreground)) !important;
+}
+
 /* The illustrative homepage ledger rotates its rows. Do not dim readable text
    during the swap; movement/state can change without lowering contrast. */
 .qv-page .qv-ledger [style*="opacity:"] {
@@ -78,21 +88,27 @@ html.dark {
 }
 
 /* Homepage marketing CTAs use white copy. Force the darker accessible brand
-   accent even when a component supplies the old token via an inline style. */
-.qv-page .qv-primary-cta,
-.qv-page a[href="#demo"] {
+   accent for genuinely filled CTAs, but do not overwrite the intentionally
+   transparent outlined pricing buttons. The previous broad selector changed
+   those buttons to blue while leaving their navy text in place. */
+.qv-page .qv-primary-cta:not([style*="background: transparent"]),
+.qv-page .qv-nav-links a[href="#demo"] {
   background-color: hsl(var(--brand-marketing-accent)) !important;
 }
 
 /* Low-alpha white text on dark marketing surfaces was below AA. Index.tsx has
-   historically used both spaced and compact rgba() serialization, so cover
-   both forms rather than depending on browser/style-string formatting. */
+   historically used several alpha levels, so cover the complete client-facing
+   set rather than depending on browser/style-string formatting. */
+.qv-page [style*="color: rgba(255, 255, 255, 0.25)"],
+.qv-page [style*="color: rgba(255, 255, 255, 0.3)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.4)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.45)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.55)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.6)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.62)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.65)"],
+.qv-page [style*="color: rgba(255,255,255,0.25)"],
+.qv-page [style*="color: rgba(255,255,255,0.3)"],
 .qv-page [style*="color: rgba(255,255,255,0.4)"],
 .qv-page [style*="color: rgba(255,255,255,0.45)"],
 .qv-page [style*="color: rgba(255,255,255,0.55)"],
@@ -102,8 +118,17 @@ html.dark {
   color: rgba(255, 255, 255, 0.86) !important;
 }
 
-/* A few homepage comparison labels intentionally used one-third-opacity navy.
-   That is decorative styling applied to real text, so restore readable slate. */
-.qv-page [style*="brand-executive-navy) / 0.333"] {
+/* Optional-form helper copy inherited a readable label colour and then halved
+   it again with opacity, producing a mobile-only contrast failure. */
+.qv-page label span[style*="opacity: 0.5"] {
+  opacity: 1 !important;
+  color: rgba(255, 255, 255, 0.86) !important;
+}
+
+/* A few homepage comparison labels and step numbers intentionally used very
+   low-opacity navy. That treatment was decorative styling applied to real
+   text, so restore readable slate for both variants. */
+.qv-page [style*="brand-executive-navy) / 0.333"],
+.qv-page [style*="brand-executive-navy) / 0.145"] {
   color: hsl(var(--brand-marketing-slate)) !important;
 }
