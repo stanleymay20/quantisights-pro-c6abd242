@@ -1663,6 +1663,8 @@ export type Database = {
           computed_at: string
           confidence_bands_count: number
           created_at: string
+          evidence_regime: string
+          excluded_decisions_count: number
           id: string
           low_sample_bands: Json
           mean_absolute_error: number | null
@@ -1670,6 +1672,7 @@ export type Database = {
           organization_id: string
           overall_bias_direction: string | null
           overall_calibration_score: number | null
+          prospective_decisions_count: number
           smoothing_alpha: number
           smoothing_beta: number
           success_metric: string
@@ -1685,6 +1688,8 @@ export type Database = {
           computed_at?: string
           confidence_bands_count?: number
           created_at?: string
+          evidence_regime?: string
+          excluded_decisions_count?: number
           id?: string
           low_sample_bands?: Json
           mean_absolute_error?: number | null
@@ -1692,6 +1697,7 @@ export type Database = {
           organization_id: string
           overall_bias_direction?: string | null
           overall_calibration_score?: number | null
+          prospective_decisions_count?: number
           smoothing_alpha?: number
           smoothing_beta?: number
           success_metric?: string
@@ -1707,6 +1713,8 @@ export type Database = {
           computed_at?: string
           confidence_bands_count?: number
           created_at?: string
+          evidence_regime?: string
+          excluded_decisions_count?: number
           id?: string
           low_sample_bands?: Json
           mean_absolute_error?: number | null
@@ -1714,6 +1722,7 @@ export type Database = {
           organization_id?: string
           overall_bias_direction?: string | null
           overall_calibration_score?: number | null
+          prospective_decisions_count?: number
           smoothing_alpha?: number
           smoothing_beta?: number
           success_metric?: string
@@ -4298,11 +4307,14 @@ export type Database = {
       decision_outcomes: {
         Row: {
           accuracy_score: number | null
+          calibration_eligible: boolean
           created_at: string
           dataset_id: string | null
           decision_id: string
+          eligibility_reason: string | null
           evaluation_date: string | null
           evaluation_window_days: number
+          evidence_regime: string
           expected_change: number | null
           expected_direction: string
           expected_metric: string
@@ -4317,11 +4329,14 @@ export type Database = {
         }
         Insert: {
           accuracy_score?: number | null
+          calibration_eligible?: boolean
           created_at?: string
           dataset_id?: string | null
           decision_id: string
+          eligibility_reason?: string | null
           evaluation_date?: string | null
           evaluation_window_days?: number
+          evidence_regime?: string
           expected_change?: number | null
           expected_direction?: string
           expected_metric: string
@@ -4336,11 +4351,14 @@ export type Database = {
         }
         Update: {
           accuracy_score?: number | null
+          calibration_eligible?: boolean
           created_at?: string
           dataset_id?: string | null
           decision_id?: string
+          eligibility_reason?: string | null
           evaluation_date?: string | null
           evaluation_window_days?: number
+          evidence_regime?: string
           expected_change?: number | null
           expected_direction?: string
           expected_metric?: string
