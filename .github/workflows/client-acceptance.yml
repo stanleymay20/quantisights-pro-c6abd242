@@ -35,6 +35,11 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # Container jobs default `run` steps to `sh`, but this workflow intentionally
+    # uses Bash features such as [[ ... =~ ... ]], here-strings, and pipefail.
+    defaults:
+      run:
+        shell: bash
     env:
       LOAD_TARGET: staging
       LOAD_SUPABASE_URL: https://cmnihsbdbpubznlkmjbc.supabase.co
