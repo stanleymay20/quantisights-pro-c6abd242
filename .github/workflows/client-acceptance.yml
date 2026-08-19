@@ -125,6 +125,8 @@ jobs:
 
       - name: Verify checked-out client-test target
         run: |
+          set -Eeuo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           actual_sha="$(git rev-parse HEAD)"
           if [ "$actual_sha" != "$CLIENT_ACCEPTANCE_SHA" ]; then
             echo "::error::Checked-out SHA $actual_sha does not match client-test target $CLIENT_ACCEPTANCE_SHA"
