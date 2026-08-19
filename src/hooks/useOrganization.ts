@@ -17,10 +17,10 @@ interface OrgMemberRow {
 
 const ORG_STORAGE_KEY = "quantivis_org_id";
 
-// Module-level singleton: prevents 54 concurrent fetches (one per component)
-let _orgFetchPromise: Promise<void> | null = null;
-let _orgFetchError: unknown = null;
-let _orgFetchResult: Organization[] | null = null;
+// Deduplicate organization discovery per authenticated user. Never share a
+// resolved organization list across identities: doing so can reuse tenant
+// context after logout/login in the same SPA session.
+const orgFetchPromises = new Map<string, Promise<Organization[]>>();
 
 const toSlug = (name: string) =>
   name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "workspace";
@@ -122,17 +122,29 @@ export const useOrganization = () => {
       return;
     }
 
-    const fetchOrCreateOrgs = async () => {
+    const userId = user.id;
+
+    const fetchOrCreateOrgs = async (): Promise<Organization[]> => {
+      let orgs = await fetchMembershipOrgs();
+
+      if (orgs.length === 0) {
+        const fallbackOrg = await ensurePersonalTenant();
+        orgs = fallbackOrg ? [fallbackOrg] : [];
+      }
+
+      return orgs;
+    };
+
+    const resolveOrgs = async () => {
       setLoading(true);
       try {
-        let orgs = await fetchMembershipOrgs();
-
-        if (orgs.length === 0) {
-          const fallbackOrg = await ensurePersonalTenant();
-          orgs = fallbackOrg ? [fallbackOrg] : [];
+        let promise = orgFetchPromises.get(userId);
+        if (!promise) {
+          promise = fetchOrCreateOrgs();
+          orgFetchPromises.set(userId, promise);
         }
 
-        _orgFetchResult = orgs;
+        const orgs = await promise;
         if (cancelled) return;
         setOrganizations(orgs);
 
@@ -146,12 +158,11 @@ export const useOrganization = () => {
         if (nextOrgId) sessionStorage.setItem(ORG_STORAGE_KEY, nextOrgId);
         else sessionStorage.removeItem(ORG_STORAGE_KEY);
       } catch (error) {
-        _orgFetchError = error;
-        _orgFetchPromise = null;
-        // Log only once at module level, not 54 times
-        if (!_orgFetchError || _orgFetchResult === null) {
-          console.warn("[useOrganization] Could not load organization — platform running in reduced mode.");
-        }
+        orgFetchPromises.delete(userId);
+        console.warn(
+          "[useOrganization] Could not load organization — platform running in reduced mode.",
+          error instanceof Error ? error.message : error,
+        );
         if (!cancelled) {
           setOrganizations([]);
           setCurrentOrgId(null);
@@ -162,26 +173,7 @@ export const useOrganization = () => {
       }
     };
 
-    // Deduplicate: if a fetch is already in flight, wait for it
-    if (!_orgFetchPromise || _orgFetchError) {
-      _orgFetchError = null;
-      _orgFetchResult = null;
-      _orgFetchPromise = fetchOrCreateOrgs();
-    } else {
-      // Another component already started the fetch — reuse
-      _orgFetchPromise.then(() => {
-        if (!cancelled && _orgFetchResult) {
-          const stored = sessionStorage.getItem(ORG_STORAGE_KEY);
-          const valid = _orgFetchResult.find((o) => o.id === stored);
-          const nextOrgId = valid?.id ?? _orgFetchResult[0]?.id ?? null;
-          setOrganizations(_orgFetchResult);
-          setCurrentOrgId(nextOrgId);
-          setLoading(false);
-        }
-      }).catch(() => {
-        if (!cancelled) setLoading(false);
-      });
-    }
+    resolveOrgs();
 
     return () => {
       cancelled = true;
