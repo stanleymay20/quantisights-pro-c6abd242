@@ -1,4 +1,4 @@
-import { ChevronRight, Building2, FolderKanban, Database, Layers, Bell, BellRing, Check, ShieldCheck } from "lucide-react";
+import { Building2, FolderKanban, Database, Layers, Bell, BellRing, Check, ShieldCheck } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 import { useOrganization } from "@/hooks/useOrganization";
@@ -30,7 +30,7 @@ const ContextChip = ({ icon: Icon, label, fallback, onClick }: Segment) => {
             onClick={onClick}
             className={`inline-flex items-center gap-1.5 text-[12px] font-normal transition-colors max-w-[140px] truncate cursor-pointer ${
               isMissing
-                ? "text-muted-foreground/35 italic"
+                ? "text-muted-foreground italic"
                 : "text-muted-foreground hover:text-foreground hover:underline"
             }`}
           >
@@ -88,7 +88,11 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
 
   const openNotification = async (item: NotificationItem) => {
     if (!item.is_read) {
-      try { await markRead(item.id); } catch { /* surface stays usable */ }
+      try {
+        await markRead(item.id);
+      } catch {
+        // Keep the notification surface usable if marking read fails.
+      }
     }
     navigate("/decisions");
   };
@@ -100,7 +104,11 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
           className="relative inline-flex items-center justify-center h-6 w-6 rounded-md hover:bg-secondary/60 transition-colors"
           aria-label={hasUnread ? `${unreadCount} unread notifications` : "Notifications"}
         >
-          {criticalUnreadCount > 0 ? <BellRing className="w-3.5 h-3.5 text-destructive" /> : <Bell className="w-3.5 h-3.5 text-muted-foreground" />}
+          {criticalUnreadCount > 0 ? (
+            <BellRing className="w-3.5 h-3.5 text-destructive" />
+          ) : (
+            <Bell className="w-3.5 h-3.5 text-muted-foreground" />
+          )}
           {hasUnread && (
             <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-destructive text-[9px] leading-[15px] text-destructive-foreground font-bold text-center shadow-sm">
               {unreadCount > 9 ? "9+" : unreadCount}
@@ -155,7 +163,9 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
                 role="button"
                 tabIndex={0}
                 onClick={() => openNotification(item)}
-                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openNotification(item); }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") openNotification(item);
+                }}
                 className={`px-3 py-3 border-b border-border/10 last:border-0 hover:bg-muted/40 transition-colors cursor-pointer ${!item.is_read ? "bg-primary/[0.03]" : ""}`}
               >
                 <div className="flex items-start gap-3">
@@ -168,7 +178,9 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
                     <p className="text-[11px] text-muted-foreground line-clamp-2">{item.message}</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <Badge variant="outline" className={`text-[10px] h-5 ${severityClass(item.severity)}`}>{item.severity}</Badge>
-                      {item.capped_confidence != null && <Badge variant="secondary" className="text-[10px] h-5">{Math.round(item.capped_confidence)}% confidence</Badge>}
+                      {item.capped_confidence != null && (
+                        <Badge variant="secondary" className="text-[10px] h-5">{Math.round(item.capped_confidence)}% confidence</Badge>
+                      )}
                       {!item.is_read && <Badge variant="secondary" className="text-[10px] h-5">Unread</Badge>}
                     </div>
                   </div>
@@ -188,7 +200,7 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
 
 const GlobalContextBar = () => {
   const location = useLocation();
-  // Dashboard page has its own notification bell in DashboardHeader — hide here to avoid duplicate
+  // Dashboard page has its own notification bell in DashboardHeader — hide here to avoid duplicate.
   const isDashboard = location.pathname === "/dashboard";
   const { currentOrg } = useOrganization();
   const { currentWorkspace } = useWorkspace();
@@ -198,13 +210,36 @@ const GlobalContextBar = () => {
 
   return (
     <div className="h-10 border-b border-border/30 bg-background hidden md:flex items-center px-4 md:px-6 gap-0.5 shrink-0 overflow-x-auto scrollbar-hide">
-      <ContextChip icon={Building2} label={currentOrg?.name?.replace(/\s+'/g, "'").replace(/'\s+/g, "'").trim() ?? null} fallback="No org" onClick={() => navigate("/settings")} />
+      <ContextChip
+        icon={Building2}
+        label={currentOrg?.name?.replace(/\s+'/g, "'").replace(/'\s+/g, "'").trim() ?? null}
+        fallback="No org"
+        onClick={() => navigate("/settings")}
+      />
       <Separator />
-      <ContextChip icon={Layers} label={currentWorkspace?.name ?? null} fallback={currentOrg ? "Set up workspace" : "No workspace"} onClick={() => navigate("/settings")} />
-      {currentProject?.name && <><Separator /><ContextChip icon={FolderKanban} label={currentProject.name} fallback={null} onClick={() => navigate("/settings")} /></>}
-      {activeDataset?.name && <><Separator /><ContextChip icon={Database} label={activeDataset.name} fallback={null} onClick={() => navigate("/data-upload")} /></>}
+      <ContextChip
+        icon={Layers}
+        label={currentWorkspace?.name ?? null}
+        fallback={currentOrg ? "Set up workspace" : "No workspace"}
+        onClick={() => navigate("/settings")}
+      />
+      {currentProject?.name && (
+        <>
+          <Separator />
+          <ContextChip icon={FolderKanban} label={currentProject.name} fallback={null} onClick={() => navigate("/settings")} />
+        </>
+      )}
+      {activeDataset?.name && (
+        <>
+          <Separator />
+          <ContextChip icon={Database} label={activeDataset.name} fallback={null} onClick={() => navigate("/data-upload")} />
+        </>
+      )}
       {!currentProject?.name && !activeDataset?.name && (
-        <><Separator /><span className="text-[11px] text-muted-foreground/50 italic px-1">Decision context</span></>
+        <>
+          <Separator />
+          <span className="text-[11px] text-muted-foreground italic px-1">Decision context</span>
+        </>
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
         {!isDashboard && (
