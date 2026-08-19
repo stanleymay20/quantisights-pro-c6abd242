@@ -11,12 +11,18 @@
 }
 
 html:not(.dark) {
-  /* #15803d-equivalent: AA-safe when success is used as text on light cards. */
+  /* Semantic colours that are used as text need AA contrast on light cards.
+     Keep brighter variants for fills/charts elsewhere; these text-facing
+     aliases are deliberately deeper. */
   --success: 142 72% 29%;
   --status-success: 142 72% 29%;
   --decision-approve: 142 72% 29%;
   --evidence-high-confidence: 142 72% 29%;
   --governance-compliance: 142 72% 29%;
+  --status-warning: 32 95% 30%;
+  --decision-needs-review: 32 95% 30%;
+  --evidence-medium-confidence: 32 95% 30%;
+  --status-info: 199 89% 34%;
 }
 
 /* The original dark primary (#2663f2-equivalent) was only ~3.5:1 against the
@@ -37,6 +43,20 @@ html.dark {
    including Sign Out, remain physically reachable. */
 .sidebar-nav {
   min-height: 0;
+}
+
+/* Pricing uses staggered Framer Motion entrance transforms. Its copy should not
+   temporarily become low-contrast/invisible while the page is already
+   interactive and being read by assistive tooling. Preserve the spatial motion
+   but keep text-bearing containers fully opaque throughout the entrance. */
+.pt-32.pb-16 [style*="opacity:"] {
+  opacity: 1 !important;
+}
+
+/* The illustrative homepage ledger rotates its rows. Do not dim readable text
+   during the swap; movement/state can change without lowering contrast. */
+.qv-page .qv-ledger [style*="opacity:"] {
+  opacity: 1 !important;
 }
 
 /* Tailwind alpha utilities below were used on 10–11px copy. The base muted
@@ -64,12 +84,26 @@ html.dark {
   background-color: hsl(var(--brand-marketing-accent)) !important;
 }
 
-/* Low-alpha white text on the dark marketing surfaces was below AA. */
+/* Low-alpha white text on dark marketing surfaces was below AA. Index.tsx has
+   historically used both spaced and compact rgba() serialization, so cover
+   both forms rather than depending on browser/style-string formatting. */
 .qv-page [style*="color: rgba(255, 255, 255, 0.4)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.45)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.55)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.6)"],
 .qv-page [style*="color: rgba(255, 255, 255, 0.62)"],
-.qv-page [style*="color: rgba(255, 255, 255, 0.65)"] {
-  color: rgba(255, 255, 255, 0.82) !important;
+.qv-page [style*="color: rgba(255, 255, 255, 0.65)"],
+.qv-page [style*="color: rgba(255,255,255,0.4)"],
+.qv-page [style*="color: rgba(255,255,255,0.45)"],
+.qv-page [style*="color: rgba(255,255,255,0.55)"],
+.qv-page [style*="color: rgba(255,255,255,0.6)"],
+.qv-page [style*="color: rgba(255,255,255,0.62)"],
+.qv-page [style*="color: rgba(255,255,255,0.65)"] {
+  color: rgba(255, 255, 255, 0.86) !important;
+}
+
+/* A few homepage comparison labels intentionally used one-third-opacity navy.
+   That is decorative styling applied to real text, so restore readable slate. */
+.qv-page [style*="brand-executive-navy) / 0.333"] {
+  color: hsl(var(--brand-marketing-slate)) !important;
 }
