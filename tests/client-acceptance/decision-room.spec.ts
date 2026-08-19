@@ -68,7 +68,7 @@ for (const tier of ["starter", "growth", "enterprise"] as const) {
     await expect(decisionVisual).toBeVisible();
     await expect(decisionVisual.getByRole("heading", { name: "Decision Visual" })).toBeVisible();
     await expect(decisionVisual.getByText("Auto-selected")).toBeVisible();
-    await expect(decisionVisual.getByText(/Predicted net impact/i)).toBeVisible();
+    await expect(decisionVisual.getByText("Predicted net impact", { exact: true })).toBeVisible();
     await expect(decisionVisual.getByText(/€42,000/)).toBeVisible();
     await expect(decisionVisual.getByText(/ROI probability/i)).toBeVisible();
     await expect(decisionVisual.getByText(/68%/)).toBeVisible();
