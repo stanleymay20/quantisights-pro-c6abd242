@@ -40,15 +40,26 @@ async function cleanupPartial() {
   }
 }
 
+async function resolveSignupOrganization(userId) {
+  // auth.admin.createUser exercises the same database trigger as a real signup.
+  // The trigger creates the user's canonical organization, profile and owner
+  // membership synchronously. Reuse that organization instead of manufacturing
+  // a second tenant that the application would not select as the profile org.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const { data: profile, error } = await sb
+      .from("profiles")
+      .select("organization_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw new Error(`Resolve signup profile: ${error.message}`);
+    if (profile?.organization_id) return profile.organization_id;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Signup trigger did not create a canonical organization for the client-acceptance user");
+}
+
 try {
   for (const tier of tiers) {
-    const { data: org, error: orgError } = await sb
-      .from("organizations")
-      .insert({ name: `Client Acceptance ${tier} ${runTag}`, industry: "client-acceptance" })
-      .select("id")
-      .single();
-    if (orgError || !org?.id) throw new Error(`Create ${tier} org: ${orgError?.message || "no id"}`);
-
     const password = randomBytes(18).toString("base64url") + "!Aa7";
     const email = `${runTag}-${tier}@quantivis.test`;
     const { data: userData, error: userError } = await sb.auth.admin.createUser({
@@ -60,21 +71,34 @@ try {
     if (userError || !userData?.user?.id) throw new Error(`Create ${tier} user: ${userError?.message || "no id"}`);
     const userId = userData.user.id;
 
-    state.customers[tier] = { tier, org_id: org.id, user_id: userId, email, password };
+    state.customers[tier] = { tier, user_id: userId, email, password };
     persist();
 
-    const { error: memberError } = await sb.from("organization_members").insert({
-      organization_id: org.id,
-      user_id: userId,
-      role: "admin",
-    });
-    if (memberError) throw new Error(`Create ${tier} membership: ${memberError.message}`);
+    const orgId = await resolveSignupOrganization(userId);
+    state.customers[tier].org_id = orgId;
+    persist();
+
+    const { error: orgError } = await sb
+      .from("organizations")
+      .update({ name: `Client Acceptance ${tier} ${runTag}`, industry: "client-acceptance" })
+      .eq("id", orgId);
+    if (orgError) throw new Error(`Prepare ${tier} org: ${orgError.message}`);
+
+    const { data: membership, error: membershipError } = await sb
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", orgId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (membershipError || !membership) {
+      throw new Error(`Verify ${tier} signup membership: ${membershipError?.message || "missing membership"}`);
+    }
 
     // These fixtures model paying customers, not evaluation pilots. Using a
     // pilot_* subscription id would make useSubscription() set isPilot=true and
     // would silently test the wrong pricing/upgrade experience.
     const { error: subscriptionError } = await sb.from("subscriptions").insert({
-      organization_id: org.id,
+      organization_id: orgId,
       stripe_customer_id: `client_acceptance_${runTag}_${tier}`,
       stripe_subscription_id: `client_acceptance_paid_${runTag}_${tier}`,
       tier,
@@ -87,7 +111,7 @@ try {
     const { data: decision, error: decisionError } = await sb
       .from("decision_ledger")
       .insert({
-        organization_id: org.id,
+        organization_id: orgId,
         recommended_action: `Renegotiate the primary supplier agreement for ${tier}`,
         decision_type: "operational",
         decision_status: "pending",
@@ -150,7 +174,7 @@ try {
   }
 
   persist();
-  console.log(`Seeded disposable paid client-acceptance customers for ${tiers.join(", ")}.`);
+  console.log(`Seeded disposable paid client-acceptance customers for ${tiers.join(", ")} using their canonical signup organizations.`);
 } catch (error) {
   persist();
   await cleanupPartial();
