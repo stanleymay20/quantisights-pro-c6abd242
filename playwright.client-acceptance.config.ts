@@ -12,6 +12,10 @@ export default defineConfig({
     baseURL: process.env.CLIENT_ACCEPTANCE_BASE_URL || process.env.E2E_BASE_URL || "http://127.0.0.1:4173",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // Accessibility assertions must inspect the settled UI, not intermediate
+    // Framer Motion opacity frames whose transient blending produces
+    // nondeterministic color-contrast findings across browsers and retries.
+    reducedMotion: "reduce",
   },
   projects: [
     {
