@@ -9,6 +9,8 @@ const clientAcceptancePlaywright = readFileSync(resolve(root, "playwright.client
 const gaReadiness = readFileSync(resolve(root, ".github/workflows/ga-readiness.yml"), "utf8");
 const staging = readFileSync(resolve(root, ".github/workflows/deploy-supabase-staging.yml"), "utf8");
 const production = readFileSync(resolve(root, ".github/workflows/deploy-edge-functions.yml"), "utf8");
+const viteConfig = readFileSync(resolve(root, "vite.config.ts"), "utf8");
+const liveReleaseVerifier = readFileSync(resolve(root, "scripts/verify-live-release-provenance.mjs"), "utf8");
 
 describe("release certification chain", () => {
   it("publishes run-scoped tenant-isolation proof for the exact staged SHA", () => {
@@ -82,11 +84,32 @@ describe("release certification chain", () => {
     expect(production).toContain('select(.head_sha == $sha)');
   });
 
+  it("emits immutable frontend provenance and verifies it before any production mutation", () => {
+    expect(viteConfig).toContain('fileName: "release.json"');
+    expect(viteConfig).toContain("JSON.stringify(releaseMetadata");
+    expect(liveReleaseVerifier).toContain("https://www.quantivis.io/release.json");
+    expect(liveReleaseVerifier).toContain("liveSha.toLowerCase() !== expectedSha.toLowerCase()");
+
+    const releaseGate = production.indexOf("Run full production release gate");
+    const liveFrontend = production.indexOf("Verify certified frontend is live before production mutation");
+    const migrationPreview = production.indexOf("Preview production migrations");
+    const liveSecurity = production.indexOf("Verify live GA security baseline");
+    const reverifyFrontend = production.indexOf("Re-verify live frontend release provenance");
+
+    expect(liveFrontend).toBeGreaterThan(releaseGate);
+    expect(migrationPreview).toBeGreaterThan(liveFrontend);
+    expect(reverifyFrontend).toBeGreaterThan(liveSecurity);
+    expect(production).toContain("EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}");
+    expect(production).toContain("node scripts/verify-live-release-provenance.mjs");
+  });
+
   it("routes client-experience and release-pipeline changes through staging on main only", () => {
     expect(staging).toContain("branches: [main]");
     expect(staging).not.toContain("agent/fix-staging-edge-imports");
     expect(staging).toContain('"tests/client-acceptance/**"');
     expect(staging).toContain('"playwright.client-acceptance.config.ts"');
+    expect(staging).toContain('"vite.config.ts"');
+    expect(staging).toContain('"scripts/verify-live-release-provenance.mjs"');
     expect(staging).toContain('"src/pages/Register.tsx"');
     expect(staging).toContain('"src/components/layout/**"');
     expect(staging).toContain('"src/routes/**"');
