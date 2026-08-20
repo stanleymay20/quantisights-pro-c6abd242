@@ -30,6 +30,7 @@ on:
       - "src/components/auth/RouteEntitlement.tsx"
       - "src/components/decisions/**"
       - "src/components/landing/**"
+      - "src/components/layout/**"
       - "src/routes/**"
       - "supabase/migrations/**"
       - "supabase/config.toml"
