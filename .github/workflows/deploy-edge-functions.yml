@@ -6,7 +6,8 @@ name: Deploy Supabase Production
 # The requested release SHA must match the run-scoped proof artifact from a
 # successful GA Readiness run. That proof must carry successful client-
 # acceptance and tenant-isolation provenance for the same immutable SHA before
-# any production database or Edge mutation.
+# any production database or Edge mutation. The live frontend must also expose
+# release.json proving that the hosted client is the same certified SHA.
 
 on:
   workflow_dispatch:
@@ -186,6 +187,11 @@ jobs:
       - name: Run full production release gate
         run: npm run release-gate
 
+      - name: Verify certified frontend is live before production mutation
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: node scripts/verify-live-release-provenance.mjs
+
       - name: Build supplier-risk Edge runtime bundle
         run: node scripts/build-supplier-risk-edge-runtime.mjs
 
@@ -214,3 +220,8 @@ jobs:
 
       - name: Verify live GA security baseline
         run: node scripts/verify-live-ga-security.mjs
+
+      - name: Re-verify live frontend release provenance
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: node scripts/verify-live-release-provenance.mjs
