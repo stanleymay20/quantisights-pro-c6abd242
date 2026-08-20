@@ -88,6 +88,7 @@ describe("release certification chain", () => {
     expect(staging).toContain('"tests/client-acceptance/**"');
     expect(staging).toContain('"playwright.client-acceptance.config.ts"');
     expect(staging).toContain('"src/pages/Register.tsx"');
+    expect(staging).toContain('"src/components/layout/**"');
     expect(staging).toContain('"src/routes/**"');
     expect(staging).toContain('".github/workflows/client-acceptance.yml"');
     expect(staging).toContain('".github/workflows/ga-staging-validation.yml"');
