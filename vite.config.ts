@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { execFileSync } from "node:child_process";
@@ -45,6 +45,17 @@ const releaseMetadata = {
   migrationVersion: "20260813124440",
 };
 
+const releaseProvenancePlugin = (): Plugin => ({
+  name: "quantivis-release-provenance",
+  generateBundle() {
+    this.emitFile({
+      type: "asset",
+      fileName: "release.json",
+      source: `${JSON.stringify(releaseMetadata, null, 2)}\n`,
+    });
+  },
+});
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, "VITE_");
@@ -63,7 +74,7 @@ export default defineConfig(({ mode }) => {
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [releaseProvenancePlugin(), react(), mode === "development" && componentTagger()].filter(Boolean),
   define: {
     __QUANTIVIS_RELEASE__: JSON.stringify(releaseMetadata),
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(publicClientConfig.supabaseUrl),
