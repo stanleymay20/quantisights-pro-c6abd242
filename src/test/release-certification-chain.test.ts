@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+// Changes to this regression surface intentionally force the exact-SHA staging certification chain.
 const root = resolve(__dirname, "../..");
 const gaStaging = readFileSync(resolve(root, ".github/workflows/ga-staging-validation.yml"), "utf8");
 const clientAcceptance = readFileSync(resolve(root, ".github/workflows/client-acceptance.yml"), "utf8");
