@@ -8,9 +8,11 @@ const ci = readFileSync(
 );
 
 describe("privileged Edge CI coverage", () => {
-  it("Deno-checks security-sensitive data, account, and decision-value functions", () => {
+  it("Deno-checks security-sensitive data, account, ingestion, and decision-value functions", () => {
     for (const path of [
       "supabase/functions/delete-account/index.ts",
+      "supabase/functions/ingest-csv-pipeline/index.ts",
+      "supabase/functions/connector-rest-sync/index.ts",
       "supabase/functions/connector-bigquery-pull/index.ts",
       "supabase/functions/connector-snowflake-pull/index.ts",
       "supabase/functions/connector-s3-pull/index.ts",
