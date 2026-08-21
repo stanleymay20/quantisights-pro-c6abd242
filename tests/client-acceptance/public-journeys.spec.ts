@@ -106,7 +106,7 @@ test("homepage demo request creates a real staging lead and confirms success", a
   await page.getByLabel(/Work email/i).fill(leadEmail);
   await page.getByLabel(/Company/i).fill("Quantivis Acceptance Test");
   await page.getByLabel(/What are you trying to govern/i).fill(`Automated client acceptance ${state.run_tag}`);
-  await page.getByRole("button", { name: /Request a Demo/i }).click();
+  await page.getByRole("button", { name: /Request a working session/i }).click();
   await expect(page.locator("body")).toContainText(/Request received/i, { timeout: 15_000 });
   await expect(page.locator("body")).not.toContainText(/Something went wrong/i);
 });
