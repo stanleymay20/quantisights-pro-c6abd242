@@ -648,9 +648,9 @@ const DataUpload = () => {
       // ═══════════════════════════════════════════════════════
 
       // Create pipeline run for observability
-      const { data: pipelineRun } = await supabase.from("pipeline_runs").insert({
+      const { data: pipelineRun, error: pipelineErr } = await supabase.from("pipeline_runs").insert({
         organization_id: currentOrgId,
-        workspace_id: currentWorkspaceId || null,
+        workspace_id: currentWorkspaceId,
         dataset_id: dataset.id,
         run_type: "full",
         status: "running",
@@ -658,7 +658,10 @@ const DataUpload = () => {
         metadata: { import_mode: importMode, file_name: file.name },
       }).select("id").single();
 
-      pipelineRunId = pipelineRun?.id ?? null;
+      // An import must not claim pipeline observability it does not have.
+      if (pipelineErr || !pipelineRun) throw pipelineErr ?? new Error("Pipeline run creation returned no row");
+      pipelineRunId = pipelineRun.id;
+
 
       // Build raw records from parsed rows
       const rawRecords: Array<{
