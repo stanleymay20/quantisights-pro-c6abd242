@@ -30,8 +30,8 @@ describe("governed outbound execution idempotency", () => {
   it("claims the receipt atomically and treats uniqueness collisions as replay/conflict", () => {
     expect(helperSource).toContain('.from("execution_action_receipts")');
     expect(helperSource).toContain('if (insertError?.code !== "23505") throw insertError');
-    expect(helperSource).toContain('return { kind: "replay", receipt }');
-    expect(helperSource).toContain('return { kind: "conflict", receipt }');
+    expect(helperSource).toContain('? { kind: "replay", receipt }');
+    expect(helperSource).toContain(': { kind: "conflict", receipt }');
     expect(helperSource).toContain('.eq("status", "claimed")');
   });
 
