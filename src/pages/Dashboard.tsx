@@ -14,7 +14,6 @@ import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
-import CopilotHome from "@/components/dashboard/CopilotHome";
 import ExecutiveDailyDriver from "@/components/dashboard/ExecutiveDailyDriver";
 import WelcomeFlow from "@/components/dashboard/WelcomeFlow";
 import DemoBanner from "@/components/dashboard/DemoBanner";
@@ -26,7 +25,7 @@ const Dashboard = () => {
   const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();
   const { activeDatasetId, loading: projectLoading } = useProject();
 
-  // ── FAST PATH: server-aggregated summaries (~20 rows) instead of full metrics (~3K+ rows) ──
+  // FAST PATH: server-aggregated summaries (~20 rows) instead of full metrics (~3K+ rows).
   const {
     topMetrics, hasData, loading: metricsLoading,
   } = useMetricsSummary(currentOrgId, activeDatasetId);
@@ -35,21 +34,17 @@ const Dashboard = () => {
   const navigate = useNavigate();
 
   const rawEmailPrefix = user?.email?.split("@")[0] ?? "";
-  // Capitalise the email prefix as a last-resort fallback
   const formattedEmailName = rawEmailPrefix
     .split(/[._-]/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-  // Prefer the user's actual full_name from the profiles table over auth metadata,
-  // which can contain the org/account name instead of the user's real name.
   const displayName = profile?.full_name || formattedEmailName || "User";
   const isDemoUser = Boolean(user?.user_metadata?.is_demo);
 
   const [pendingDecisions, setPendingDecisions] = useState(0);
-  const [calibrationScore, setCalibrationScore] = useState<number | null>(null);
   const decisionSyncRef = useRef<Set<string>>(new Set());
 
-  // Onboarding redirect — cached in sessionStorage to avoid repeated DB hits
+  // Onboarding redirect — cached in sessionStorage to avoid repeated DB hits.
   useEffect(() => {
     if (orgLoading || !currentOrgId) return;
     const cacheKey = `onboarding_checked_${currentOrgId}`;
@@ -63,7 +58,7 @@ const Dashboard = () => {
           .eq("id", currentOrgId)
           .maybeSingle();
         if (error) {
-          // Non-blocking — default to showing dashboard
+          // Non-blocking — default to showing dashboard rather than creating a redirect loop.
           console.warn("[Dashboard] Onboarding check failed:", error.message);
           sessionStorage.setItem(cacheKey, "done");
           return;
@@ -73,46 +68,43 @@ const Dashboard = () => {
         } else {
           sessionStorage.setItem(cacheKey, "done");
         }
-      } catch (e) {
-        // Fail open — show dashboard rather than redirect loop
-        console.warn("[Dashboard] Onboarding check threw:", e);
+      } catch (error) {
+        console.warn("[Dashboard] Onboarding check threw:", error);
         sessionStorage.setItem(cacheKey, "done");
       }
     };
-    checkOnboarding();
+    void checkOnboarding();
   }, [currentOrgId, orgLoading, navigate]);
 
+  // Keep the home request path lean: the executive driver does not consume
+  // calibration_models, so dashboard load should only fetch the decision count it renders.
   const refreshDecisionStats = useCallback(async () => {
-    if (!currentOrgId) return;
+    if (!currentOrgId) {
+      setPendingDecisions(0);
+      return;
+    }
 
-    const [decisionRes, calRes] = await Promise.all([
-      supabase.from("decision_ledger")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", currentOrgId)
-        .eq("execution_status", "not_started")
-        .eq("is_suppressed", false),
-      supabase.from("calibration_models")
-        .select("overall_calibration_score")
-        .eq("organization_id", currentOrgId)
-        .order("computed_at", { ascending: false })
-        .limit(1),
-    ]);
+    const { count, error } = await supabase
+      .from("decision_ledger")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", currentOrgId)
+      .eq("execution_status", "not_started")
+      .eq("is_suppressed", false);
 
-    setPendingDecisions(decisionRes.count || 0);
-    setCalibrationScore(calRes.data?.[0]?.overall_calibration_score ?? null);
+    if (error) {
+      console.warn("[Dashboard] Pending-decision count failed:", error.message);
+      return;
+    }
+    setPendingDecisions(count ?? 0);
   }, [currentOrgId]);
 
-  // Fetch pending decisions & calibration — parallel, lightweight queries
   useEffect(() => {
-    if (!currentOrgId) return;
-    refreshDecisionStats();
-  }, [currentOrgId, activeDatasetId, refreshDecisionStats]);
+    void refreshDecisionStats();
+  }, [activeDatasetId, refreshDecisionStats]);
 
-  // Memoize expensive insight filtering
   const criticalInsights = useMemo(() => filterCriticalInsights(insights), [insights]);
 
-  // Close the intelligence → decision gap: once high/critical insights exist,
-  // invoke the unified converter so the Decision Queue becomes the durable source of truth.
+  // Close the intelligence → decision gap once per meaningful insight set.
   useEffect(() => {
     if (!currentOrgId || !activeDatasetId || insightsLoading) return;
     if (criticalInsights.length === 0) return;
@@ -137,7 +129,6 @@ const Dashboard = () => {
   const showWelcomeFlow = !isDemoUser && !isContextLoading;
   const showEmptyState = !hasData && !isLoading && !isDemoHydrating;
 
-  // Demo session cleanup
   useEffect(() => {
     if (isDemoUser && hasData) sessionStorage.removeItem("quantivis_demo_mode");
     if (!isDemoUser) sessionStorage.removeItem("quantivis_demo_mode");
@@ -164,21 +155,21 @@ const Dashboard = () => {
 
       <main id="main-content" className="flex-1 overflow-auto">
         <div className="p-4 sm:p-6 md:p-8">
-        {(isLoading || isDemoHydrating) && !hasData ? (
-          <DashboardSkeleton />
-        ) : showEmptyState ? (
-          <DashboardEmptyState />
-        ) : (
-          <SectionErrorBoundary sectionName="Dashboard">
-            <ExecutiveDailyDriver
-              displayName={displayName}
-              orgId={currentOrgId ?? null}
-              insights={insights}
-              topMetrics={topMetrics ?? []}
-              pendingDecisions={pendingDecisions}
-            />
-          </SectionErrorBoundary>
-        )}
+          {(isLoading || isDemoHydrating) && !hasData ? (
+            <DashboardSkeleton />
+          ) : showEmptyState ? (
+            <DashboardEmptyState />
+          ) : (
+            <SectionErrorBoundary sectionName="Dashboard">
+              <ExecutiveDailyDriver
+                displayName={displayName}
+                orgId={currentOrgId ?? null}
+                insights={insights}
+                topMetrics={topMetrics ?? []}
+                pendingDecisions={pendingDecisions}
+              />
+            </SectionErrorBoundary>
+          )}
         </div>
       </main>
     </>
