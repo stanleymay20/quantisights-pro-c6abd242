@@ -1,17 +1,9 @@
 /**
  * ingest-csv-pipeline — server-side CSV ingestion via the unified pipeline.
  *
- * Strangler-pattern entry point: the existing client-side CSV path keeps
- * working. New callers (admin UI, scheduled connectors with csv_upload type,
- * external pipelines) post a CSV body or storage path here and receive a
- * sync_run_id they can poll for status.
- *
  * Body:
  *   { connector_id: uuid, csv_text?: string, request_id?: string,
  *     dry_run?: boolean }
- *
- * Returns: { sync_run_id, status, rows_extracted, rows_valid, rows_invalid,
- *            rows_inserted, dry_run_summary? }
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -50,17 +42,12 @@ interface CsvRequestBody {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const log = createLogger("ingest-csv-pipeline", req);
-
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return jsonResponse(401, { error: "Missing Authorization" });
-    }
+    if (!authHeader) return jsonResponse(401, { error: "Missing Authorization" });
 
     const userClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -68,15 +55,12 @@ Deno.serve(async (req: Request) => {
       { global: { headers: { Authorization: authHeader } } },
     ) as any;
     const { data: userData, error: userErr } = await userClient.auth.getUser();
-    if (userErr || !userData?.user) {
-      return jsonResponse(401, { error: "Invalid auth" });
-    }
+    if (userErr || !userData?.user) return jsonResponse(401, { error: "Invalid auth" });
     log.setUser(userData.user.id);
 
     const { body, error: parseErr } = await parseJsonBody(req);
     if (parseErr) return jsonResponse(400, { error: parseErr });
     const payload = body as CsvRequestBody;
-
     if (!payload?.connector_id || typeof payload.connector_id !== "string") {
       return jsonResponse(400, { error: "connector_id required" });
     }
@@ -88,54 +72,38 @@ Deno.serve(async (req: Request) => {
     }
 
     const svc = makeServiceClient();
-
-    // Load connector + verify membership + role
     const { data: connectorRow, error: cErr } = await svc
       .from("data_connectors")
       .select("id,organization_id,dataset_id,name,connector_type,cursor_field,status")
       .eq("id", payload.connector_id)
       .maybeSingle();
+    if (cErr || !connectorRow) return jsonResponse(404, { error: "Connector not found" });
 
-    if (cErr || !connectorRow) {
-      return jsonResponse(404, { error: "Connector not found" });
-    }
     const connector = connectorRow as PipelineConnector & { status: string };
     log.setOrg(connector.organization_id);
-
-    // Membership + elevated role check
     const { data: roleCheck } = await svc.rpc("exec_require_elevated_role", {
       _user_id: userData.user.id,
       _org_id: connector.organization_id,
     });
-    if (!roleCheck) {
-      return jsonResponse(403, { error: "Admin or owner role required" });
-    }
+    if (!roleCheck) return jsonResponse(403, { error: "Admin or owner role required" });
+    if (!connector.dataset_id) return jsonResponse(400, { error: "Connector has no linked dataset" });
 
-    if (!connector.dataset_id) {
-      return jsonResponse(400, { error: "Connector has no linked dataset" });
-    }
-
-    // Load active mapping
-    const { data: mappingRow } = await svc
+    const { data: mappingRow, error: mappingError } = await svc
       .from("connector_field_mappings")
       .select("mappings")
       .eq("connector_id", connector.id)
       .eq("is_active", true)
       .maybeSingle();
-    const mappings = (mappingRow as { mappings?: Record<string, FieldMapping> } | null)
-      ?.mappings ?? {};
-
+    if (mappingError) return jsonResponse(500, { error: "Failed to load connector mapping" });
+    const mappings = (mappingRow as { mappings?: Record<string, FieldMapping> } | null)?.mappings ?? {};
     if (Object.keys(mappings).length === 0 && !payload.dry_run) {
       return jsonResponse(400, {
-        error:
-          "No active field mapping for this connector. Configure mappings or run with dry_run=true.",
+        error: "No active field mapping for this connector. Configure mappings or run with dry_run=true.",
       });
     }
 
-    // Parse CSV up-front so dry-run can return preview without creating a run
     const parsed = parseCsv(payload.csv_text);
     log.info("csv parsed", { headers: parsed.headers.length, rows: parsed.rows.length });
-
     if (payload.dry_run) {
       const transform = transformWithMappings(
         parsed.rows.slice(0, 50).map((r, i) => ({ raw: r, index: i })),
@@ -152,60 +120,38 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Idempotency
     const requestId = payload.request_id ?? crypto.randomUUID();
     const existing = await findExistingRun(svc, connector.id, requestId);
     if (existing) {
-      return jsonResponse(200, {
-        sync_run_id: existing.id,
-        status: existing.status,
-        replayed: true,
-      });
+      return jsonResponse(200, { sync_run_id: existing.id, status: existing.status, replayed: true });
     }
 
-    // Create run
     const startedAt = Date.now();
     const runId = await createRun(svc, connector, requestId, "manual");
-    const ctx: RunContext = {
-      connector,
-      runId,
-      requestId,
-      triggeredBy: "manual",
-      mappings,
-    };
+    const ctx: RunContext = { connector, runId, requestId, triggeredBy: "manual", mappings };
     const stageTimings: Record<string, number> = {};
 
     try {
-      // Stage: extracting
       let t = Date.now();
       await setStage(svc, runId, "extracting", "extracting");
       const rows = parsed.rows.map((r, i) => ({ raw: r, index: i }));
       stageTimings.extracting = Date.now() - t;
-      await recordLineage(svc, ctx, "extract", rows.length, {
-        headers: parsed.headers,
-      });
+      await recordLineage(svc, ctx, "extract", rows.length, { headers: parsed.headers });
 
-      // Stage: validating + transforming
       t = Date.now();
       await setStage(svc, runId, "validating", "validating");
       const { valid, invalid } = transformWithMappings(rows, mappings, connector.name);
       stageTimings.validating = Date.now() - t;
-      await recordLineage(svc, ctx, "validate", valid.length, {
-        invalid: invalid.length,
-      });
-
-      // Persist invalid rows as errors (cap at 500 for performance)
+      await recordLineage(svc, ctx, "validate", valid.length, { invalid: invalid.length });
       for (const inv of invalid.slice(0, 500)) {
         await recordError(svc, ctx, "validation", inv.reason, inv.index, inv.raw);
       }
 
-      // Stage: persist raw records
       t = Date.now();
       await setStage(svc, runId, "extracted", "extracted");
       await persistRawRecords(svc, ctx, rows);
       stageTimings.persist_raw = Date.now() - t;
 
-      // Stage: transforming → metrics
       t = Date.now();
       await setStage(svc, runId, "transforming", "transforming");
       const { inserted, errors: insertErrors } = await insertMetrics(svc, ctx, valid);
@@ -213,18 +159,25 @@ Deno.serve(async (req: Request) => {
       for (const err of insertErrors.slice(0, 500)) {
         await recordError(svc, ctx, "insert", err.reason, err.index);
       }
-      await recordLineage(svc, ctx, "transform", inserted, {
-        insert_errors: insertErrors.length,
-      });
+      await recordLineage(svc, ctx, "transform", inserted, { insert_errors: insertErrors.length });
 
-      // Stage: aggregating
       t = Date.now();
       await setStage(svc, runId, "aggregating", "aggregating");
-      await refreshAggregates(svc, ctx);
+      const aggregateResult = await refreshAggregates(svc, ctx);
       stageTimings.aggregating = Date.now() - t;
-      await recordLineage(svc, ctx, "aggregate", inserted);
+      await recordLineage(svc, ctx, "aggregate", inserted, {
+        ok: aggregateResult.ok,
+        errors: aggregateResult.errors,
+      });
 
-      // Finalize
+      const issues: string[] = [];
+      if (invalid.length || insertErrors.length) {
+        issues.push(`${invalid.length} validation + ${insertErrors.length} insert errors`);
+      }
+      if (!aggregateResult.ok) {
+        issues.push(`aggregation degraded: ${aggregateResult.errors.join("; ")}`);
+      }
+
       const result = await finalizeRun(
         svc,
         ctx,
@@ -237,18 +190,16 @@ Deno.serve(async (req: Request) => {
           rows_skipped: 0,
         },
         stageTimings,
-        invalid.length + insertErrors.length > 0
-          ? `${invalid.length} validation + ${insertErrors.length} insert errors`
-          : undefined,
+        issues.length ? issues.join(" | ") : undefined,
       );
 
       log.info("ingest complete", {
         runId,
         status: result.status,
         rows_inserted: result.rows_inserted,
+        aggregate_ok: aggregateResult.ok,
       });
-
-      return jsonResponse(200, { sync_run_id: runId, ...result });
+      return jsonResponse(200, { sync_run_id: runId, aggregate_ok: aggregateResult.ok, ...result });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log.error("pipeline error", { runId, error: msg });
