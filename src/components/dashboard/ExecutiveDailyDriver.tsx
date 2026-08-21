@@ -30,6 +30,7 @@ interface DecisionValueAttribution {
 interface Props {
   displayName: string;
   orgId: string | null;
+  datasetId: string | null;
   insights: Insight[];
   topMetrics: MetricTypeSummary[];
   pendingDecisions: number;
@@ -101,6 +102,7 @@ function valueLabel(attribution?: DecisionValueAttribution) {
 export default function ExecutiveDailyDriver({
   displayName,
   orgId,
+  datasetId,
   insights,
   topMetrics,
   pendingDecisions,
@@ -117,7 +119,7 @@ export default function ExecutiveDailyDriver({
   const [attributions, setAttributions] = useState<Record<string, DecisionValueAttribution>>({});
 
   useEffect(() => {
-    if (!orgId) {
+    if (!orgId || !datasetId) {
       setDecisions([]);
       setAttributions({});
       return;
@@ -129,6 +131,7 @@ export default function ExecutiveDailyDriver({
         .from("decision_ledger")
         .select("id,recommended_action,decision_type,capped_confidence,created_at")
         .eq("organization_id", orgId)
+        .eq("dataset_id", datasetId)
         .eq("is_suppressed", false)
         .in("decision_status", ["pending", "active"])
         .order("created_at", { ascending: false })
@@ -158,8 +161,6 @@ export default function ExecutiveDailyDriver({
 
       if (cancelled) return;
       if (valueError) {
-        // Value attribution is additive. The decision queue remains usable if
-        // the migration has not reached an environment yet.
         console.warn("[ExecutiveDailyDriver] decision value unavailable", valueError);
         setAttributions({});
         return;
@@ -174,7 +175,7 @@ export default function ExecutiveDailyDriver({
 
     void load();
     return () => { cancelled = true; };
-  }, [orgId]);
+  }, [datasetId, orgId]);
 
   const criticalInterventions = useMemo(
     () => interventions.filter((item) => !item.resolved_at && item.escalation_tier === "critical"),
@@ -244,7 +245,7 @@ export default function ExecutiveDailyDriver({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => navigate(firstDecision ? "/decisions?review=top" : "/executive-brief")}> 
+            <Button onClick={() => navigate(firstDecision ? "/decisions?review=top" : "/executive-brief")}>
               {firstDecision ? "Review top decision" : "Open executive brief"}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
