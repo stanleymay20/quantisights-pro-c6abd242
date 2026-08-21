@@ -16,6 +16,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/event-stream/index.ts",
       "supabase/functions/ingest-csv-pipeline/index.ts",
       "supabase/functions/connector-rest-sync/index.ts",
+      "supabase/functions/connector-sheets-pull/index.ts",
       "supabase/functions/connector-bigquery-pull/index.ts",
       "supabase/functions/connector-snowflake-pull/index.ts",
       "supabase/functions/connector-s3-pull/index.ts",
