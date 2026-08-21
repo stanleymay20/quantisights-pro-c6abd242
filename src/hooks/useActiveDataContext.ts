@@ -12,17 +12,21 @@ import { useDataset } from "@/contexts/DatasetContext";
  */
 export const useActiveDataContext = () => {
   const { currentOrgId, currentOrg, loading: orgLoading } = useOrganization();
-  const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();
-  const { currentProject, currentProjectId, activeDatasetId, loading: projectLoading } = useProject();
-  const { activeDataset, loading: datasetLoading } = useDataset();
+  const { currentWorkspaceId, currentWorkspace, loading: workspaceLoading } = useWorkspace();
+  const { currentProject, currentProjectId, loading: projectLoading } = useProject();
+  const { activeDataset, activeDatasetId, loading: datasetLoading } = useDataset();
 
-  // Any one of these still resolving means hasOrg/hasProject/hasDataset
-  // below could be false negatives, not a real "no data" state. Consumers
-  // like DatasetRequired must check this before showing an empty state —
-  // without it, a real user with real data sees a false "needs data to
-  // work" / "connect your data" flash on every cold navigation, simply
-  // because the org/project/dataset queries hadn't resolved yet.
   const contextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
+  const hasOrg = !!currentOrgId;
+  const hasWorkspace = !!currentWorkspaceId && !!currentWorkspace;
+  const hasProject = !!currentProjectId && !!currentProject;
+  const hasDataset = !!activeDatasetId && !!activeDataset;
+
+  // Treat the hierarchy as ready only when every rich object has been resolved,
+  // not merely when a persisted foreign-key pointer happens to be non-null.
+  // DatasetContext exposes activeDatasetId only after verifying the dataset is
+  // actually linked to the current project and belongs to the same organization.
+  const isReady = !contextLoading && hasOrg && hasWorkspace && hasProject && hasDataset;
 
   return {
     // IDs for query scoping
@@ -33,18 +37,20 @@ export const useActiveDataContext = () => {
 
     // Rich objects for display
     orgName: currentOrg?.name ?? null,
+    workspaceName: currentWorkspace?.name ?? null,
     projectName: currentProject?.name ?? null,
     datasetName: activeDataset?.name ?? null,
 
     // Readiness flags
-    hasOrg: !!currentOrgId,
-    hasProject: !!currentProjectId,
-    hasDataset: !!activeDatasetId,
+    hasOrg,
+    hasWorkspace,
+    hasProject,
+    hasDataset,
 
     /** True while any underlying org/workspace/project/dataset query is still resolving */
     contextLoading,
 
-    /** True when the full context is resolved and data queries can proceed */
-    isReady: !!currentOrgId && !!currentProjectId && !!activeDatasetId,
+    /** True only when the complete verified hierarchy can safely scope data queries */
+    isReady,
   };
 };
