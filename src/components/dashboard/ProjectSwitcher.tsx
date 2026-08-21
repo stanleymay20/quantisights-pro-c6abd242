@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useProject } from "@/contexts/ProjectContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useToast } from "@/hooks/use-toast";
 import { FolderOpen, Plus, ChevronDown, Check } from "lucide-react";
 import {
@@ -20,15 +21,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const ProjectSwitcher = () => {
-  const { projects, currentProject, switchProject, createProject } = useProject();
+  const { projects, currentProject, switchProject, createProject, loading } = useProject();
+  const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();
   const { toast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const contextBusy = workspaceLoading || loading || creating;
 
   const handleCreate = async () => {
     const trimmed = newName.trim().slice(0, 100);
-    if (!trimmed) return;
+    if (!trimmed || !currentWorkspaceId || contextBusy) return;
     setCreating(true);
     try {
       await createProject(trimmed);
@@ -45,10 +48,16 @@ const ProjectSwitcher = () => {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-all border border-border/30">
+        <DropdownMenuTrigger asChild disabled={contextBusy || !currentWorkspaceId}>
+          <button
+            disabled={contextBusy || !currentWorkspaceId}
+            aria-busy={workspaceLoading || loading}
+            className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-all border border-border/30 disabled:opacity-60 disabled:cursor-wait"
+          >
             <FolderOpen className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-            <span className="max-w-[80px] sm:max-w-[140px] truncate">{currentProject?.name || "No project"}</span>
+            <span className="max-w-[80px] sm:max-w-[140px] truncate">
+              {workspaceLoading || loading ? "Loading project…" : currentProject?.name || "No project"}
+            </span>
             <ChevronDown className="w-2.5 h-2.5 sm:w-3 sm:h-3 opacity-50 shrink-0" />
           </button>
         </DropdownMenuTrigger>
@@ -61,11 +70,11 @@ const ProjectSwitcher = () => {
             projects.map((p) => (
               <DropdownMenuItem
                 key={p.id}
+                disabled={contextBusy || p.id === currentProject?.id}
                 onClick={() => {
+                  if (contextBusy || p.id === currentProject?.id) return;
                   switchProject(p.id);
-                  if (p.id !== currentProject?.id) {
-                    toast({ title: `Switched to "${p.name}"` });
-                  }
+                  toast({ title: `Switching to "${p.name}"…` });
                 }}
                 className="flex items-center justify-between"
               >
@@ -75,14 +84,14 @@ const ProjectSwitcher = () => {
             ))
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setShowCreate(true)} className="gap-2">
+          <DropdownMenuItem disabled={contextBusy || !currentWorkspaceId} onClick={() => setShowCreate(true)} className="gap-2">
             <Plus className="w-3.5 h-3.5" />
             New Project
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog open={showCreate} onOpenChange={(open) => !creating && setShowCreate(open)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create Project</DialogTitle>
@@ -93,13 +102,14 @@ const ProjectSwitcher = () => {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               maxLength={100}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              disabled={creating}
+              onKeyDown={(e) => e.key === "Enter" && !creating && void handleCreate()}
             />
             <p className="text-xs text-muted-foreground mt-1">{newName.trim().length}/100</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={creating || !newName.trim()}>
+            <Button variant="outline" disabled={creating} onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button onClick={handleCreate} disabled={creating || loading || workspaceLoading || !currentWorkspaceId || !newName.trim()}>
               {creating ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
