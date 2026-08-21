@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProjectProvider } from "@/contexts/ProjectContext";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
@@ -24,10 +24,8 @@ import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
 import LandingHeroMedia from "@/components/landing/LandingHeroMedia";
 import { metadataForPath } from "@/lib/page-metadata";
+import { PUBLIC_ROUTE_ALIASES } from "@/lib/public-route-aliases";
 
-// ═══════════════════════════════════════════════════════
-// QUERY CLIENT — production-hardened defaults
-// ═══════════════════════════════════════════════════════
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -51,29 +49,24 @@ const PageLoader = () => (
   </div>
 );
 
-/** Route-level error boundary wrapper */
 const SafeRoute = ({ children }: { children: ReactNode }) => (
   <RouteErrorBoundary fallback={(props) => <RouteErrorFallback {...props} />}>
     {children}
   </RouteErrorBoundary>
 );
 
-/** Providers stack for all protected routes */
 const Providers = ({ children }: { children: React.ReactNode }) => (
   <ProtectedRoute>
     <SidebarProvider>
       <WorkspaceProvider>
         <ProjectProvider>
-          <DatasetProvider>
-            {children}
-          </DatasetProvider>
+          <DatasetProvider>{children}</DatasetProvider>
         </ProjectProvider>
       </WorkspaceProvider>
     </SidebarProvider>
   </ProtectedRoute>
 );
 
-/** Full shell: providers + sidebar + context bar + error boundary */
 const P = ({ children }: { children: React.ReactNode }) => (
   <Providers>
     <ProtectedLayout>
@@ -82,7 +75,6 @@ const P = ({ children }: { children: React.ReactNode }) => (
   </Providers>
 );
 
-/** Minimal: providers only (no sidebar/context bar) — for Onboarding, BoardReport */
 const PMinimal = ({ children }: { children: React.ReactNode }) => (
   <Providers>
     <MinimalProtectedLayout>
@@ -91,7 +83,6 @@ const PMinimal = ({ children }: { children: React.ReactNode }) => (
   </Providers>
 );
 
-/** Layout wrapper factory */
 const wrapLayout: Record<RouteLayout, (el: React.ReactNode) => React.ReactNode> = {
   none: (el) => el,
   public: (el) => (
@@ -113,38 +104,38 @@ const RouteMetadata = () => {
 const App = () => (
   <ErrorBoundary>
     <ThemeProvider>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        {/* React Router 7 enables the v7 transition/splat behavior by default;
-            the old `future` prop is no longer part of BrowserRouterProps. */}
-        <BrowserRouter>
-          <RouteMetadata />
-          <LandingHeroMedia />
-          <AuthProvider>
-            <CookieConsent />
-            <SessionTimeout />
-            <UpgradeModalProvider />
-            <Suspense fallback={<PageLoader />}>
-            <Routes>
-              {routes.map(({ path, element, layout, feature }) => (
-                <Route
-                  key={path}
-                  path={path}
-                  element={wrapLayout[layout](
-                    feature ? <RouteEntitlement feature={feature}>{element}</RouteEntitlement> : element,
-                  )}
-                />
-              ))}
-              {/* Catch-all: without this, unknown URLs render a blank page. */}
-              <Route path="*" element={wrapLayout.public(<NotFound />)} />
-            </Routes>
-            </Suspense>
-          </AuthProvider>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <RouteMetadata />
+            <LandingHeroMedia />
+            <AuthProvider>
+              <CookieConsent />
+              <SessionTimeout />
+              <UpgradeModalProvider />
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  {Object.entries(PUBLIC_ROUTE_ALIASES).map(([from, to]) => (
+                    <Route key={from} path={from} element={<Navigate to={to} replace />} />
+                  ))}
+                  {routes.map(({ path, element, layout, feature }) => (
+                    <Route
+                      key={path}
+                      path={path}
+                      element={wrapLayout[layout](
+                        feature ? <RouteEntitlement feature={feature}>{element}</RouteEntitlement> : element,
+                      )}
+                    />
+                  ))}
+                  <Route path="*" element={wrapLayout.public(<NotFound />)} />
+                </Routes>
+              </Suspense>
+            </AuthProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
     </ThemeProvider>
   </ErrorBoundary>
 );
