@@ -8,6 +8,10 @@ import {
   validateIdempotencyKey,
   type ExecutionReceipt,
 } from "./idempotency.ts";
+import {
+  classifyHttpOutcome,
+  dispatchWithBoundedRateLimitRetries,
+} from "./retry-policy.ts";
 
 /** Require owner/admin role for sensitive execution actions */
 async function requirePrivilegedRole(
@@ -254,12 +258,9 @@ async function validateWebhookUrl(
   organizationId: string,
   url: string
 ): Promise<{ allowed: boolean; reason?: string }> {
-  // Block private/internal IPs (SSRF prevention)
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
-
-    // Block internal networks
     const blocked = [
       /^localhost$/i,
       /^127\./,
@@ -277,7 +278,6 @@ async function validateWebhookUrl(
       return { allowed: false, reason: "Internal/private addresses are not allowed" };
     }
 
-    // Must be HTTPS
     if (parsed.protocol !== "https:") {
       return { allowed: false, reason: "Only HTTPS webhook URLs are allowed" };
     }
@@ -285,7 +285,6 @@ async function validateWebhookUrl(
     return { allowed: false, reason: "Invalid URL format" };
   }
 
-  // Webhooks are fail-closed: every organization must explicitly approve destinations.
   const { data: configs } = await supabase
     .from("connector_configs")
     .select("host")
@@ -405,7 +404,6 @@ Deno.serve(async (req) => {
           });
         }
 
-        // FIX: Read CURRENT status BEFORE updating
         const { data: currentPlan, error: fetchErr } = await supabase
           .from("execution_plans")
           .select("status, decision_id")
@@ -420,8 +418,6 @@ Deno.serve(async (req) => {
         }
 
         const previousStatus = currentPlan.status;
-
-        // Now update
         const { data: updatedPlan, error } = await supabase
           .from("execution_plans")
           .update({ status })
@@ -432,7 +428,6 @@ Deno.serve(async (req) => {
 
         if (error) throw error;
 
-        // Log with CORRECT previous status
         await supabase.from("execution_events").insert({
           execution_plan_id: plan_id,
           organization_id,
@@ -451,7 +446,6 @@ Deno.serve(async (req) => {
           payload: { previous_status: previousStatus, new_status: status, notes: notes ? String(notes).slice(0, 1000) : null },
         });
 
-        // Sync decision execution_status based on all plans
         const { data: allPlans } = await supabase
           .from("execution_plans")
           .select("status")
@@ -497,7 +491,6 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Require admin/owner for webhook triggers
         const roleCheck = await requirePrivilegedRole(supabase, userId, organization_id, corsHeaders, ["owner", "admin"]);
         if (roleCheck) return roleCheck;
 
@@ -512,7 +505,6 @@ Deno.serve(async (req) => {
         if (executionGate.response) return executionGate.response;
         const plan = executionGate.plan!;
 
-        // Validate webhook URL (SSRF prevention + mandatory allowlist)
         const validation = await validateWebhookUrl(supabase, organization_id, webhook_url);
         if (!validation.allowed) {
           await supabase.from("execution_events").insert({
@@ -555,51 +547,101 @@ Deno.serve(async (req) => {
         }
 
         const receipt = claim.receipt;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
 
         try {
-          const webhookResp = await fetch(webhook_url, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Idempotency-Key": idempotency_key,
+          const dispatch = await dispatchWithBoundedRateLimitRetries({
+            supabase,
+            receiptId: receipt.id,
+            executionPlanId: plan.id,
+            organizationId: organization_id,
+            actorId: userId,
+            actionType: "trigger_webhook",
+            request: async () => {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 15000);
+              try {
+                return await fetch(webhook_url, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Idempotency-Key": idempotency_key,
+                  },
+                  body: JSON.stringify(payload || {}),
+                  signal: controller.signal,
+                });
+              } finally {
+                clearTimeout(timeout);
+              }
             },
-            body: JSON.stringify(payload || {}),
-            signal: controller.signal,
           });
-          clearTimeout(timeout);
 
-          const success = webhookResp.ok;
-          await completeExecutionReceipt(supabase, receipt.id, success ? "succeeded" : "failed", {
+          const webhookResp = dispatch.response;
+          const outcome = classifyHttpOutcome(webhookResp.status);
+          const success = outcome === "success";
+          const uncertain = outcome === "uncertain";
+          const finalStatus = success ? "succeeded" : uncertain ? "uncertain" : "failed";
+
+          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
             responseStatus: webhookResp.status,
-            responseMetadata: { webhook_url, status_code: webhookResp.status, success },
-            errorMessage: success ? null : `Webhook returned HTTP ${webhookResp.status}`,
+            responseMetadata: {
+              webhook_url,
+              status_code: webhookResp.status,
+              success,
+              uncertain,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
+            },
+            errorMessage: success ? null : uncertain
+              ? `Webhook outcome is uncertain after HTTP ${webhookResp.status}; external reconciliation required`
+              : `Webhook returned HTTP ${webhookResp.status}`,
           });
 
           await supabase.from("execution_events").insert({
             execution_plan_id: plan_id,
             organization_id,
-            event_type: success ? "webhook_success" : "webhook_failed",
+            event_type: success ? "webhook_success" : uncertain ? "webhook_uncertain" : "webhook_failed",
             actor_id: userId,
-            metadata: { webhook_url, status_code: webhookResp.status, success, receipt_id: receipt.id },
+            metadata: {
+              webhook_url,
+              status_code: webhookResp.status,
+              success,
+              uncertain,
+              receipt_id: receipt.id,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
+            },
           });
 
           await supabase.from("audit_log").insert({
             organization_id,
             actor_id: userId,
             actor_type: "user",
-            action_type: "webhook_triggered",
+            action_type: uncertain ? "webhook_outcome_uncertain" : "webhook_triggered",
             resource_type: "execution_plan",
             resource_id: plan_id,
-            payload: { webhook_url, status_code: webhookResp.status, success, receipt_id: receipt.id },
+            payload: {
+              webhook_url,
+              status_code: webhookResp.status,
+              success,
+              uncertain,
+              receipt_id: receipt.id,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
+            },
           });
 
-          return new Response(JSON.stringify({ success, status_code: webhookResp.status, receipt_id: receipt.id }), {
+          return new Response(JSON.stringify({
+            success,
+            uncertain,
+            status_code: webhookResp.status,
+            receipt_id: receipt.id,
+            attempts: dispatch.attempts,
+            retry_exhausted: dispatch.retryExhausted,
+          }), {
+            status: uncertain ? 502 : 200,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } catch (e) {
-          clearTimeout(timeout);
           const message = (e as Error).message;
           await completeExecutionReceipt(supabase, receipt.id, "uncertain", {
             errorMessage: message,
@@ -634,7 +676,6 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Require admin/owner for Slack triggers
         const roleCheck = await requirePrivilegedRole(supabase, userId, organization_id, corsHeaders, ["owner", "admin"]);
         if (roleCheck) return roleCheck;
 
@@ -649,7 +690,6 @@ Deno.serve(async (req) => {
         if (executionGate.response) return executionGate.response;
         const plan = executionGate.plan!;
 
-        // Channel is REQUIRED — no defaults
         if (!channel || typeof channel !== "string" || !channel.trim()) {
           return new Response(JSON.stringify({ error: "Slack channel is required. No default channel allowed." }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -704,28 +744,38 @@ Deno.serve(async (req) => {
         const GATEWAY_URL = "https://connector-gateway.lovable.dev/slack/api";
 
         try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
-          let resp: Response;
-          try {
-            resp = await fetch(`${GATEWAY_URL}/chat.postMessage`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                "X-Connection-Api-Key": SLACK_API_KEY,
-                "Content-Type": "application/json",
-                "Idempotency-Key": idempotency_key,
-              },
-              body: JSON.stringify({
-                channel: normalizedChannel,
-                text: normalizedMessage,
-              }),
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timeout);
-          }
+          const dispatch = await dispatchWithBoundedRateLimitRetries({
+            supabase,
+            receiptId: receipt.id,
+            executionPlanId: plan.id,
+            organizationId: organization_id,
+            actorId: userId,
+            actionType: "notify_slack",
+            request: async () => {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 15000);
+              try {
+                return await fetch(`${GATEWAY_URL}/chat.postMessage`, {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                    "X-Connection-Api-Key": SLACK_API_KEY,
+                    "Content-Type": "application/json",
+                    "Idempotency-Key": idempotency_key,
+                  },
+                  body: JSON.stringify({
+                    channel: normalizedChannel,
+                    text: normalizedMessage,
+                  }),
+                  signal: controller.signal,
+                });
+              } finally {
+                clearTimeout(timeout);
+              }
+            },
+          });
 
+          const resp = dispatch.response;
           let data: Record<string, unknown> = {};
           try {
             data = await resp.json();
@@ -733,36 +783,68 @@ Deno.serve(async (req) => {
             data = { parse_error: true };
           }
 
-          const success = resp.ok && data?.ok !== false;
-          await completeExecutionReceipt(supabase, receipt.id, success ? "succeeded" : "failed", {
+          const httpOutcome = classifyHttpOutcome(resp.status);
+          const uncertain = httpOutcome === "uncertain";
+          const success = httpOutcome === "success" && data?.ok !== false;
+          const finalStatus = success ? "succeeded" : uncertain ? "uncertain" : "failed";
+
+          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
             responseStatus: resp.status,
             responseMetadata: {
               channel: normalizedChannel,
               success,
+              uncertain,
               response_ok: data?.ok ?? null,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
             },
-            errorMessage: success ? null : `Slack gateway returned HTTP ${resp.status}`,
+            errorMessage: success ? null : uncertain
+              ? `Slack outcome is uncertain after HTTP ${resp.status}; external reconciliation required`
+              : `Slack gateway returned HTTP ${resp.status}`,
           });
 
           await supabase.from("execution_events").insert({
             execution_plan_id: plan_id,
             organization_id,
-            event_type: success ? "slack_sent" : "slack_failed",
+            event_type: success ? "slack_sent" : uncertain ? "slack_uncertain" : "slack_failed",
             actor_id: userId,
-            metadata: { channel: normalizedChannel, success, response_ok: data?.ok, receipt_id: receipt.id },
+            metadata: {
+              channel: normalizedChannel,
+              success,
+              uncertain,
+              response_ok: data?.ok,
+              receipt_id: receipt.id,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
+            },
           });
 
           await supabase.from("audit_log").insert({
             organization_id,
             actor_id: userId,
             actor_type: "user",
-            action_type: "slack_notification_sent",
+            action_type: uncertain ? "slack_outcome_uncertain" : "slack_notification_sent",
             resource_type: "execution_plan",
             resource_id: plan_id,
-            payload: { channel: normalizedChannel, success, receipt_id: receipt.id },
+            payload: {
+              channel: normalizedChannel,
+              success,
+              uncertain,
+              receipt_id: receipt.id,
+              attempts: dispatch.attempts,
+              retry_exhausted: dispatch.retryExhausted,
+            },
           });
 
-          return new Response(JSON.stringify({ success, data, receipt_id: receipt.id }), {
+          return new Response(JSON.stringify({
+            success,
+            uncertain,
+            data,
+            receipt_id: receipt.id,
+            attempts: dispatch.attempts,
+            retry_exhausted: dispatch.retryExhausted,
+          }), {
+            status: uncertain ? 502 : 200,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } catch (e) {
