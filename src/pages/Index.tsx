@@ -74,7 +74,7 @@ const ResponsiveStyles = () => (
       .qv-ledger-head, .qv-ledger-row { display: none; }
       .qv-mobile-card { display: block; padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
       .qv-mobile-card-title { color: #fff; font-weight: 600; font-size: 13px; line-height: 1.35; margin: 8px 0; }
-      .qv-mobile-metrics { display: grid; grid-template-columns: repeat(3, 1fr)); gap: 8px; margin-top: 12px; }
+      .qv-mobile-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
       .qv-mobile-metric { background: rgba(255,255,255,0.06); border-radius: 6px; padding: 10px; text-align: center; }
       .qv-card { padding: 30px 22px; }
       .qv-heading { font-size: clamp(28px, 9vw, 40px); }
