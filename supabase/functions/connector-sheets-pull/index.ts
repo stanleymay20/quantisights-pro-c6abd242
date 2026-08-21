@@ -1,22 +1,30 @@
-// @ts-nocheck
 /**
  * connector-sheets-pull
  *
- * Google Sheets connector using service account authentication.
- * Reads a user-specified spreadsheet range, auto-detects column types, and
- * maps numeric columns to canonical metrics.
- *
- * Column detection heuristics:
- *   - date/period column: first column whose values parse as dates
- *   - metric columns: any numeric column
- *   - dimension columns: remaining text columns → stored as segment/region
- *
- * Canonical metrics: derived from spreadsheet column names (snake_case).
+ * Google Sheets connector using service account authentication. Reads a
+ * user-specified range, derives canonical metrics, and persists them with the
+ * same dataset-scoped identity used by every other ingestion path.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveConnectorCredentials } from "../_shared/connector-credentials.ts";
 import { requireCronOrOrgMember } from "../_shared/cron-or-user.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+
+const METRIC_CONFLICT_KEY = "organization_id,dataset_id,metric_type,date,region,segment,source_id";
+const BATCH_SIZE = 500;
+
+type MetricRow = {
+  organization_id: string;
+  dataset_id: string | null;
+  source_type: string;
+  source_id: string;
+  quality_score: number;
+  region: string;
+  segment: string;
+  metric_type: string;
+  value: number;
+  date: string;
+};
 
 function j(body: unknown, status = 200, req?: Request) {
   return new Response(JSON.stringify(body), {
@@ -26,7 +34,9 @@ function j(body: unknown, status = 200, req?: Request) {
 }
 
 async function getServiceAccountToken(serviceAccountJson: string, scopes: string): Promise<string> {
-  const sa = JSON.parse(serviceAccountJson);
+  const sa = JSON.parse(serviceAccountJson) as { client_email?: string; private_key?: string };
+  if (!sa.client_email || !sa.private_key) throw new Error("Service account JSON is missing client_email/private_key");
+
   const now = Math.floor(Date.now() / 1000);
   const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
@@ -42,12 +52,18 @@ async function getServiceAccountToken(serviceAccountJson: string, scopes: string
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\n/g, "");
-  const keyBytes = Uint8Array.from(atob(pem), c => c.charCodeAt(0));
+  const keyBytes = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
   const cryptoKey = await crypto.subtle.importKey(
-    "pkcs8", keyBytes, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]
+    "pkcs8",
+    keyBytes,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
   );
   const sig = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(`${header}.${claim}`)
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(`${header}.${claim}`),
   );
   const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
@@ -61,7 +77,9 @@ async function getServiceAccountToken(serviceAccountJson: string, scopes: string
     const txt = await tokenRes.text();
     throw new Error(`Google token error [${tokenRes.status}]: ${txt.slice(0, 300)}`);
   }
-  return (await tokenRes.json()).access_token;
+  const token = (await tokenRes.json()) as { access_token?: string };
+  if (!token.access_token) throw new Error("Google token response did not include access_token");
+  return token.access_token;
 }
 
 function toSnakeCase(s: string): string {
@@ -73,60 +91,68 @@ function toSnakeCase(s: string): string {
 function parseDate(v: string): Date | null {
   if (!v) return null;
   const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function metricIdentity(row: MetricRow): string {
+  return [
+    row.organization_id,
+    row.dataset_id ?? "",
+    row.metric_type.trim().toLowerCase(),
+    row.date,
+    row.region.trim(),
+    row.segment.trim(),
+    row.source_id,
+  ].join("\u001f");
 }
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: getCorsHeaders(req) });
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) return j({ error: "Connector service unavailable" }, 503, req);
   const svc = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
   try {
-    const { connector_id } = await req.json().catch(() => ({}));
-    if (!connector_id) return j({ error: "connector_id required" }, 400, req);
+    const payload = await req.json().catch(() => ({})) as { connector_id?: string };
+    const connectorId = payload.connector_id;
+    if (!connectorId) return j({ error: "connector_id required" }, 400, req);
 
     const { data: connector, error: cErr } = await svc
-      .from("data_connectors").select("*").eq("id", connector_id).single();
+      .from("data_connectors")
+      .select("id,organization_id,dataset_id,data_source_id,config,status")
+      .eq("id", connectorId)
+      .single();
     if (cErr || !connector) return j({ error: "connector not found" }, 404, req);
 
-    const orgId = connector.organization_id;
-
-    // Auth guard: this function writes directly to the metrics table using the
-    // service role key, bypassing RLS. Without this check, anyone who learns or
-    // guesses a connector_id could trigger a sync and have arbitrary spreadsheet
-    // data written into another org's metrics. Allows either the scheduler's
-    // cron secret or a verified user who is a member of the connector's org.
+    const orgId = connector.organization_id as string;
     const guard = await requireCronOrOrgMember(req, orgId);
     if (!guard.ok) return guard.response;
 
-    const creds = await resolveConnectorCredentials(svc, connector_id);
-    const cfg = connector.config ?? {};
+    let datasetId: string | null = connector.dataset_id ?? null;
+    if (datasetId) {
+      const { data: ownedDataset, error: datasetError } = await svc
+        .from("datasets")
+        .select("id")
+        .eq("id", datasetId)
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (datasetError) return j({ error: "Dataset scope validation failed" }, 500, req);
+      if (!ownedDataset?.id) return j({ error: "Connector dataset does not belong to this organization" }, 400, req);
+      datasetId = ownedDataset.id;
+    }
 
+    const creds = await resolveConnectorCredentials(svc, connectorId);
+    const cfg = (connector.config ?? {}) as Record<string, unknown>;
     const serviceAccountJson = creds.serviceAccountJson ?? creds.service_account_json;
-    const spreadsheetId = creds.spreadsheetId ?? cfg.spreadsheetId;
-    const sheetRange = creds.sheetRange ?? cfg.sheetRange ?? "Sheet1!A:Z";
+    const spreadsheetId = creds.spreadsheetId ?? (typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId : undefined);
+    const sheetRange = creds.sheetRange ?? (typeof cfg.sheetRange === "string" ? cfg.sheetRange : undefined) ?? "Sheet1!A:Z";
 
     if (!serviceAccountJson || !spreadsheetId) {
       return j({ error: "Google Sheets credentials incomplete: serviceAccountJson and spreadsheetId required" }, 412, req);
     }
 
-    const errors: string[] = [];
-    const metrics: any[] = [];
-    const now = new Date();
-
-    const baseFields = {
-      organization_id: orgId,
-      dataset_id: connector.dataset_id ?? null,
-      source_type: "connector",
-      source_id: connector.data_source_id ?? connector_id,
-      quality_score: 85,
-      region: "",
-      segment: "",
-    };
-
-    // Get Google token
     let token: string;
     try {
       token = await getServiceAccountToken(serviceAccountJson, "https://www.googleapis.com/auth/spreadsheets.readonly");
@@ -134,30 +160,24 @@ Deno.serve(async (req: Request) => {
       return j({ error: `Auth failed: ${e instanceof Error ? e.message : String(e)}` }, 401, req);
     }
 
-    // Fetch spreadsheet values
     const encodedRange = encodeURIComponent(sheetRange);
     const sheetsRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodedRange}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-
     if (!sheetsRes.ok) {
       const txt = await sheetsRes.text();
       return j({ error: `Sheets API error [${sheetsRes.status}]: ${txt.slice(0, 300)}` }, 502, req);
     }
 
-    const sheetsData = await sheetsRes.json();
-    const rows: any[][] = sheetsData.values ?? [];
-
+    const sheetsData = await sheetsRes.json() as { values?: unknown[][] };
+    const rows = sheetsData.values ?? [];
     if (rows.length < 2) {
-      return j({ success: true, records: 0, errors: ["Spreadsheet has no data rows"] }, 200, req);
+      return j({ success: true, status: "no_data", records: 0, errors: ["Spreadsheet has no data rows"] }, 200, req);
     }
 
-    // First row = headers
-    const headers = (rows[0] as string[]).map(toSnakeCase);
+    const headers = (rows[0] as unknown[]).map((value) => toSnakeCase(String(value ?? "")));
     const dataRows = rows.slice(1);
-
-    // Detect column types
     const firstDataRow = dataRows[0] || [];
     let dateColIdx = -1;
     const numericCols: { idx: number; name: string }[] = [];
@@ -166,7 +186,6 @@ Deno.serve(async (req: Request) => {
     for (let i = 0; i < headers.length; i++) {
       const h = headers[i];
       const sampleVal = String(firstDataRow[i] ?? "");
-
       if (dateColIdx === -1 && (
         h.includes("date") || h.includes("period") || h.includes("month") || h.includes("year") ||
         parseDate(sampleVal) !== null
@@ -174,77 +193,98 @@ Deno.serve(async (req: Request) => {
         dateColIdx = i;
         continue;
       }
-
-      const numVal = parseFloat(String(firstDataRow[i] ?? ""));
-      if (!isNaN(numVal) && sampleVal !== "") {
-        numericCols.push({ idx: i, name: h });
-      } else {
-        dimensionCols.push({ idx: i, name: h });
-      }
+      const numVal = Number.parseFloat(sampleVal);
+      if (Number.isFinite(numVal) && sampleVal !== "") numericCols.push({ idx: i, name: h || `metric_${i}` });
+      else dimensionCols.push({ idx: i, name: h || `dimension_${i}` });
     }
 
-    if (dateColIdx === -1) {
-      // No date column found — use current month for all rows
-      dateColIdx = -1;
+    if (numericCols.length === 0) {
+      return j({ success: false, status: "failed", records: 0, error: "No numeric metric columns detected" }, 400, req);
     }
 
+    const now = new Date();
     const defaultDateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const sourceId = connector.data_source_id ?? connectorId;
+    const candidates: MetricRow[] = [];
 
     for (const row of dataRows) {
       let dateKey = defaultDateKey;
       if (dateColIdx >= 0 && row[dateColIdx]) {
         const d = parseDate(String(row[dateColIdx]));
-        if (d) {
-          dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-        }
+        if (d) dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
       }
-
-      // Build segment from dimension columns
-      const segmentParts = dimensionCols
-        .map(dc => String(row[dc.idx] ?? "").trim())
-        .filter(v => v);
-      const segment = segmentParts.join(" | ");
+      const segment = dimensionCols
+        .map((dc) => String(row[dc.idx] ?? "").trim())
+        .filter(Boolean)
+        .join(" | ");
 
       for (const nc of numericCols) {
-        const rawVal = row[nc.idx];
-        const numVal = parseFloat(String(rawVal ?? ""));
-        if (isNaN(numVal)) continue;
-
-        metrics.push({
-          ...baseFields,
+        const numVal = Number.parseFloat(String(row[nc.idx] ?? ""));
+        if (!Number.isFinite(numVal)) continue;
+        candidates.push({
+          organization_id: orgId,
+          dataset_id: datasetId,
+          source_type: "connector",
+          source_id: sourceId,
+          quality_score: 85,
+          region: "",
+          segment,
           metric_type: nc.name,
           value: numVal,
           date: dateKey,
-          segment: segment || "",
         });
       }
     }
 
-    if (metrics.length > 0) {
-      // Batch in groups of 500
-      for (let i = 0; i < metrics.length; i += 500) {
-        const batch = metrics.slice(i, i + 500);
-        const { error: uErr } = await svc.from("metrics").upsert(batch, {
-          onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
-          ignoreDuplicates: false,
-        });
-        if (uErr) errors.push(`DB upsert batch ${i}: ${uErr.message}`);
+    const deduped = new Map<string, MetricRow>();
+    for (const row of candidates) deduped.set(metricIdentity(row), row);
+    const metrics = Array.from(deduped.values());
+    const errors: string[] = [];
+    let persisted = 0;
+
+    for (let i = 0; i < metrics.length; i += BATCH_SIZE) {
+      const batch = metrics.slice(i, i + BATCH_SIZE);
+      const { error } = await svc.from("metrics").upsert(batch, {
+        onConflict: METRIC_CONFLICT_KEY,
+        ignoreDuplicates: false,
+      });
+      if (!error) {
+        persisted += batch.length;
+        continue;
+      }
+
+      // Isolate malformed rows instead of losing the full batch.
+      for (const row of batch) {
+        const { error: rowError } = await svc.from("metrics").upsert(row, { onConflict: METRIC_CONFLICT_KEY });
+        if (rowError) errors.push(rowError.message);
+        else persisted++;
       }
     }
 
-    await svc.from("data_connectors").update({
-      status: errors.length === 0 ? "active" : "partial",
-      last_synced_at: now.toISOString(),
+    const status = persisted === 0 ? "failed" : errors.length > 0 ? "partial" : "active";
+    const connectorPatch: Record<string, unknown> = {
+      status,
       updated_at: now.toISOString(),
-    }).eq("id", connector_id);
+    };
+    if (persisted > 0) connectorPatch.last_synced_at = now.toISOString();
+    const { error: connectorUpdateError } = await svc
+      .from("data_connectors")
+      .update(connectorPatch)
+      .eq("id", connectorId)
+      .eq("organization_id", orgId);
+    if (connectorUpdateError) errors.push(`Connector state update: ${connectorUpdateError.message}`);
 
     return j({
-      success: true,
-      records: metrics.length,
-      columns_detected: numericCols.map(c => c.name),
+      success: persisted > 0,
+      status,
+      records: persisted,
+      generated_records: candidates.length,
+      unique_records: metrics.length,
+      duplicates_collapsed: candidates.length - metrics.length,
+      columns_detected: numericCols.map((c) => c.name),
       date_column: dateColIdx >= 0 ? headers[dateColIdx] : null,
       errors,
-    }, 200, req);
+    }, persisted === 0 ? 500 : 200, req);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return j({ error: msg }, 500, req);
