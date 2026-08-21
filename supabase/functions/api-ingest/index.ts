@@ -5,17 +5,10 @@ import { createLogger } from "../_shared/logger.ts";
 import { createSyncJob, failSyncJob, finalizeSyncJob, findIdempotentJob } from "../_shared/ingest-jobs.ts";
 import { isRecord, normalizeDateInput, parseJsonBody, sha256Hex, toDateOnly } from "../_shared/ingest-utils.ts";
 
-/**
- * Enterprise API Ingestion Endpoint
- *
- * POST /api-ingest
- * Headers: Authorization or x-api-key, x-request-id (required), x-dataset-id (optional)
- * Body: { records: [...], dataset_name?: string, metric_type?: string }
- */
-
 const MAX_RECORDS = 50_000;
 const BATCH_SIZE = 1000;
 const MAX_VALUE = 1e12;
+const METRIC_CONFLICT_KEY = "organization_id,dataset_id,metric_type,date,region,segment,source_id";
 
 type ServiceClient = ReturnType<typeof createClient<any>>;
 
@@ -27,8 +20,12 @@ type AuthContext = {
   authMode: "jwt" | "api_key";
 };
 
-async function resolveApiDataSource(svc: ServiceClient, orgId: string, userId: string): Promise<{ id: string; created_by: string | null }> {
-  const { data: existing } = await svc
+async function resolveApiDataSource(
+  svc: ServiceClient,
+  orgId: string,
+  userId: string,
+): Promise<{ id: string; created_by: string | null }> {
+  const { data: existing, error: existingError } = await svc
     .from("data_sources")
     .select("id,created_by")
     .eq("organization_id", orgId)
@@ -36,10 +33,8 @@ async function resolveApiDataSource(svc: ServiceClient, orgId: string, userId: s
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
-
-  if (existing?.id) {
-    return { id: existing.id, created_by: existing.created_by ?? null };
-  }
+  if (existingError) throw new Error(`Failed to resolve API data source: ${existingError.message}`);
+  if (existing?.id) return { id: existing.id, created_by: existing.created_by ?? null };
 
   const { data: created, error } = await svc
     .from("data_sources")
@@ -53,15 +48,18 @@ async function resolveApiDataSource(svc: ServiceClient, orgId: string, userId: s
     })
     .select("id,created_by")
     .single();
-
   if (error || !created?.id) {
     throw new Error(`Failed to create API data source: ${error?.message ?? "unknown error"}`);
   }
-
   return { id: created.id, created_by: created.created_by ?? null };
 }
 
-async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl: string, logger: ReturnType<typeof createLogger>): Promise<AuthContext> {
+async function authenticateRequest(
+  req: Request,
+  svc: ServiceClient,
+  supabaseUrl: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<AuthContext> {
   const authHeader = req.headers.get("authorization");
   const apiKey = req.headers.get("x-api-key");
 
@@ -71,37 +69,29 @@ async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
-
     const { data: { user }, error } = await userClient.auth.getUser();
-    if (error || !user?.id) {
-      throw new Error("Invalid authorization token");
-    }
+    if (error || !user?.id) throw new Error("Invalid authorization token");
 
-    const { data: profile } = await svc
+    const { data: profile, error: profileError } = await svc
       .from("profiles")
       .select("organization_id")
       .eq("user_id", user.id)
       .maybeSingle();
+    if (profileError) throw new Error(`Organization lookup failed: ${profileError.message}`);
+    if (!profile?.organization_id) throw new Error("Organization not found for user");
 
-    if (!profile?.organization_id) {
-      throw new Error("Organization not found for user");
-    }
-
-    const { data: membership } = await svc
+    const { data: membership, error: membershipError } = await svc
       .from("organization_members")
       .select("role")
       .eq("organization_id", profile.organization_id)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!membership) {
-      throw new Error("User is not a member of organization");
-    }
+    if (membershipError) throw new Error(`Membership lookup failed: ${membershipError.message}`);
+    if (!membership) throw new Error("User is not a member of organization");
 
     logger.setUser(user.id);
     logger.setOrg(profile.organization_id);
-
     const source = await resolveApiDataSource(svc, profile.organization_id, user.id);
-
     return {
       userId: user.id,
       orgId: profile.organization_id,
@@ -113,20 +103,17 @@ async function authenticateRequest(req: Request, svc: ServiceClient, supabaseUrl
 
   if (apiKey) {
     const keyHash = await sha256Hex(apiKey);
-    const { data: source } = await svc
+    const { data: source, error: sourceError } = await svc
       .from("data_sources")
-      .select("id, organization_id, created_by")
+      .select("id,organization_id,created_by")
       .eq("credentials_key_hash", keyHash)
       .eq("status", "active")
       .limit(1)
       .maybeSingle();
-
-    if (!source?.id || !source.organization_id) {
-      throw new Error("Invalid API key");
-    }
+    if (sourceError) throw new Error(`API key lookup failed: ${sourceError.message}`);
+    if (!source?.id || !source.organization_id) throw new Error("Invalid API key");
 
     logger.setOrg(source.organization_id);
-
     return {
       userId: null,
       orgId: source.organization_id,
@@ -152,38 +139,28 @@ async function resolveDataset(
   const { orgId, datasetIdHeader, datasetName, uploadedBy, rowCount } = params;
 
   if (datasetIdHeader) {
-    const { data } = await svc
+    const { data, error } = await svc
       .from("datasets")
       .select("id")
       .eq("id", datasetIdHeader)
       .eq("organization_id", orgId)
       .maybeSingle();
-
-    if (!data?.id) {
-      throw new Error("x-dataset-id not found for organization");
-    }
-
+    if (error) throw new Error(`Dataset lookup failed: ${error.message}`);
+    if (!data?.id) throw new Error("x-dataset-id not found for organization");
     return data.id;
   }
 
-  if (!datasetName) {
-    return null;
-  }
+  if (!datasetName) return null;
 
-  const { data: existing } = await svc
+  const { data: existing, error: existingError } = await svc
     .from("datasets")
     .select("id")
     .eq("organization_id", orgId)
     .eq("name", datasetName)
     .maybeSingle();
-
-  if (existing?.id) {
-    return existing.id;
-  }
-
-  if (!uploadedBy) {
-    return null;
-  }
+  if (existingError) throw new Error(`Dataset lookup failed: ${existingError.message}`);
+  if (existing?.id) return existing.id;
+  if (!uploadedBy) return null;
 
   const { data: created, error } = await svc
     .from("datasets")
@@ -192,17 +169,27 @@ async function resolveDataset(
       name: datasetName,
       uploaded_by: uploadedBy,
       status: "active",
-      row_count: rowCount,
+      row_count: 0,
       current_version: 1,
     })
     .select("id")
     .single();
-
   if (error || !created?.id) {
     throw new Error(`Failed to create dataset: ${error?.message ?? "unknown error"}`);
   }
-
   return created.id;
+}
+
+function metricIdentity(metric: Record<string, unknown>): string {
+  return [
+    metric.organization_id ?? "",
+    metric.dataset_id ?? "",
+    metric.metric_type ?? "",
+    metric.date ?? "",
+    metric.region ?? "",
+    metric.segment ?? "",
+    metric.source_id ?? "",
+  ].join("\u001f");
 }
 
 serve(async (req: Request) => {
@@ -210,7 +197,10 @@ serve(async (req: Request) => {
   const corsHeaders = getCorsHeaders(req);
   const logger = createLogger("api-ingest", req);
   const respond = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
   const startTime = Date.now();
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -220,7 +210,6 @@ serve(async (req: Request) => {
     return respond({ error: "API ingestion service unavailable" }, 503);
   }
   const svc = createClient(supabaseUrl, serviceKey);
-
   let jobId: string | null = null;
 
   try {
@@ -228,12 +217,15 @@ serve(async (req: Request) => {
     if (!requestId) return respond({ error: "x-request-id header required for idempotency" }, 400);
 
     const auth = await authenticateRequest(req, svc, supabaseUrl, logger);
-
     const existing = await findIdempotentJob(svc, requestId, auth.orgId, auth.dataSourceId);
     if (existing) {
-      logger.info("idempotent replay", { request_id: requestId, job_id: existing.id, job_status: existing.status });
+      logger.info("idempotent replay", {
+        request_id: requestId,
+        job_id: existing.id,
+        job_status: existing.status,
+      });
       return respond({
-        success: existing.status !== "failed",
+        success: existing.status === "completed" || existing.status === "partial",
         idempotent_replay: true,
         job_id: existing.id,
         job_status: existing.status,
@@ -249,20 +241,17 @@ serve(async (req: Request) => {
     let records: unknown[] = [];
     let defaultMetricType: string | undefined;
     let datasetName: string | undefined;
-
     if (Array.isArray(body)) {
       records = body;
     } else if (isRecord(body)) {
       if (Array.isArray(body.records)) records = body.records;
       else if (Array.isArray(body.data)) records = body.data;
       else records = [body];
-
       defaultMetricType = typeof body.metric_type === "string"
         ? body.metric_type
         : typeof body.default_metric_type === "string"
           ? body.default_metric_type
           : undefined;
-
       datasetName = typeof body.dataset_name === "string" ? body.dataset_name : undefined;
     } else {
       return respond({ error: "Invalid payload. Expected object or array." }, 400);
@@ -289,7 +278,7 @@ serve(async (req: Request) => {
     });
 
     const errors: string[] = [];
-    const metrics: Record<string, unknown>[] = [];
+    const candidateMetrics: Record<string, unknown>[] = [];
     const minDate = new Date();
     minDate.setFullYear(minDate.getFullYear() - 5);
 
@@ -299,26 +288,22 @@ serve(async (req: Request) => {
         errors.push(`Record ${i}: invalid object payload`);
         continue;
       }
-
       const dateRaw = raw.date ?? raw.period ?? raw.timestamp;
       const date = normalizeDateInput(dateRaw);
       if (!date) {
         errors.push(`Record ${i}: invalid date`);
         continue;
       }
-
       if (new Date(date) < minDate) {
         errors.push(`Record ${i}: date older than 5 years`);
         continue;
       }
-
       const rawValue = raw.value ?? raw.amount ?? raw.metric_value;
       const value = Number.parseFloat(String(rawValue ?? ""));
       if (!Number.isFinite(value) || Math.abs(value) > MAX_VALUE) {
         errors.push(`Record ${i}: invalid value`);
         continue;
       }
-
       const metricType = typeof raw.metric_type === "string"
         ? raw.metric_type
         : typeof raw.type === "string"
@@ -326,8 +311,7 @@ serve(async (req: Request) => {
           : typeof raw.metric === "string"
             ? raw.metric
             : defaultMetricType || "custom";
-
-      metrics.push({
+      candidateMetrics.push({
         organization_id: auth.orgId,
         dataset_id: datasetId,
         metric_type: metricType,
@@ -341,7 +325,7 @@ serve(async (req: Request) => {
       });
     }
 
-    if (metrics.length === 0) {
+    if (candidateMetrics.length === 0) {
       await finalizeSyncJob(svc, { jobId, inserted: 0, errors });
       return respond({
         success: false,
@@ -353,13 +337,18 @@ serve(async (req: Request) => {
       }, 400);
     }
 
+    const deduped = new Map<string, Record<string, unknown>>();
+    for (const metric of candidateMetrics) deduped.set(metricIdentity(metric), metric);
+    const metrics = Array.from(deduped.values());
+    const duplicateCount = candidateMetrics.length - metrics.length;
+    if (duplicateCount > 0) {
+      logger.info("deduplicated metric identities within request", { duplicate_count: duplicateCount });
+    }
+
     let inserted = 0;
     for (let i = 0; i < metrics.length; i += BATCH_SIZE) {
       const batch = metrics.slice(i, i + BATCH_SIZE);
-      const { error } = await svc.from("metrics").upsert(batch, {
-        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
-      });
-
+      const { error } = await svc.from("metrics").upsert(batch, { onConflict: METRIC_CONFLICT_KEY });
       if (error) {
         errors.push(`Batch ${Math.floor(i / BATCH_SIZE)}: ${error.message}`);
       } else {
@@ -367,17 +356,34 @@ serve(async (req: Request) => {
       }
     }
 
-    await finalizeSyncJob(svc, { jobId, inserted, errors });
+    const jobStatus = await finalizeSyncJob(svc, { jobId, inserted, errors });
 
-    if (datasetId) {
-      await svc.from("datasets").update({
-        row_count: inserted,
-        last_refreshed_at: new Date().toISOString(),
-        status: "active",
-      }).eq("id", datasetId);
+    // Freshness is evidence that something was actually persisted. Never move
+    // last_refreshed_at forward on a zero-write run, and never replace the
+    // dataset's cumulative row_count with only the latest request size.
+    let totalDatasetMetrics: number | null = null;
+    if (datasetId && inserted > 0) {
+      const { count, error: countError } = await svc
+        .from("metrics")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", auth.orgId)
+        .eq("dataset_id", datasetId);
+      if (countError) throw new Error(`Dataset metric count refresh failed: ${countError.message}`);
+      totalDatasetMetrics = count ?? inserted;
+
+      const { error: datasetUpdateError } = await svc
+        .from("datasets")
+        .update({
+          row_count: totalDatasetMetrics,
+          last_refreshed_at: new Date().toISOString(),
+          status: "active",
+        })
+        .eq("id", datasetId)
+        .eq("organization_id", auth.orgId);
+      if (datasetUpdateError) throw new Error(`Dataset freshness update failed: ${datasetUpdateError.message}`);
     }
 
-    await svc.from("audit_log").insert({
+    const { error: auditError } = await svc.from("audit_log").insert({
       organization_id: auth.orgId,
       actor_type: auth.authMode === "jwt" ? "user" : "system",
       actor_id: auth.userId,
@@ -387,17 +393,22 @@ serve(async (req: Request) => {
       payload: {
         job_id: jobId,
         request_id: requestId,
+        job_status: jobStatus,
         records_received: records.length,
+        unique_metric_identities: metrics.length,
+        duplicate_identities_collapsed: duplicateCount,
         records_inserted: inserted,
         records_rejected: errors.length,
         dataset_id: datasetId,
       },
     });
+    if (auditError) logger.error("audit log write failed", { error: auditError.message, job_id: jobId });
 
     logger.info("ingest completed", {
       request_id: requestId,
       data_source_id: auth.dataSourceId,
       dataset_id: datasetId,
+      job_status: jobStatus,
       records_received: records.length,
       records_inserted: inserted,
       records_rejected: errors.length,
@@ -405,21 +416,35 @@ serve(async (req: Request) => {
       job_id: jobId,
     });
 
-    return respond({
+    const responseBody = {
       success: inserted > 0,
       job_id: jobId,
+      job_status: jobStatus,
       records_received: records.length,
+      unique_metric_identities: metrics.length,
+      duplicate_identities_collapsed: duplicateCount,
       records_inserted: inserted,
       records_rejected: errors.length,
       dataset_id: datasetId,
+      dataset_metric_count: totalDatasetMetrics,
       validation_errors: errors.length > 0 ? errors.slice(0, 20) : undefined,
       execution_ms: Date.now() - startTime,
       api_version: "v1",
-    });
+    };
+
+    if (inserted === 0) return respond(responseBody, 500);
+    return respond(responseBody, 200);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (jobId) {
-      await failSyncJob(svc, { jobId, errorMessage: message });
+      try {
+        await failSyncJob(svc, { jobId, errorMessage: message });
+      } catch (bookkeepingError) {
+        logger.error("failed to mark sync job failed", {
+          job_id: jobId,
+          error: bookkeepingError instanceof Error ? bookkeepingError.message : String(bookkeepingError),
+        });
+      }
     }
     logger.error("ingest failed", { error: message, execution_ms: Date.now() - startTime, job_id: jobId });
     const status = [
@@ -433,6 +458,6 @@ serve(async (req: Request) => {
         : message === "x-dataset-id not found for organization"
           ? 400
           : 500;
-    return respond({ error: message }, status);
+    return respond({ error: message, job_id: jobId }, status);
   }
 });
