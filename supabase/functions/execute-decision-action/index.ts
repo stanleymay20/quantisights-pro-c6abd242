@@ -27,6 +27,132 @@ async function requirePrivilegedRole(
   return null;
 }
 
+/**
+ * Fail closed before any outbound side effect.
+ *
+ * The database lifecycle gate only allows a decision to become `executable`
+ * after all required approval-chain stages are satisfied. Because this Edge
+ * Function uses the service role, it must explicitly preserve the same tenant
+ * and governance boundary before calling an external system.
+ */
+async function requireExecutablePlan(
+  supabase: any,
+  planId: unknown,
+  organizationId: string,
+  userId: string,
+  actionName: string,
+  corsHdrs: Record<string, string>,
+): Promise<{ plan?: { id: string; decision_id: string; status: string }; response?: Response }> {
+  if (!isValidUUID(planId)) {
+    return {
+      response: new Response(JSON.stringify({ error: "plan_id must be a valid UUID" }), {
+        status: 400,
+        headers: { ...corsHdrs, "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  const { data: plan, error: planError } = await supabase
+    .from("execution_plans")
+    .select("id, decision_id, status")
+    .eq("id", planId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (planError || !plan) {
+    return {
+      response: new Response(JSON.stringify({ error: "Execution plan not found" }), {
+        status: 404,
+        headers: { ...corsHdrs, "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  if (!["pending", "in_progress"].includes(plan.status)) {
+    await supabase.from("execution_events").insert({
+      execution_plan_id: plan.id,
+      organization_id: organizationId,
+      event_type: "outbound_action_blocked",
+      actor_id: userId,
+      metadata: { action: actionName, reason: "plan_not_active", plan_status: plan.status },
+    });
+
+    return {
+      response: new Response(JSON.stringify({
+        error: `Execution plan is ${plan.status}; outbound actions require pending or in_progress status`,
+      }), {
+        status: 409,
+        headers: { ...corsHdrs, "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  const { data: decision, error: decisionError } = await supabase
+    .from("decision_ledger")
+    .select("id, decision_status")
+    .eq("id", plan.decision_id)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (decisionError || !decision) {
+    await supabase.from("execution_events").insert({
+      execution_plan_id: plan.id,
+      organization_id: organizationId,
+      event_type: "outbound_action_blocked",
+      actor_id: userId,
+      metadata: { action: actionName, reason: "parent_decision_not_found" },
+    });
+
+    return {
+      response: new Response(JSON.stringify({ error: "Parent decision not found in organization" }), {
+        status: 409,
+        headers: { ...corsHdrs, "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  if (decision.decision_status !== "executable") {
+    await supabase.from("execution_events").insert({
+      execution_plan_id: plan.id,
+      organization_id: organizationId,
+      event_type: "outbound_action_blocked",
+      actor_id: userId,
+      metadata: {
+        action: actionName,
+        reason: "decision_not_executable",
+        decision_status: decision.decision_status,
+      },
+    });
+
+    await supabase.from("audit_log").insert({
+      organization_id: organizationId,
+      actor_id: userId,
+      actor_type: "user",
+      action_type: "outbound_execution_blocked",
+      resource_type: "execution_plan",
+      resource_id: plan.id,
+      payload: {
+        action: actionName,
+        reason: "decision_not_executable",
+        decision_id: plan.decision_id,
+        decision_status: decision.decision_status,
+      },
+    });
+
+    return {
+      response: new Response(JSON.stringify({
+        error: "Decision is not executable. Required approvals and governance gates must complete before outbound execution.",
+        decision_status: decision.decision_status,
+      }), {
+        status: 409,
+        headers: { ...corsHdrs, "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  return { plan };
+}
+
 /** Validate webhook URL against org-approved destinations */
 async function validateWebhookUrl(
   supabase: any,
@@ -64,20 +190,21 @@ async function validateWebhookUrl(
     return { allowed: false, reason: "Invalid URL format" };
   }
 
-  // Check org-approved webhook destinations (if configured)
+  // Webhooks are fail-closed: every organization must explicitly approve destinations.
   const { data: configs } = await supabase
     .from("connector_configs")
     .select("host")
     .eq("organization_id", organizationId)
     .eq("connector_type", "webhook");
 
-  // If org has configured webhook destinations, enforce allowlist
-  if (configs && configs.length > 0) {
-    const allowedHosts = configs.map((c: any) => c.host?.toLowerCase()).filter(Boolean);
-    const parsedHost = new URL(url).hostname.toLowerCase();
-    if (!allowedHosts.some((h: string) => parsedHost === h || parsedHost.endsWith("." + h))) {
-      return { allowed: false, reason: `Domain not in approved webhook destinations. Approved: ${allowedHosts.join(", ")}` };
-    }
+  if (!configs || configs.length === 0) {
+    return { allowed: false, reason: "No approved webhook destinations configured for this organization" };
+  }
+
+  const allowedHosts = configs.map((c: any) => c.host?.toLowerCase()).filter(Boolean);
+  const parsedHost = new URL(url).hostname.toLowerCase();
+  if (!allowedHosts.some((h: string) => parsedHost === h || parsedHost.endsWith("." + h))) {
+    return { allowed: false, reason: `Domain not in approved webhook destinations. Approved: ${allowedHosts.join(", ")}` };
   }
 
   return { allowed: true };
@@ -273,7 +400,17 @@ Deno.serve(async (req) => {
         const roleCheck = await requirePrivilegedRole(supabase, userId, organization_id, corsHeaders, ["owner", "admin"]);
         if (roleCheck) return roleCheck;
 
-        // Validate webhook URL (SSRF prevention + allowlist)
+        const executionGate = await requireExecutablePlan(
+          supabase,
+          plan_id,
+          organization_id,
+          userId,
+          "trigger_webhook",
+          corsHeaders,
+        );
+        if (executionGate.response) return executionGate.response;
+
+        // Validate webhook URL (SSRF prevention + mandatory allowlist)
         const validation = await validateWebhookUrl(supabase, organization_id, webhook_url);
         if (!validation.allowed) {
           await supabase.from("execution_events").insert({
@@ -341,9 +478,25 @@ Deno.serve(async (req) => {
       case "notify_slack": {
         const { plan_id, channel, message } = params;
 
+        if (!plan_id) {
+          return new Response(JSON.stringify({ error: "plan_id is required for governed Slack execution" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         // Require admin/owner for Slack triggers
         const roleCheck = await requirePrivilegedRole(supabase, userId, organization_id, corsHeaders, ["owner", "admin"]);
         if (roleCheck) return roleCheck;
+
+        const executionGate = await requireExecutablePlan(
+          supabase,
+          plan_id,
+          organization_id,
+          userId,
+          "notify_slack",
+          corsHeaders,
+        );
+        if (executionGate.response) return executionGate.response;
 
         // Channel is REQUIRED — no defaults
         if (!channel || typeof channel !== "string" || !channel.trim()) {
@@ -385,7 +538,7 @@ Deno.serve(async (req) => {
 
         // Always log Slack sends
         await supabase.from("execution_events").insert({
-          execution_plan_id: plan_id || null,
+          execution_plan_id: plan_id,
           organization_id,
           event_type: resp.ok ? "slack_sent" : "slack_failed",
           actor_id: userId,
@@ -398,7 +551,7 @@ Deno.serve(async (req) => {
           actor_type: "user",
           action_type: "slack_notification_sent",
           resource_type: "execution_plan",
-          resource_id: plan_id || null,
+          resource_id: plan_id,
           payload: { channel: channel.trim(), success: resp.ok },
         });
 
