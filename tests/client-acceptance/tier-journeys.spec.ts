@@ -144,7 +144,7 @@ test("homepage is commercially honest and source-of-truth aligned", async ({ pag
   await expect(body).toContainText("Enterprise");
   await expect(body).toContainText("3 data connectors");
   await expect(body).toContainText(/30-day no-card Governance pilot/i);
-  await expect(body).toContainText(/high-risk AI systems/i);
+  await expect(body).toContainText(/High-risk AI governance needs documented controls and human oversight/i);
   await expect(body).not.toContainText(/5 enterprise connectors/i);
   await expect(body).not.toContainText(/DAX-listed industrial group/i);
   await expect(body).not.toContainText(/GDPR Compliant/i);
