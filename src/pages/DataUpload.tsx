@@ -519,10 +519,10 @@ const DataUpload = () => {
       const ingestionMetadataSnapshot = ingestionIntel
         ? toIngestionMetadataSnapshot(ingestionIntel, crossSheet)
         : null;
-      const { data: versionData } = await supabase.from("dataset_versions").insert({
+      const { data: versionData, error: versionErr } = await supabase.from("dataset_versions").insert({
         dataset_id: dataset.id,
         organization_id: currentOrgId,
-        workspace_id: currentWorkspaceId || null,
+        workspace_id: currentWorkspaceId,
         version_number: 1,
         file_path: filePath,
         row_count: allRows.length,
@@ -532,6 +532,9 @@ const DataUpload = () => {
         is_active: true,
         metadata: (ingestionMetadataSnapshot ?? {}) as never,
       }).select("id").single();
+      // Raw records reference the version; without it lineage is unverifiable.
+      if (versionErr || !versionData) throw versionErr ?? new Error("Dataset version creation returned no row");
+
 
       // ═══════════════════════════════════════════════════════
       // SCHEMA EVOLUTION & DATA LINEAGE — Automated tracking
