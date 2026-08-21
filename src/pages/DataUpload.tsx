@@ -849,29 +849,37 @@ const DataUpload = () => {
       }
 
       // Mark raw records as transformed
-      await supabase.from("raw_records")
+      const { error: rawStatusErr } = await supabase.from("raw_records")
         .update({ transform_status: "transformed", transformed_at: new Date().toISOString() })
+        .eq("organization_id", currentOrgId)
         .eq("dataset_id", dataset.id)
         .eq("transform_status", "pending");
+      if (rawStatusErr) throw new Error(`Raw record transform-status update failed: ${rawStatusErr.message}`);
 
       // Update pipeline
-      if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({ transformed_count: rawRowsCleaned, stage: "transform_complete" }).eq("id", pipelineRunId);
-      }
+      const { error: cleanStageErr } = await supabase
+        .from("pipeline_runs")
+        .update({ transformed_count: rawRowsCleaned, stage: "transform_complete" })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", currentOrgId);
+      if (cleanStageErr) throw new Error(`Pipeline clean stage update failed: ${cleanStageErr.message}`);
 
-      // Quality gate: verify dataset status transition
+      // Quality gate: the dataset must actually become queryable. A silent
+      // failure here would leave the dataset stuck in "processing" while the UI
+      // reported a completed import.
       const { error: statusErr } = await supabase
         .from("datasets")
         .update({ status: "completed", row_count: inserted, current_version: 1, last_refreshed_at: new Date().toISOString() })
-        .eq("id", dataset.id);
+        .eq("id", dataset.id)
+        .eq("organization_id", currentOrgId);
       if (statusErr) {
-        console.error("[QualityGate] Dataset status update failed:", { dataset_id: dataset.id, org_id: currentOrgId, error: statusErr.message });
+        throw new Error(`Dataset status transition failed: ${statusErr.message}`);
       }
 
       // Auto-create or use current project, attach dataset, and set as active
       let projectId = currentProject?.id;
       if (!projectId) {
-        const proj = await createProject(datasetName || file.name.replace(/\.\w+$/, ""));
+        const proj = await createProject(trimmedDatasetName || file.name.replace(/\.\w+$/, ""));
         projectId = proj.id;
       }
       await attachDataset(projectId, dataset.id);
