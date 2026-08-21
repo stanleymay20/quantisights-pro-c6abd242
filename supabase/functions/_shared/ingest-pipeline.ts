@@ -4,19 +4,10 @@
  * Stages: queued → extracting → validating → extracted → transforming →
  *         transformed → aggregating → complete | partial_success | failed
  *
- * All connector ingestion (CSV, REST, webhook, future DB sources) flows
- * through this pipeline. It is responsible for:
- *  - creating a connector_sync_runs row
- *  - writing extracted rows to raw_records
- *  - applying field mappings to produce metric rows
- *  - capturing per-row errors in connector_sync_run_errors
- *  - emitting connector_lineage_events at each stage
- *  - refreshing metric summaries/aggregates on success
- *  - finalizing the run with timing + counts
- *
- * Tenant safety: every write includes organization_id; the connector and
- * dataset are validated to belong to the same organization before any rows
- * are touched.
+ * Shared by connector ingestion paths. The pipeline is intentionally strict
+ * about tenant/dataset identity and intentionally replay-safe: a connector
+ * retry must update the same canonical metric identity rather than fail on a
+ * uniqueness collision or overwrite another dataset.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -25,16 +16,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 type SvcClient = any;
 
 export interface ExtractedRow {
-  /** Raw payload from the source (CSV row, REST item, etc.) */
   raw: Record<string, unknown>;
-  /** Optional per-row index from the source */
   index?: number;
 }
 
 export interface FieldMapping {
-  /** Canonical field name (metric_type, value, date, region, segment, ...) */
   canonical: string;
-  /** Data type expected: text | number | date */
   data_type: "text" | "number" | "date";
   required?: boolean;
 }
@@ -53,9 +40,7 @@ export interface RunContext {
   runId: string;
   requestId: string;
   triggeredBy: "manual" | "schedule" | "api";
-  /** source_field → mapping definition */
   mappings: Record<string, FieldMapping>;
-  /** Optional cursor checkpoint to start from */
   checkpointBefore?: Record<string, unknown> | null;
 }
 
@@ -70,7 +55,13 @@ export interface FinalizeResult {
   error_summary?: string;
 }
 
+export interface AggregateRefreshResult {
+  ok: boolean;
+  errors: string[];
+}
+
 const STAGE_TIMINGS_KEY = "stage_timings";
+const METRIC_CONFLICT_KEY = "organization_id,dataset_id,metric_type,date,region,segment,source_id";
 
 export function makeServiceClient(): SvcClient {
   return createClient(
@@ -80,18 +71,18 @@ export function makeServiceClient(): SvcClient {
   );
 }
 
-/** Find an existing run for the same (connector, request_id), used for replay protection. */
 export async function findExistingRun(
   svc: SvcClient,
   connectorId: string,
   requestId: string,
 ): Promise<{ id: string; status: string } | null> {
-  const { data } = await svc
+  const { data, error } = await svc
     .from("connector_sync_runs")
     .select("id,status")
     .eq("connector_id", connectorId)
     .eq("request_id", requestId)
     .maybeSingle();
+  if (error) throw new Error(`findExistingRun failed: ${error.message}`);
   return (data as { id: string; status: string } | null) ?? null;
 }
 
@@ -116,7 +107,7 @@ export async function createRun(
     })
     .select("id")
     .single();
-  if (error || !data?.id) throw new Error(`createRun failed: ${error?.message}`);
+  if (error || !data?.id) throw new Error(`createRun failed: ${error?.message ?? "no row returned"}`);
   return data.id as string;
 }
 
@@ -128,7 +119,8 @@ export async function setStage(
 ): Promise<void> {
   const patch: Record<string, unknown> = { current_stage: stage };
   if (status) patch.status = status;
-  await svc.from("connector_sync_runs").update(patch).eq("id", runId);
+  const { error } = await svc.from("connector_sync_runs").update(patch).eq("id", runId);
+  if (error) throw new Error(`setStage(${stage}) failed: ${error.message}`);
 }
 
 export async function recordLineage(
@@ -138,7 +130,7 @@ export async function recordLineage(
   recordsCount: number,
   details: Record<string, unknown> = {},
 ): Promise<void> {
-  await svc.from("connector_lineage_events").insert({
+  const { error } = await svc.from("connector_lineage_events").insert({
     organization_id: ctx.connector.organization_id,
     connector_id: ctx.connector.id,
     sync_run_id: ctx.runId,
@@ -147,6 +139,7 @@ export async function recordLineage(
     records_count: recordsCount,
     details,
   });
+  if (error) throw new Error(`recordLineage(${eventType}) failed: ${error.message}`);
 }
 
 export async function recordError(
@@ -157,7 +150,7 @@ export async function recordError(
   rowIndex?: number,
   rawPayload?: Record<string, unknown>,
 ): Promise<void> {
-  await svc.from("connector_sync_run_errors").insert({
+  const { error } = await svc.from("connector_sync_run_errors").insert({
     organization_id: ctx.connector.organization_id,
     sync_run_id: ctx.runId,
     connector_id: ctx.connector.id,
@@ -166,11 +159,9 @@ export async function recordError(
     raw_payload: rawPayload ?? null,
     error_message: errorMessage.slice(0, 2000),
   });
+  if (error) throw new Error(`recordError failed: ${error.message}`);
 }
 
-// ----------------------------------------------------------------------------
-// Stage 1: write extracted rows to raw_records
-// ----------------------------------------------------------------------------
 export async function persistRawRecords(
   svc: SvcClient,
   ctx: RunContext,
@@ -193,7 +184,6 @@ export async function persistRawRecords(
     source_name: `connector:${ctx.connector.name}`,
   }));
 
-  // Insert in chunks of 500 to stay within payload limits
   const ids: string[] = [];
   for (let i = 0; i < payload.length; i += 500) {
     const chunk = payload.slice(i, i + 500);
@@ -204,9 +194,6 @@ export async function persistRawRecords(
   return { raw_ids: ids };
 }
 
-// ----------------------------------------------------------------------------
-// Stage 2: validate + transform extracted rows into canonical metric records
-// ----------------------------------------------------------------------------
 export interface CanonicalMetric {
   metric_type: string;
   value: number;
@@ -230,8 +217,6 @@ export function transformWithMappings(
 ): TransformResult {
   const valid: CanonicalMetric[] = [];
   const invalid: TransformResult["invalid"] = [];
-
-  // Reverse map: canonical → source field
   const canonicalToSource: Record<string, string> = {};
   for (const [src, m] of Object.entries(mappings)) canonicalToSource[m.canonical] = src;
 
@@ -252,27 +237,19 @@ export function transformWithMappings(
     const r = rows[i];
     const idx = r.index ?? i;
     try {
-      const metricType = pickString(r.raw, canonicalToSource["metric_type"]);
-      const value = pickNumber(r.raw, canonicalToSource["value"]);
-      const date = pickDate(r.raw, canonicalToSource["date"]);
-
+      const metricType = pickString(r.raw, canonicalToSource.metric_type);
+      const value = pickNumber(r.raw, canonicalToSource.value);
+      const date = pickDate(r.raw, canonicalToSource.date);
       if (!metricType) throw new Error("metric_type is empty");
       if (value === null || Number.isNaN(value)) throw new Error("value is not numeric");
       if (!date) throw new Error("date could not be parsed");
-
       valid.push({
         metric_type: metricType,
         value,
         date,
-        region: canonicalToSource["region"]
-          ? pickString(r.raw, canonicalToSource["region"])
-          : null,
-        segment: canonicalToSource["segment"]
-          ? pickString(r.raw, canonicalToSource["segment"])
-          : null,
-        source_id: canonicalToSource["source_id"]
-          ? pickString(r.raw, canonicalToSource["source_id"])
-          : null,
+        region: canonicalToSource.region ? pickString(r.raw, canonicalToSource.region) : null,
+        segment: canonicalToSource.segment ? pickString(r.raw, canonicalToSource.segment) : null,
+        source_id: canonicalToSource.source_id ? pickString(r.raw, canonicalToSource.source_id) : null,
         source_name: connectorName,
         raw_index: idx,
       });
@@ -284,7 +261,6 @@ export function transformWithMappings(
       });
     }
   }
-
   return { valid, invalid };
 }
 
@@ -306,100 +282,129 @@ function pickDate(raw: Record<string, unknown>, key: string): string | null {
   const v = raw[key];
   if (v === null || v === undefined || v === "") return null;
   const s = String(v).trim();
-  // YYYY only → first day of year
   if (/^\d{4}$/.test(s)) return `${s}-01-01`;
-  // ISO YYYY-MM-DD or full timestamp
   const parsed = new Date(s);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().split("T")[0];
 }
 
-// ----------------------------------------------------------------------------
-// Stage 3: insert canonical metrics
-// ----------------------------------------------------------------------------
+function metricIdentity(
+  organizationId: string,
+  datasetId: string,
+  metric: CanonicalMetric,
+): string {
+  return [
+    organizationId,
+    datasetId,
+    metric.metric_type,
+    metric.date,
+    metric.region ?? "",
+    metric.segment ?? "",
+    metric.source_id ?? "",
+  ].join("\u001f");
+}
+
+/**
+ * Replay-safe canonical metric persistence.
+ *
+ * The database uniqueness contract is dataset-scoped. We also collapse
+ * duplicate identities inside the same incoming batch before issuing the
+ * upsert because PostgreSQL cannot update the same conflict target twice in a
+ * single INSERT ... ON CONFLICT statement.
+ */
 export async function insertMetrics(
   svc: SvcClient,
   ctx: RunContext,
   metrics: CanonicalMetric[],
 ): Promise<{ inserted: number; errors: Array<{ index: number; reason: string }> }> {
   if (metrics.length === 0) return { inserted: 0, errors: [] };
-  if (!ctx.connector.dataset_id) {
+  const datasetId = ctx.connector.dataset_id;
+  if (!datasetId) {
     return {
       inserted: 0,
       errors: metrics.map((m) => ({ index: m.raw_index, reason: "No dataset linked" })),
     };
   }
 
-  const payload = metrics.map((m) => ({
+  const deduped = new Map<string, CanonicalMetric>();
+  for (const metric of metrics) {
+    deduped.set(metricIdentity(ctx.connector.organization_id, datasetId, metric), metric);
+  }
+  const uniqueMetrics = Array.from(deduped.values());
+  const payload = uniqueMetrics.map((m) => ({
     organization_id: ctx.connector.organization_id,
-    dataset_id: ctx.connector.dataset_id,
+    dataset_id: datasetId,
     metric_type: m.metric_type,
     value: m.value,
     date: m.date,
-    region: m.region,
-    segment: m.segment,
-    source_id: m.source_id,
+    region: m.region ?? null,
+    segment: m.segment ?? null,
+    source_id: m.source_id ?? null,
     source_name: m.source_name,
     data_origin: "client",
   }));
 
   let inserted = 0;
   const errors: Array<{ index: number; reason: string }> = [];
-
   for (let i = 0; i < payload.length; i += 500) {
     const chunk = payload.slice(i, i + 500);
-    const chunkOriginal = metrics.slice(i, i + 500);
-    const { error, count } = await svc
-      .from("metrics")
-      .insert(chunk, { count: "exact" });
-    if (error) {
-      // poison batch: try one-by-one to isolate
-      for (let j = 0; j < chunk.length; j++) {
-        const single = chunk[j];
-        const { error: singleErr } = await svc.from("metrics").insert(single);
-        if (singleErr) {
-          errors.push({
-            index: chunkOriginal[j].raw_index,
-            reason: singleErr.message,
-          });
-        } else {
-          inserted++;
-        }
+    const originals = uniqueMetrics.slice(i, i + 500);
+    const { error } = await svc.from("metrics").upsert(chunk, { onConflict: METRIC_CONFLICT_KEY });
+    if (!error) {
+      inserted += chunk.length;
+      continue;
+    }
+
+    // Isolate malformed rows without converting an otherwise valid retry into
+    // a full poison-batch failure.
+    for (let j = 0; j < chunk.length; j++) {
+      const { error: singleErr } = await svc
+        .from("metrics")
+        .upsert(chunk[j], { onConflict: METRIC_CONFLICT_KEY });
+      if (singleErr) {
+        errors.push({ index: originals[j].raw_index, reason: singleErr.message });
+      } else {
+        inserted++;
       }
-    } else {
-      inserted += count ?? chunk.length;
     }
   }
-
   return { inserted, errors };
 }
 
-// ----------------------------------------------------------------------------
-// Stage 4: refresh aggregates/summaries (best-effort)
-// ----------------------------------------------------------------------------
+/**
+ * Refresh summaries and monthly aggregates and report the real outcome.
+ * Supabase RPC failures are returned as `{ error }`; they do not normally
+ * throw, so callers must not rely on try/catch alone.
+ */
 export async function refreshAggregates(
   svc: SvcClient,
   ctx: RunContext,
-): Promise<void> {
-  if (!ctx.connector.dataset_id) return;
+): Promise<AggregateRefreshResult> {
+  if (!ctx.connector.dataset_id) {
+    return { ok: false, errors: ["Connector has no linked dataset_id"] };
+  }
+
+  const errors: string[] = [];
   try {
-    await svc.rpc("refresh_metric_summaries", {
+    const { error: summaryError } = await svc.rpc("refresh_metric_summaries", {
       _org_id: ctx.connector.organization_id,
       _dataset_id: ctx.connector.dataset_id,
     });
-    await svc.rpc("refresh_metric_aggregates", {
+    if (summaryError) errors.push(`refresh_metric_summaries: ${summaryError.message}`);
+
+    const { error: aggregateError } = await svc.rpc("refresh_metric_aggregates", {
       _org_id: ctx.connector.organization_id,
       _dataset_id: ctx.connector.dataset_id,
       _period_type: "monthly",
     });
-  } catch {
-    // best-effort — do not fail run on aggregation issues
+    if (aggregateError) errors.push(`refresh_metric_aggregates: ${aggregateError.message}`);
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
   }
+
+  return { ok: errors.length === 0, errors };
 }
 
-// ----------------------------------------------------------------------------
-// Finalize: compute status, persist counts + timings, update connector health
-// ----------------------------------------------------------------------------
 export async function finalizeRun(
   svc: SvcClient,
   ctx: RunContext,
@@ -416,15 +421,14 @@ export async function finalizeRun(
   checkpointAfter?: Record<string, unknown> | null,
 ): Promise<FinalizeResult> {
   const duration_ms = Date.now() - startedAtMs;
-
   const status: FinalizeResult["status"] =
     counts.rows_inserted === 0 && counts.rows_extracted > 0
       ? "failed"
-      : counts.rows_invalid > 0
+      : counts.rows_invalid > 0 || Boolean(errorSummary)
         ? "partial_success"
         : "complete";
 
-  await svc
+  const { error: runUpdateError } = await svc
     .from("connector_sync_runs")
     .update({
       status,
@@ -441,39 +445,40 @@ export async function finalizeRun(
       [STAGE_TIMINGS_KEY]: stageTimings,
     })
     .eq("id", ctx.runId);
+  if (runUpdateError) throw new Error(`finalize run update failed: ${runUpdateError.message}`);
 
-  // Update connector health
   const isFailure = status === "failed";
   const update: Record<string, unknown> = isFailure
     ? {
         last_error_at: new Date().toISOString(),
         last_error_message: (errorSummary ?? "Run failed").slice(0, 500),
-        consecutive_failures: undefined, // increment via RPC below if we had one — simple set:
         health: "unhealthy",
       }
     : {
         last_success_at: new Date().toISOString(),
         consecutive_failures: 0,
         health: status === "partial_success" ? "degraded" : "healthy",
-        last_error_message: null,
+        last_error_message: status === "partial_success" ? (errorSummary ?? "Partial success").slice(0, 500) : null,
       };
 
   if (isFailure) {
-    // increment via raw select+update (no RPC)
-    const { data: c } = await svc
+    const { data: c, error: readHealthError } = await svc
       .from("data_connectors")
       .select("consecutive_failures")
       .eq("id", ctx.connector.id)
       .maybeSingle();
-    update.consecutive_failures =
-      ((c as { consecutive_failures?: number } | null)?.consecutive_failures ?? 0) + 1;
+    if (readHealthError) throw new Error(`connector health read failed: ${readHealthError.message}`);
+    update.consecutive_failures = ((c as { consecutive_failures?: number } | null)?.consecutive_failures ?? 0) + 1;
   }
 
-  await svc.from("data_connectors").update(update).eq("id", ctx.connector.id);
+  const { error: connectorUpdateError } = await svc
+    .from("data_connectors")
+    .update(update)
+    .eq("id", ctx.connector.id);
+  if (connectorUpdateError) throw new Error(`connector health update failed: ${connectorUpdateError.message}`);
 
-  // Persist checkpoint for incremental syncs
-  if (ctx.connector.cursor_field && checkpointAfter) {
-    await svc
+  if (ctx.connector.cursor_field && checkpointAfter && status !== "failed") {
+    const { error: checkpointError } = await svc
       .from("connector_sync_checkpoints")
       .upsert(
         {
@@ -486,14 +491,10 @@ export async function finalizeRun(
         },
         { onConflict: "connector_id,cursor_field" },
       );
+    if (checkpointError) throw new Error(`checkpoint update failed: ${checkpointError.message}`);
   }
 
-  return {
-    status,
-    duration_ms,
-    error_summary: errorSummary,
-    ...counts,
-  };
+  return { status, duration_ms, error_summary: errorSummary, ...counts };
 }
 
 export async function failRun(
@@ -502,7 +503,7 @@ export async function failRun(
   startedAtMs: number,
   errorMessage: string,
 ): Promise<void> {
-  await svc
+  const { error: runError } = await svc
     .from("connector_sync_runs")
     .update({
       status: "failed",
@@ -512,13 +513,23 @@ export async function failRun(
       error_summary: errorMessage.slice(0, 2000),
     })
     .eq("id", ctx.runId);
+  if (runError) console.error("[ingest-pipeline] failRun ledger update failed", runError.message);
 
-  await svc
+  const { data: current } = await svc
+    .from("data_connectors")
+    .select("consecutive_failures")
+    .eq("id", ctx.connector.id)
+    .maybeSingle();
+  const consecutiveFailures = ((current as { consecutive_failures?: number } | null)?.consecutive_failures ?? 0) + 1;
+
+  const { error: connectorError } = await svc
     .from("data_connectors")
     .update({
       last_error_at: new Date().toISOString(),
       last_error_message: errorMessage.slice(0, 500),
+      consecutive_failures: consecutiveFailures,
       health: "unhealthy",
     })
     .eq("id", ctx.connector.id);
+  if (connectorError) console.error("[ingest-pipeline] failRun connector update failed", connectorError.message);
 }
