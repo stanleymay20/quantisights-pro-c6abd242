@@ -8,30 +8,10 @@ ALTER TABLE public.webauthn_credentials ENABLE ROW LEVEL SECURITY;
 -- Verify existing policies are in place (they are: "Users manage own challenges" and "Users manage own webauthn credentials")
 -- No new policies needed - the existing ALL policies with user_id = auth.uid() are correct.
 
--- P1 FIX: Realtime channel authorization
--- Add policy to realtime.messages so users can only subscribe to org-scoped channels
--- This prevents cross-org data leakage via Realtime subscriptions
-DO $$
-BEGIN
-  -- Enable RLS on realtime.messages if not already enabled
-  ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
-  
-  -- Create policy restricting channel subscriptions
-  -- Realtime topics follow format: "realtime:public:tablename:organization_id=eq.UUID"
-  -- This policy ensures users can only receive messages for channels that match their org
-  CREATE POLICY "Users can only access their org channels"
-    ON realtime.messages
-    FOR SELECT
-    TO authenticated
-    USING (
-      -- Allow if the extension/topic contains the user's organization_id
-      EXISTS (
-        SELECT 1 FROM public.profiles p
-        WHERE p.user_id = auth.uid()
-          AND realtime.messages.extension::text LIKE '%' || p.organization_id::text || '%'
-      )
-    );
-EXCEPTION 
-  WHEN duplicate_object THEN NULL; -- Policy already exists
-  WHEN undefined_table THEN NULL; -- realtime.messages might not exist in all environments
-END $$;
+-- NOTE: Do not ALTER or CREATE POLICY on realtime.messages from application migrations.
+-- realtime.messages is a Supabase-managed table and production projects may restrict
+-- ownership to the Realtime service role. PostgreSQL Realtime (postgres_changes)
+-- authorization for Quantivis remains enforced by RLS on the underlying public tables.
+-- If private Broadcast/Presence channels are introduced, configure their supported
+-- Realtime Authorization policies separately using realtime.topic() and validate them
+-- with a live tenant-isolation certification before enabling those channels.
