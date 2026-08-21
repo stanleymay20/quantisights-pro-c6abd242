@@ -39,33 +39,33 @@ describe("governed outbound execution idempotency", () => {
     const gateDefinition = edgeSource.indexOf("async function requireExecutablePlan(");
     const executableCheck = edgeSource.indexOf('decision.decision_status !== "executable"');
     const webhookCase = edgeSource.indexOf('case "trigger_webhook"');
-    const webhookFetch = edgeSource.indexOf("const webhookResp = await fetch(webhook_url", webhookCase);
+    const webhookDispatch = edgeSource.indexOf("dispatchWithBoundedRateLimitRetries({", webhookCase);
     const slackCase = edgeSource.indexOf('case "notify_slack"');
-    const slackFetch = edgeSource.indexOf("resp = await fetch(`${GATEWAY_URL}/chat.postMessage`", slackCase);
+    const slackDispatch = edgeSource.indexOf("dispatchWithBoundedRateLimitRetries({", slackCase);
 
     expect(gateDefinition).toBeGreaterThan(-1);
     expect(executableCheck).toBeGreaterThan(gateDefinition);
-    expect(edgeSource.indexOf("requireExecutablePlan(", webhookCase)).toBeLessThan(webhookFetch);
-    expect(edgeSource.indexOf("requireExecutablePlan(", slackCase)).toBeLessThan(slackFetch);
+    expect(edgeSource.indexOf("requireExecutablePlan(", webhookCase)).toBeLessThan(webhookDispatch);
+    expect(edgeSource.indexOf("requireExecutablePlan(", slackCase)).toBeLessThan(slackDispatch);
   });
 
   it("claims each external execution intent before dispatch and never blindly re-dispatches a replay", () => {
     const webhookCase = edgeSource.indexOf('case "trigger_webhook"');
     const webhookClaim = edgeSource.indexOf("const claim = await claimExecutionReceipt", webhookCase);
     const webhookReplay = edgeSource.indexOf('if (claim.kind === "replay")', webhookCase);
-    const webhookFetch = edgeSource.indexOf("const webhookResp = await fetch(webhook_url", webhookCase);
+    const webhookDispatch = edgeSource.indexOf("dispatchWithBoundedRateLimitRetries({", webhookCase);
 
     const slackCase = edgeSource.indexOf('case "notify_slack"');
     const slackClaim = edgeSource.indexOf("const claim = await claimExecutionReceipt", slackCase);
     const slackReplay = edgeSource.indexOf('if (claim.kind === "replay")', slackCase);
-    const slackFetch = edgeSource.indexOf("resp = await fetch(`${GATEWAY_URL}/chat.postMessage`", slackCase);
+    const slackDispatch = edgeSource.indexOf("dispatchWithBoundedRateLimitRetries({", slackCase);
 
     expect(webhookClaim).toBeGreaterThan(webhookCase);
     expect(webhookReplay).toBeGreaterThan(webhookClaim);
-    expect(webhookFetch).toBeGreaterThan(webhookReplay);
+    expect(webhookDispatch).toBeGreaterThan(webhookReplay);
     expect(slackClaim).toBeGreaterThan(slackCase);
     expect(slackReplay).toBeGreaterThan(slackClaim);
-    expect(slackFetch).toBeGreaterThan(slackReplay);
+    expect(slackDispatch).toBeGreaterThan(slackReplay);
     expect(edgeSource).toContain("return replayReceiptResponse(claim.receipt, corsHeaders)");
   });
 
