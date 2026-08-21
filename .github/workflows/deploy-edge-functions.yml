@@ -125,26 +125,37 @@ jobs:
         run: |
           set -Eeuo pipefail
           require_gate() {
-            local workflow="$1" label="$2" attempt payload matching status conclusion run_id
+            local workflow="$1" label="$2" attempt payload matching_success matching_active latest_terminal conclusion run_id
             for attempt in $(seq 1 12); do
               payload="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?per_page=100")"
-              matching="$(jq -c --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)][0] // empty' <<<"$payload")"
-              if [ -z "$matching" ]; then
+
+              matching_success="$(jq -c --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .status == "completed" and .conclusion == "success")] | sort_by(.run_attempt // 0, .id) | last // empty' <<<"$payload")"
+              if [ -n "$matching_success" ]; then
+                run_id="$(jq -r '.id' <<<"$matching_success")"
+                echo "Verified ${label} run ${run_id} for ${RELEASE_SHA}"
+                return 0
+              fi
+
+              matching_active="$(jq -c --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .status != "completed")] | sort_by(.run_attempt // 0, .id) | last // empty' <<<"$payload")"
+              if [ -n "$matching_active" ]; then
                 if [ "$attempt" -lt 12 ]; then sleep 10; continue; fi
-                echo "::error::No ${label} run found for ${RELEASE_SHA}"; exit 1
+                run_id="$(jq -r '.id' <<<"$matching_active")"
+                echo "::error::${label} run ${run_id} for ${RELEASE_SHA} did not complete successfully within the verification window"
+                exit 1
               fi
-              status="$(jq -r '.status' <<<"$matching")"
-              conclusion="$(jq -r '.conclusion // ""' <<<"$matching")"
-              run_id="$(jq -r '.id' <<<"$matching")"
-              if [ "$status" = "completed" ]; then
-                if [ "$conclusion" != "success" ]; then
-                  echo "::error::${label} run ${run_id} for ${RELEASE_SHA} concluded ${conclusion}"; exit 1
-                fi
-                echo "Verified ${label} run ${run_id} for ${RELEASE_SHA}"; return 0
+
+              latest_terminal="$(jq -c --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .status == "completed")] | sort_by(.run_attempt // 0, .id) | last // empty' <<<"$payload")"
+              if [ -n "$latest_terminal" ]; then
+                conclusion="$(jq -r '.conclusion // ""' <<<"$latest_terminal")"
+                run_id="$(jq -r '.id' <<<"$latest_terminal")"
+                echo "::error::No successful ${label} run exists for ${RELEASE_SHA}; latest completed run ${run_id} concluded ${conclusion}"
+                exit 1
               fi
-              if [ "$attempt" -lt 12 ]; then sleep 10; fi
+
+              if [ "$attempt" -lt 12 ]; then sleep 10; continue; fi
+              echo "::error::No ${label} run found for ${RELEASE_SHA}"
+              exit 1
             done
-            echo "::error::${label} did not complete successfully for ${RELEASE_SHA}"; exit 1
           }
           require_gate "ci.yml" "CI"
           require_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"
