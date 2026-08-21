@@ -182,7 +182,7 @@ async function pullStripe(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);
@@ -363,7 +363,7 @@ async function pullGA4(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);
@@ -483,7 +483,7 @@ async function pullHubSpot(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);
@@ -586,7 +586,7 @@ async function pullXero(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);
@@ -692,7 +692,7 @@ async function pullQuickBooks(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);
@@ -801,7 +801,7 @@ async function pullSalesforce(
 
   if (metrics.length > 0) {
     const { error } = await serviceClient.from("metrics").upsert(metrics, {
-      onConflict: "organization_id,metric_type,date,region,segment,source_id",
+      onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       ignoreDuplicates: false,
     });
     if (error) errors.push(`DB upsert: ${error.message}`);

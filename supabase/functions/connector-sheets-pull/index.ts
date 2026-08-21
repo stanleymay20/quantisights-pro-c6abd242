@@ -225,7 +225,7 @@ Deno.serve(async (req: Request) => {
       for (let i = 0; i < metrics.length; i += 500) {
         const batch = metrics.slice(i, i + 500);
         const { error: uErr } = await svc.from("metrics").upsert(batch, {
-          onConflict: "organization_id,metric_type,date,region,segment,source_id",
+          onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
           ignoreDuplicates: false,
         });
         if (uErr) errors.push(`DB upsert batch ${i}: ${uErr.message}`);

@@ -207,7 +207,7 @@ serve(async (req) => {
         for (let i = 0; i < uniqueMetrics.length; i += 500) {
           const batch = uniqueMetrics.slice(i, i + 500);
           const { error } = await supabase.from("metrics").upsert(batch, {
-            onConflict: "organization_id,metric_type,date,region,segment,source_id",
+            onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
           });
           if (error) throw error;
         }

@@ -399,7 +399,7 @@ serve(async (req) => {
       const { error: upsertErr } = await supabase
         .from("metrics")
         .upsert(batch, {
-          onConflict: "organization_id,metric_type,date,region,segment,source_id",
+          onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
         });
 
       if (upsertErr) {
@@ -417,7 +417,7 @@ serve(async (req) => {
           const { error: singleErr } = await supabase
             .from("metrics")
             .upsert([batch[j]], {
-              onConflict: "organization_id,metric_type,date,region,segment,source_id",
+              onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
             });
 
           if (singleErr) {

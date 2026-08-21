@@ -182,7 +182,7 @@ Deno.serve(async (req: Request) => {
 
     if (metrics.length > 0) {
       const { error: uErr } = await svc.from("metrics").upsert(metrics, {
-        onConflict: "organization_id,metric_type,date,region,segment,source_id",
+        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
         ignoreDuplicates: false,
       });
       if (uErr) errors.push(`DB upsert: ${uErr.message}`);
