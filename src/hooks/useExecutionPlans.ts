@@ -53,11 +53,31 @@ export interface ExecutionReceipt {
   retry_exhausted_at: string | null;
 }
 
+export interface ExecutionCompensationRequest {
+  id: string;
+  execution_plan_id: string;
+  decision_id: string;
+  original_receipt_id: string;
+  compensation_type: string;
+  status: "requested" | "approved" | "rejected" | "executing" | "succeeded" | "failed" | "uncertain";
+  reason: string;
+  compensation_config: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  requested_by: string;
+  requested_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  completed_at: string | null;
+  external_reference: string | null;
+}
+
 export const useExecutionPlans = (organizationId: string | null, decisionId: string | null) => {
   const { toast } = useToast();
   const [plans, setPlans] = useState<ExecutionPlan[]>([]);
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
+  const [compensationRequests, setCompensationRequests] = useState<ExecutionCompensationRequest[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchTimeline = useCallback(async () => {
@@ -79,21 +99,34 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       setPlans(data?.plans || []);
       setEvents(data?.events || []);
 
-      // execution_action_receipts is intentionally service-role-only under RLS.
-      // Read the safe timeline projection through the membership-checking RPC.
-      const { data: receiptData, error: receiptError } = await (supabase as any).rpc(
-        "list_execution_action_receipts",
-        {
+      // Service-role-only execution records are exposed through tenant-checking RPC projections.
+      const [receiptResult, compensationResult] = await Promise.all([
+        (supabase as any).rpc("list_execution_action_receipts", {
           p_organization_id: organizationId,
           p_decision_id: decisionId,
-        },
-      );
+        }),
+        (supabase as any).rpc("list_execution_compensation_requests", {
+          p_organization_id: organizationId,
+          p_decision_id: decisionId,
+        }),
+      ]);
 
-      if (receiptError) {
-        console.error("Failed to fetch execution receipts:", receiptError);
+      if (receiptResult.error) {
+        console.error("Failed to fetch execution receipts:", receiptResult.error);
         setReceipts([]);
       } else {
-        setReceipts(Array.isArray(receiptData) ? receiptData as ExecutionReceipt[] : []);
+        setReceipts(Array.isArray(receiptResult.data) ? receiptResult.data as ExecutionReceipt[] : []);
+      }
+
+      if (compensationResult.error) {
+        console.error("Failed to fetch compensation requests:", compensationResult.error);
+        setCompensationRequests([]);
+      } else {
+        setCompensationRequests(
+          Array.isArray(compensationResult.data)
+            ? compensationResult.data as ExecutionCompensationRequest[]
+            : [],
+        );
       }
     } catch (e: unknown) {
       console.error("Failed to fetch timeline:", e);
@@ -275,11 +308,94 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     return data;
   }, [organizationId, toast, fetchTimeline]);
 
+  const requestCompensation = useCallback(async (params: {
+    receiptId: string;
+    reason: string;
+    webhookUrl: string;
+    payload: Record<string, unknown>;
+    evidence?: Record<string, unknown>;
+  }) => {
+    if (!organizationId) return null;
+    const auth = await getVerifiedAuth();
+    if (!auth) return null;
+
+    const reason = params.reason.trim();
+    const webhookUrl = params.webhookUrl.trim();
+    if (reason.length < 10 || !webhookUrl.startsWith("https://")) {
+      toast({
+        title: "Compensation contract incomplete",
+        description: "Provide a clear reason and an HTTPS compensation webhook.",
+        variant: "destructive",
+      });
+      return null;
+    }
+
+    const { data, error } = await (supabase as any).rpc("request_execution_compensation", {
+      p_organization_id: organizationId,
+      p_receipt_id: params.receiptId,
+      p_compensation_type: "webhook",
+      p_reason: reason,
+      p_compensation_config: {
+        webhook_url: webhookUrl,
+        payload: params.payload,
+      },
+      p_evidence: params.evidence || {},
+    });
+
+    if (error) {
+      toast({ title: "Compensation request failed", description: error.message, variant: "destructive" });
+      return null;
+    }
+
+    toast({ title: "Compensation submitted for independent review" });
+    await fetchTimeline();
+    return data;
+  }, [organizationId, toast, fetchTimeline]);
+
+  const reviewCompensation = useCallback(async (
+    requestId: string,
+    decision: "approved" | "rejected",
+    note: string,
+  ) => {
+    if (!organizationId) return null;
+    const auth = await getVerifiedAuth();
+    if (!auth) return null;
+
+    const normalizedNote = note.trim();
+    if (normalizedNote.length < 10) {
+      toast({
+        title: "Review evidence required",
+        description: "Record the approval or rejection rationale in at least 10 characters.",
+        variant: "destructive",
+      });
+      return null;
+    }
+
+    const { data, error } = await (supabase as any).rpc("review_execution_compensation", {
+      p_organization_id: organizationId,
+      p_request_id: requestId,
+      p_decision: decision,
+      p_note: normalizedNote,
+    });
+
+    if (error) {
+      toast({ title: "Compensation review failed", description: error.message, variant: "destructive" });
+      return null;
+    }
+
+    toast({ title: `Compensation ${decision}` });
+    await fetchTimeline();
+    return data;
+  }, [organizationId, toast, fetchTimeline]);
+
   const completionRate = plans.length > 0
     ? plans.filter(p => p.status === "completed").length / plans.length
     : 0;
   const uncertainReceipts = receipts.filter(receipt => receipt.status === "uncertain");
   const exhaustedReceipts = receipts.filter(receipt => receipt.retry_exhausted_at !== null);
+  const pendingCompensations = compensationRequests.filter(request => request.status === "requested");
+  const approvedCompensations = compensationRequests.filter(request => request.status === "approved");
+  const uncertainCompensations = compensationRequests.filter(request => request.status === "uncertain");
 
   return {
     plans,
@@ -287,12 +403,18 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     receipts,
     uncertainReceipts,
     exhaustedReceipts,
+    compensationRequests,
+    pendingCompensations,
+    approvedCompensations,
+    uncertainCompensations,
     loading,
     createPlan,
     updatePlanStatus,
     triggerWebhook,
     notifySlack,
     reconcileReceipt,
+    requestCompensation,
+    reviewCompensation,
     refresh: fetchTimeline,
     completionRate,
   };
