@@ -147,6 +147,10 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     const auth = await getVerifiedAuth();
     if (!auth) return;
 
+    // Create the execution-intent key before invokeWithRetry so every transport
+    // retry carries the same key and the backend can suppress duplicate sends.
+    const idempotencyKey = crypto.randomUUID();
+
     const { data, error } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "trigger_webhook",
@@ -154,6 +158,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
         plan_id: planId,
         webhook_url: webhookUrl,
         payload,
+        idempotency_key: idempotencyKey,
       },
       headers: authHeaders(auth),
     });
@@ -171,6 +176,8 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     const auth = await getVerifiedAuth();
     if (!auth) return;
 
+    const idempotencyKey = crypto.randomUUID();
+
     const { data, error } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "notify_slack",
@@ -178,6 +185,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
         plan_id: planId,
         channel,
         message,
+        idempotency_key: idempotencyKey,
       },
       headers: authHeaders(auth),
     });
