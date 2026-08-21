@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { useProject } from "@/contexts/ProjectContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useDataset } from "@/contexts/DatasetContext";
 import { useMetricsSummary } from "@/hooks/useMetricsSummary";
 import { useInsights } from "@/hooks/useInsights";
 import { filterCriticalInsights } from "@/lib/insight-filters";
@@ -23,9 +24,12 @@ const Dashboard = () => {
   const { user, profile, signOut } = useAuth();
   const { organizations, currentOrgId, currentOrg, switchOrganization, loading: orgLoading } = useOrganization();
   const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();
-  const { activeDatasetId, loading: projectLoading } = useProject();
+  const { loading: projectLoading } = useProject();
+  // Never scope dashboard data from projects.active_dataset_id directly. The
+  // DatasetContext ID exists only after the project_datasets link has been
+  // verified for the active project.
+  const { activeDatasetId, loading: datasetLoading } = useDataset();
 
-  // FAST PATH: server-aggregated summaries (~20 rows) instead of full metrics (~3K+ rows).
   const {
     topMetrics, hasData, loading: metricsLoading,
   } = useMetricsSummary(currentOrgId, activeDatasetId);
@@ -44,7 +48,6 @@ const Dashboard = () => {
   const [pendingDecisions, setPendingDecisions] = useState(0);
   const decisionSyncRef = useRef<Set<string>>(new Set());
 
-  // Onboarding redirect — cached in sessionStorage to avoid repeated DB hits.
   useEffect(() => {
     if (orgLoading || !currentOrgId) return;
     const cacheKey = `onboarding_checked_${currentOrgId}`;
@@ -58,7 +61,6 @@ const Dashboard = () => {
           .eq("id", currentOrgId)
           .maybeSingle();
         if (error) {
-          // Non-blocking — default to showing dashboard rather than creating a redirect loop.
           console.warn("[Dashboard] Onboarding check failed:", error.message);
           sessionStorage.setItem(cacheKey, "done");
           return;
@@ -76,10 +78,8 @@ const Dashboard = () => {
     void checkOnboarding();
   }, [currentOrgId, orgLoading, navigate]);
 
-  // Keep the home request path lean: the executive driver does not consume
-  // calibration_models, so dashboard load should only fetch the decision count it renders.
   const refreshDecisionStats = useCallback(async () => {
-    if (!currentOrgId) {
+    if (!currentOrgId || !activeDatasetId) {
       setPendingDecisions(0);
       return;
     }
@@ -88,23 +88,24 @@ const Dashboard = () => {
       .from("decision_ledger")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", currentOrgId)
+      .eq("dataset_id", activeDatasetId)
       .eq("execution_status", "not_started")
       .eq("is_suppressed", false);
 
     if (error) {
       console.warn("[Dashboard] Pending-decision count failed:", error.message);
+      setPendingDecisions(0);
       return;
     }
     setPendingDecisions(count ?? 0);
-  }, [currentOrgId]);
+  }, [currentOrgId, activeDatasetId]);
 
   useEffect(() => {
     void refreshDecisionStats();
-  }, [activeDatasetId, refreshDecisionStats]);
+  }, [refreshDecisionStats]);
 
   const criticalInsights = useMemo(() => filterCriticalInsights(insights), [insights]);
 
-  // Close the intelligence → decision gap once per meaningful insight set.
   useEffect(() => {
     if (!currentOrgId || !activeDatasetId || insightsLoading) return;
     if (criticalInsights.length === 0) return;
@@ -116,14 +117,21 @@ const Dashboard = () => {
     invokeWithRetry("auto-create-decisions", {
       body: { organization_id: currentOrgId, dataset_id: activeDatasetId },
     })
-      .then(() => refreshDecisionStats())
+      .then((result) => {
+        if (result.error) {
+          console.warn("[Dashboard] auto-create-decisions sync failed", result.error);
+          decisionSyncRef.current.delete(syncKey);
+          return;
+        }
+        void refreshDecisionStats();
+      })
       .catch((error) => {
-        console.warn("[Dashboard] auto-create-decisions sync failed", error);
+        console.warn("[Dashboard] auto-create-decisions sync threw", error);
         decisionSyncRef.current.delete(syncKey);
       });
   }, [activeDatasetId, criticalInsights, currentOrgId, insightsLoading, refreshDecisionStats]);
 
-  const isContextLoading = orgLoading || workspaceLoading || projectLoading;
+  const isContextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
   const isLoading = isContextLoading || metricsLoading || insightsLoading;
   const isDemoHydrating = isDemoUser && (!currentWorkspaceId || !activeDatasetId);
   const showWelcomeFlow = !isDemoUser && !isContextLoading;
@@ -164,6 +172,7 @@ const Dashboard = () => {
               <ExecutiveDailyDriver
                 displayName={displayName}
                 orgId={currentOrgId ?? null}
+                datasetId={activeDatasetId}
                 insights={insights}
                 topMetrics={topMetrics ?? []}
                 pendingDecisions={pendingDecisions}
