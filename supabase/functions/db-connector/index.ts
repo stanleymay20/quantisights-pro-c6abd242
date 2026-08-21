@@ -181,7 +181,7 @@ async function syncPostgres(
     for (let i = 0; i < metrics.length; i += 500) {
       const batch = metrics.slice(i, i + 500);
       const { error } = await serviceClient.from("metrics").upsert(batch, {
-        onConflict: "organization_id,metric_type,date,source_id", ignoreDuplicates: false,
+        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id", ignoreDuplicates: false,
       });
       if (error) errors.push(`DB upsert batch ${i}: ${error.message}`);
     }
@@ -571,7 +571,7 @@ async function syncSnowflake(
     for (let i = 0; i < metrics.length; i += 500) {
       const batch = metrics.slice(i, i + 500);
       const { error } = await serviceClient.from("metrics").upsert(batch, {
-        onConflict: "organization_id,metric_type,date,source_id", ignoreDuplicates: false,
+        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id", ignoreDuplicates: false,
       });
       if (error) errors.push(`DB upsert batch ${i}: ${error.message}`);
     }
@@ -719,7 +719,7 @@ async function syncBigQuery(
     for (let i = 0; i < metrics.length; i += 500) {
       const batch = metrics.slice(i, i + 500);
       const { error } = await serviceClient.from("metrics").upsert(batch, {
-        onConflict: "organization_id,metric_type,date,source_id", ignoreDuplicates: false,
+        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id", ignoreDuplicates: false,
       });
       if (error) errors.push(`DB upsert batch ${i}: ${error.message}`);
     }
@@ -964,7 +964,7 @@ async function syncRedshift(
         for (let i = 0; i < metrics.length; i += BATCH) {
           const batch = metrics.slice(i, i + BATCH);
           const { error } = await serviceClient.from("metrics").upsert(batch, {
-            onConflict: "organization_id,metric_type,date,region,segment,source_id",
+            onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
           });
           if (error) result.errors.push(`${mapping.metric_type}: ${error.message}`);
           else result.records += batch.length;

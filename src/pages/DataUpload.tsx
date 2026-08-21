@@ -89,6 +89,9 @@ const DataUpload = () => {
   const [datasetName, setDatasetName] = useState("");
   const [defaultMetricType, setDefaultMetricType] = useState("revenue");
   const [importCount, setImportCount] = useState(0);
+  // Stages that failed after the raw + clean layers were already durable. A
+  // non-empty list means the import is PARTIAL, never a plain success.
+  const [degradedStages, setDegradedStages] = useState<string[]>([]);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [detectedSchema, setDetectedSchema] = useState<DetectedSchema[]>([]);
   const [intelligence, setIntelligence] = useState<DatasetIntelligence | null>(null);
@@ -439,6 +442,20 @@ const DataUpload = () => {
       return;
     }
 
+    // The workspace is part of the tenancy contract for every row this flow
+    // writes. Creating datasets/pipeline rows with workspace_id null here would
+    // produce records the workspace-scoped surfaces can never resolve again.
+    if (!currentWorkspaceId) {
+      toast({ title: "No workspace selected", description: "Wait for your workspace to load, or select one, before importing.", variant: "destructive" });
+      return;
+    }
+
+    const trimmedDatasetName = datasetName.trim();
+    if (!trimmedDatasetName) {
+      toast({ title: "Dataset name required", description: "Give this dataset a name before importing.", variant: "destructive" });
+      return;
+    }
+
     if (tier === "starter") {
       const { count } = await supabase
         .from("datasets")
@@ -456,12 +473,20 @@ const DataUpload = () => {
     }
 
     setStep("importing");
+    setDegradedStages([]);
     const pipelineStartedAt = Date.now();
     let pipelineRunId: string | null = null;
+    // Only resources created by THIS import are eligible for rollback. Existing
+    // data is never touched.
+    let uploadedFilePath: string | null = null;
+    let createdDatasetId: string | null = null;
 
     try {
       const filePath = `${currentOrgId}/${Date.now()}_${file.name}`;
-      await supabase.storage.from("datasets").upload(filePath, file);
+      const { error: uploadErr } = await supabase.storage.from("datasets").upload(filePath, file);
+      if (uploadErr) throw new Error(`File upload failed: ${uploadErr.message}`);
+      uploadedFilePath = filePath;
+
 
       // Convert colIdx mapping to deterministic composite keys for storage
       const storedMapping: Record<string, ColumnTarget> = {};
@@ -475,8 +500,8 @@ const DataUpload = () => {
         .from("datasets")
         .insert({
           organization_id: currentOrgId,
-          workspace_id: currentWorkspaceId || null,
-          name: datasetName,
+          workspace_id: currentWorkspaceId,
+          name: trimmedDatasetName,
           file_path: filePath,
           uploaded_by: user.id,
           row_count: allRows.length,
@@ -486,16 +511,18 @@ const DataUpload = () => {
         .select()
         .single();
 
-      if (dsError) throw dsError;
+      if (dsError || !dataset) throw dsError ?? new Error("Dataset creation returned no row");
+      createdDatasetId = dataset.id;
+
 
       // Create dataset version
       const ingestionMetadataSnapshot = ingestionIntel
         ? toIngestionMetadataSnapshot(ingestionIntel, crossSheet)
         : null;
-      const { data: versionData } = await supabase.from("dataset_versions").insert({
+      const { data: versionData, error: versionErr } = await supabase.from("dataset_versions").insert({
         dataset_id: dataset.id,
         organization_id: currentOrgId,
-        workspace_id: currentWorkspaceId || null,
+        workspace_id: currentWorkspaceId,
         version_number: 1,
         file_path: filePath,
         row_count: allRows.length,
@@ -505,6 +532,9 @@ const DataUpload = () => {
         is_active: true,
         metadata: (ingestionMetadataSnapshot ?? {}) as never,
       }).select("id").single();
+      // Raw records reference the version; without it lineage is unverifiable.
+      if (versionErr || !versionData) throw versionErr ?? new Error("Dataset version creation returned no row");
+
 
       // ═══════════════════════════════════════════════════════
       // SCHEMA EVOLUTION & DATA LINEAGE — Automated tracking
@@ -538,7 +568,7 @@ const DataUpload = () => {
           .from("datasets")
           .select("id, current_version, column_mapping")
           .eq("organization_id", currentOrgId)
-          .eq("name", datasetName)
+          .eq("name", trimmedDatasetName)
           .neq("id", dataset.id)
           .order("created_at", { ascending: false })
           .limit(1);
@@ -618,9 +648,9 @@ const DataUpload = () => {
       // ═══════════════════════════════════════════════════════
 
       // Create pipeline run for observability
-      const { data: pipelineRun } = await supabase.from("pipeline_runs").insert({
+      const { data: pipelineRun, error: pipelineErr } = await supabase.from("pipeline_runs").insert({
         organization_id: currentOrgId,
-        workspace_id: currentWorkspaceId || null,
+        workspace_id: currentWorkspaceId,
         dataset_id: dataset.id,
         run_type: "full",
         status: "running",
@@ -628,7 +658,10 @@ const DataUpload = () => {
         metadata: { import_mode: importMode, file_name: file.name },
       }).select("id").single();
 
-      pipelineRunId = pipelineRun?.id ?? null;
+      // An import must not claim pipeline observability it does not have.
+      if (pipelineErr || !pipelineRun) throw pipelineErr ?? new Error("Pipeline run creation returned no row");
+      pipelineRunId = pipelineRun.id;
+
 
       // Build raw records from parsed rows
       const rawRecords: Array<{
@@ -649,9 +682,9 @@ const DataUpload = () => {
         });
         rawRecords.push({
           organization_id: currentOrgId,
-          workspace_id: currentWorkspaceId || null,
+          workspace_id: currentWorkspaceId,
           dataset_id: dataset.id,
-          dataset_version_id: versionData?.id || null,
+          dataset_version_id: versionData.id,
           row_index: i,
           raw_data: rowData,
         });
@@ -667,9 +700,12 @@ const DataUpload = () => {
       }
 
       // Update pipeline with raw count
-      if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({ raw_count: rawInserted, stage: "raw_complete" }).eq("id", pipelineRunId);
-      }
+      const { error: rawStageErr } = await supabase
+        .from("pipeline_runs")
+        .update({ raw_count: rawInserted, stage: "raw_complete" })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", currentOrgId);
+      if (rawStageErr) throw new Error(`Pipeline raw stage update failed: ${rawStageErr.message}`);
 
       // ═══════════════════════════════════════════════════════
       // TIER 2: CLEAN LAYER — Transform raw → normalized metrics
@@ -799,7 +835,7 @@ const DataUpload = () => {
       // Deduplicate metrics by conflict key before upserting
       const deduped = new Map<string, typeof metricsToInsert[0]>();
       for (const m of metricsToInsert) {
-        const key = `${m.organization_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
+        const key = `${m.organization_id}|${m.dataset_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
         deduped.set(key, m); // last-write-wins
       }
       const uniqueMetrics = Array.from(deduped.values());
@@ -807,35 +843,43 @@ const DataUpload = () => {
       let inserted = 0;
       for (let i = 0; i < uniqueMetrics.length; i += 500) {
         const batch = uniqueMetrics.slice(i, i + 500);
-        const { error } = await supabase.from("metrics").upsert(batch, { onConflict: "organization_id,metric_type,date,region,segment,source_id" });
+        const { error } = await supabase.from("metrics").upsert(batch, { onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id" });
         if (error) throw error;
         inserted += batch.length;
       }
 
       // Mark raw records as transformed
-      await supabase.from("raw_records")
+      const { error: rawStatusErr } = await supabase.from("raw_records")
         .update({ transform_status: "transformed", transformed_at: new Date().toISOString() })
+        .eq("organization_id", currentOrgId)
         .eq("dataset_id", dataset.id)
         .eq("transform_status", "pending");
+      if (rawStatusErr) throw new Error(`Raw record transform-status update failed: ${rawStatusErr.message}`);
 
       // Update pipeline
-      if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({ transformed_count: rawRowsCleaned, stage: "transform_complete" }).eq("id", pipelineRunId);
-      }
+      const { error: cleanStageErr } = await supabase
+        .from("pipeline_runs")
+        .update({ transformed_count: rawRowsCleaned, stage: "transform_complete" })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", currentOrgId);
+      if (cleanStageErr) throw new Error(`Pipeline clean stage update failed: ${cleanStageErr.message}`);
 
-      // Quality gate: verify dataset status transition
+      // Quality gate: the dataset must actually become queryable. A silent
+      // failure here would leave the dataset stuck in "processing" while the UI
+      // reported a completed import.
       const { error: statusErr } = await supabase
         .from("datasets")
         .update({ status: "completed", row_count: inserted, current_version: 1, last_refreshed_at: new Date().toISOString() })
-        .eq("id", dataset.id);
+        .eq("id", dataset.id)
+        .eq("organization_id", currentOrgId);
       if (statusErr) {
-        console.error("[QualityGate] Dataset status update failed:", { dataset_id: dataset.id, org_id: currentOrgId, error: statusErr.message });
+        throw new Error(`Dataset status transition failed: ${statusErr.message}`);
       }
 
       // Auto-create or use current project, attach dataset, and set as active
       let projectId = currentProject?.id;
       if (!projectId) {
-        const proj = await createProject(datasetName || file.name.replace(/\.\w+$/, ""));
+        const proj = await createProject(trimmedDatasetName || file.name.replace(/\.\w+$/, ""));
         projectId = proj.id;
       }
       await attachDataset(projectId, dataset.id);

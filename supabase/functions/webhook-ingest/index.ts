@@ -376,7 +376,7 @@ serve(async (req) => {
 
     // Dedupe within each batch on the upsert conflict key — Postgres rejects
     // ON CONFLICT when the same key appears twice in one statement.
-    const CONFLICT_KEYS = ["organization_id", "metric_type", "date", "region", "segment", "source_id"] as const;
+    const CONFLICT_KEYS = ["organization_id", "dataset_id", "metric_type", "date", "region", "segment", "source_id"] as const;
     // Normalize like Postgres will after upsert: trim whitespace and lowercase
     // metric_type so "Revenue" and "revenue " collapse to the same conflict key
     // and the ON CONFLICT DO UPDATE statement can't hit the same row twice.
@@ -399,7 +399,7 @@ serve(async (req) => {
       const { error: upsertErr } = await supabase
         .from("metrics")
         .upsert(batch, {
-          onConflict: "organization_id,metric_type,date,region,segment,source_id",
+          onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
         });
 
       if (upsertErr) {
@@ -417,7 +417,7 @@ serve(async (req) => {
           const { error: singleErr } = await supabase
             .from("metrics")
             .upsert([batch[j]], {
-              onConflict: "organization_id,metric_type,date,region,segment,source_id",
+              onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
             });
 
           if (singleErr) {

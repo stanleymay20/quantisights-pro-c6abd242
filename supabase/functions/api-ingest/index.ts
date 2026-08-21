@@ -357,7 +357,7 @@ serve(async (req: Request) => {
     for (let i = 0; i < metrics.length; i += BATCH_SIZE) {
       const batch = metrics.slice(i, i + BATCH_SIZE);
       const { error } = await svc.from("metrics").upsert(batch, {
-        onConflict: "organization_id,metric_type,date,region,segment,source_id",
+        onConflict: "organization_id,dataset_id,metric_type,date,region,segment,source_id",
       });
 
       if (error) {
