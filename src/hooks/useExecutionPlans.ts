@@ -31,10 +31,28 @@ export interface ExecutionEvent {
   created_at: string;
 }
 
+export interface ExecutionReceipt {
+  id: string;
+  execution_plan_id: string;
+  decision_id: string;
+  action_type: string;
+  status: "claimed" | "succeeded" | "failed" | "uncertain";
+  response_status: number | null;
+  response_metadata: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  reconciled_at: string | null;
+  reconciled_by: string | null;
+  reconciliation_note: string | null;
+  external_reference: string | null;
+}
+
 export const useExecutionPlans = (organizationId: string | null, decisionId: string | null) => {
   const { toast } = useToast();
   const [plans, setPlans] = useState<ExecutionPlan[]>([]);
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
+  const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchTimeline = useCallback(async () => {
@@ -55,10 +73,28 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       if (error) throw error;
       setPlans(data?.plans || []);
       setEvents(data?.events || []);
+
+      // execution_action_receipts is intentionally service-role-only under RLS.
+      // Read the safe timeline projection through the membership-checking RPC.
+      const { data: receiptData, error: receiptError } = await (supabase as any).rpc(
+        "list_execution_action_receipts",
+        {
+          p_organization_id: organizationId,
+          p_decision_id: decisionId,
+        },
+      );
+
+      if (receiptError) {
+        console.error("Failed to fetch execution receipts:", receiptError);
+        setReceipts([]);
+      } else {
+        setReceipts(Array.isArray(receiptData) ? receiptData as ExecutionReceipt[] : []);
+      }
     } catch (e: unknown) {
       console.error("Failed to fetch timeline:", e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [organizationId, decisionId]);
 
   useEffect(() => {
@@ -198,18 +234,63 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     fetchTimeline();
   }, [organizationId, toast, fetchTimeline]);
 
+  const reconcileReceipt = useCallback(async (
+    receiptId: string,
+    resolution: "succeeded" | "failed",
+    note: string,
+    externalReference?: string,
+  ) => {
+    if (!organizationId) return null;
+    const auth = await getVerifiedAuth();
+    if (!auth) return null;
+
+    const normalizedNote = note.trim();
+    if (normalizedNote.length < 10) {
+      toast({
+        title: "Reconciliation evidence required",
+        description: "Describe the external evidence in at least 10 characters.",
+        variant: "destructive",
+      });
+      return null;
+    }
+
+    const { data, error } = await (supabase as any).rpc(
+      "reconcile_execution_action_receipt",
+      {
+        p_organization_id: organizationId,
+        p_receipt_id: receiptId,
+        p_resolution: resolution,
+        p_note: normalizedNote,
+        p_external_reference: externalReference?.trim() || null,
+      },
+    );
+
+    if (error) {
+      toast({ title: "Reconciliation failed", description: error.message, variant: "destructive" });
+      return null;
+    }
+
+    toast({ title: `Execution receipt reconciled as ${resolution}` });
+    await fetchTimeline();
+    return data;
+  }, [organizationId, toast, fetchTimeline]);
+
   const completionRate = plans.length > 0
     ? plans.filter(p => p.status === "completed").length / plans.length
     : 0;
+  const uncertainReceipts = receipts.filter(receipt => receipt.status === "uncertain");
 
   return {
     plans,
     events,
+    receipts,
+    uncertainReceipts,
     loading,
     createPlan,
     updatePlanStatus,
     triggerWebhook,
     notifySlack,
+    reconcileReceipt,
     refresh: fetchTimeline,
     completionRate,
   };
