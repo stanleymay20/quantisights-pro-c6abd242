@@ -500,8 +500,8 @@ const DataUpload = () => {
         .from("datasets")
         .insert({
           organization_id: currentOrgId,
-          workspace_id: currentWorkspaceId || null,
-          name: datasetName,
+          workspace_id: currentWorkspaceId,
+          name: trimmedDatasetName,
           file_path: filePath,
           uploaded_by: user.id,
           row_count: allRows.length,
@@ -511,7 +511,9 @@ const DataUpload = () => {
         .select()
         .single();
 
-      if (dsError) throw dsError;
+      if (dsError || !dataset) throw dsError ?? new Error("Dataset creation returned no row");
+      createdDatasetId = dataset.id;
+
 
       // Create dataset version
       const ingestionMetadataSnapshot = ingestionIntel
