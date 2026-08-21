@@ -12,7 +12,13 @@ export interface ExecutionReceipt {
   response_status: number | null;
   response_metadata: JsonRecord;
   error_message: string | null;
+  reconciled_at?: string | null;
+  reconciled_by?: string | null;
+  reconciliation_note?: string | null;
+  external_reference?: string | null;
 }
+
+const RECEIPT_SELECT = "id, organization_id, execution_plan_id, decision_id, action_type, idempotency_key, request_fingerprint, status, response_status, response_metadata, error_message, reconciled_at, reconciled_by, reconciliation_note, external_reference";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -69,7 +75,7 @@ export async function claimExecutionReceipt(
       initiated_by: input.initiatedBy,
       status: "claimed",
     })
-    .select("id, organization_id, execution_plan_id, decision_id, action_type, idempotency_key, request_fingerprint, status, response_status, response_metadata, error_message")
+    .select(RECEIPT_SELECT)
     .single();
 
   if (!insertError && created) {
@@ -80,7 +86,7 @@ export async function claimExecutionReceipt(
 
   const { data: existing, error: readError } = await supabase
     .from("execution_action_receipts")
-    .select("id, organization_id, execution_plan_id, decision_id, action_type, idempotency_key, request_fingerprint, status, response_status, response_metadata, error_message")
+    .select(RECEIPT_SELECT)
     .eq("organization_id", input.organizationId)
     .eq("idempotency_key", input.idempotencyKey)
     .maybeSingle();
@@ -121,4 +127,39 @@ export async function completeExecutionReceipt(
     .eq("status", "claimed");
 
   if (error) throw error;
+}
+
+export async function reconcileExecutionReceipt(
+  supabase: any,
+  input: {
+    receiptId: string;
+    organizationId: string;
+    reconciledBy: string;
+    resolution: "succeeded" | "failed";
+    note: string;
+    externalReference?: string | null;
+  },
+): Promise<ExecutionReceipt | null> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("execution_action_receipts")
+    .update({
+      status: input.resolution,
+      reconciled_at: now,
+      reconciled_by: input.reconciledBy,
+      reconciliation_note: input.note.slice(0, 2000),
+      external_reference: input.externalReference?.slice(0, 500) || null,
+      completed_at: now,
+      error_message: input.resolution === "failed"
+        ? "Resolved as failed through governed external reconciliation"
+        : null,
+    })
+    .eq("id", input.receiptId)
+    .eq("organization_id", input.organizationId)
+    .eq("status", "uncertain")
+    .select(RECEIPT_SELECT)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? data as ExecutionReceipt : null;
 }
