@@ -799,7 +799,7 @@ const DataUpload = () => {
       // Deduplicate metrics by conflict key before upserting
       const deduped = new Map<string, typeof metricsToInsert[0]>();
       for (const m of metricsToInsert) {
-        const key = `${m.organization_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
+        const key = `${m.organization_id}|${m.dataset_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
         deduped.set(key, m); // last-write-wins
       }
       const uniqueMetrics = Array.from(deduped.values());

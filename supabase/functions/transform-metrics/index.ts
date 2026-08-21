@@ -198,7 +198,7 @@ serve(async (req) => {
       // the client's pre-upsert dedup (last-write-wins).
       const dedupedMetrics = new Map<string, Record<string, unknown>>();
       for (const m of metricsToUpsert) {
-        const key = `${m.organization_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
+        const key = `${m.organization_id}|${m.dataset_id}|${m.metric_type}|${m.date}|${m.region}|${m.segment}|${m.source_id}`;
         dedupedMetrics.set(key, m);
       }
       const uniqueMetrics = Array.from(dedupedMetrics.values());
