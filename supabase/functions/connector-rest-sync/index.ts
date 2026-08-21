@@ -1,35 +1,5 @@
 /**
  * connector-rest-sync — REST API source connector via the unified pipeline.
- *
- * Connector config (jsonb on data_connectors):
- *   {
- *     "url": "https://api.example.com/data",
- *     "method": "GET",
- *     "auth": {
- *       "kind": "none" | "bearer" | "header" | "query",
- *       "header_name": "X-API-Key",   // for kind=header
- *       "query_param": "api_key"      // for kind=query
- *     },
- *     "data_path": "data.items",      // dot-path to array in response (optional)
- *     "pagination": {
- *       "kind": "none" | "page" | "cursor",
- *       "page_param": "page",         // for kind=page
- *       "page_size_param": "per_page",
- *       "page_size": 100,
- *       "max_pages": 50,
- *       "cursor_param": "cursor",     // for kind=cursor
- *       "cursor_path": "next_cursor"  // dot-path in response to next cursor
- *     },
- *     "incremental": {
- *       "kind": "none" | "since_param",
- *       "since_param": "updated_since"
- *     }
- *   }
- *
- * Credential is read from Vault by `vault_secret_name` on the connector row.
- *
- * Body:
- *   { connector_id: uuid, request_id?: string, triggered_by?: "manual"|"schedule" }
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -100,7 +70,7 @@ Deno.serve(async (req: Request) => {
   try {
     const authHeader = req.headers.get("Authorization");
     const cronSecret = req.headers.get("x-cron-secret");
-    const isCron = !!cronSecret;
+    const isCron = Boolean(cronSecret);
 
     let actorId = "system";
     if (!isCron) {
@@ -115,10 +85,9 @@ Deno.serve(async (req: Request) => {
       actorId = u.user.id;
       log.setUser(actorId);
     } else {
-      // Verify cron secret against vault
       const svcCheck = makeServiceClient();
-      const { data: expected } = await svcCheck.rpc("get_ingest_cron_secret");
-      if (!expected || expected !== cronSecret) {
+      const { data: expected, error: cronSecretError } = await svcCheck.rpc("get_ingest_cron_secret");
+      if (cronSecretError || !expected || expected !== cronSecret) {
         return jsonResponse(401, { error: "Invalid cron secret" });
       }
     }
@@ -126,19 +95,12 @@ Deno.serve(async (req: Request) => {
     const { body, error: parseErr } = await parseJsonBody(req);
     if (parseErr) return jsonResponse(400, { error: parseErr });
     const payload = body as RestRequest;
-
-    if (!payload?.connector_id) {
-      return jsonResponse(400, { error: "connector_id required" });
-    }
+    if (!payload?.connector_id) return jsonResponse(400, { error: "connector_id required" });
 
     const svc = makeServiceClient();
-
-    // Load connector
     const { data: cRow, error: cErr } = await svc
       .from("data_connectors")
-      .select(
-        "id,organization_id,dataset_id,name,connector_type,cursor_field,config,vault_secret_name,status",
-      )
+      .select("id,organization_id,dataset_id,name,connector_type,cursor_field,config,vault_secret_name,status")
       .eq("id", payload.connector_id)
       .maybeSingle();
     if (cErr || !cRow) return jsonResponse(404, { error: "Connector not found" });
@@ -148,73 +110,60 @@ Deno.serve(async (req: Request) => {
       vault_secret_name: string | null;
       status: string;
     };
-
     if (connectorRow.connector_type !== "rest_api") {
       return jsonResponse(400, { error: "Connector is not rest_api type" });
     }
-    if (connectorRow.status === "paused") {
-      return jsonResponse(409, { error: "Connector paused" });
-    }
+    if (connectorRow.status === "paused") return jsonResponse(409, { error: "Connector paused" });
     log.setOrg(connectorRow.organization_id);
 
-    // For non-cron callers, require admin role
     if (!isCron) {
-      const { data: roleOk } = await svc.rpc("exec_require_elevated_role", {
+      const { data: roleOk, error: roleError } = await svc.rpc("exec_require_elevated_role", {
         _user_id: actorId,
         _org_id: connectorRow.organization_id,
       });
-      if (!roleOk) return jsonResponse(403, { error: "Admin or owner required" });
+      if (roleError || !roleOk) return jsonResponse(403, { error: "Admin or owner required" });
     }
+    if (!connectorRow.dataset_id) return jsonResponse(400, { error: "Connector has no dataset" });
 
-    if (!connectorRow.dataset_id) {
-      return jsonResponse(400, { error: "Connector has no dataset" });
-    }
-
-    // Mappings required
-    const { data: mRow } = await svc
+    const { data: mRow, error: mappingError } = await svc
       .from("connector_field_mappings")
       .select("mappings")
       .eq("connector_id", connectorRow.id)
       .eq("is_active", true)
       .maybeSingle();
-    const mappings =
-      (mRow as { mappings?: Record<string, FieldMapping> } | null)?.mappings ?? {};
+    if (mappingError) return jsonResponse(500, { error: "Failed to load connector mapping" });
+    const mappings = (mRow as { mappings?: Record<string, FieldMapping> } | null)?.mappings ?? {};
     if (Object.keys(mappings).length === 0) {
       return jsonResponse(400, { error: "No active field mapping" });
     }
 
-    // Idempotency
     const requestId = payload.request_id ?? crypto.randomUUID();
     const existing = await findExistingRun(svc, connectorRow.id, requestId);
     if (existing) {
-      return jsonResponse(200, {
-        sync_run_id: existing.id,
-        status: existing.status,
-        replayed: true,
-      });
+      return jsonResponse(200, { sync_run_id: existing.id, status: existing.status, replayed: true });
     }
 
-    // Advisory lock per connector
-    const { data: lockOk } = await svc.rpc("connector_try_lock", {
+    const { data: lockOk, error: lockError } = await svc.rpc("connector_try_lock", {
       _connector_id: connectorRow.id,
     });
+    if (lockError) return jsonResponse(500, { error: "Failed to acquire connector lock" });
     if (!lockOk) {
-      return jsonResponse(409, {
-        error: "Another sync is in progress for this connector",
-      });
+      return jsonResponse(409, { error: "Another sync is in progress for this connector" });
     }
 
     const startedAt = Date.now();
-
-    // Load checkpoint
     let checkpointBefore: Record<string, unknown> | null = null;
     if (connectorRow.cursor_field) {
-      const { data: cp } = await svc
+      const { data: cp, error: checkpointReadError } = await svc
         .from("connector_sync_checkpoints")
         .select("cursor_value")
         .eq("connector_id", connectorRow.id)
         .eq("cursor_field", connectorRow.cursor_field)
         .maybeSingle();
+      if (checkpointReadError) {
+        await svc.rpc("connector_release_lock", { _connector_id: connectorRow.id });
+        return jsonResponse(500, { error: "Failed to load connector checkpoint" });
+      }
       if (cp && (cp as { cursor_value?: string }).cursor_value) {
         checkpointBefore = {
           [connectorRow.cursor_field]: (cp as { cursor_value: string }).cursor_value,
@@ -233,54 +182,42 @@ Deno.serve(async (req: Request) => {
       connector: connectorRow,
       runId,
       requestId,
-      triggeredBy: payload.triggered_by ?? "manual",
+      triggeredBy: payload.triggered_by ?? (isCron ? "schedule" : "manual"),
       mappings,
       checkpointBefore,
     };
     const stageTimings: Record<string, number> = {};
 
     try {
-      // Resolve credential
       let secret: string | null = null;
       if (connectorRow.vault_secret_name) {
-        const { data: sec } = await svc.rpc("get_connector_secret", {
+        const { data: sec, error: secretError } = await svc.rpc("get_connector_secret", {
           _secret_name: connectorRow.vault_secret_name,
         });
+        if (secretError) throw new Error("Failed to resolve connector credential");
         secret = (sec as string | null) ?? null;
       }
 
-      // Stage: extracting
       let t = Date.now();
       await setStage(svc, runId, "extracting", "extracting");
       const extracted = await extractRest(connectorRow.config, secret, checkpointBefore, log);
       stageTimings.extracting = Date.now() - t;
-      await recordLineage(svc, ctx, "extract", extracted.rows.length, {
-        pages: extracted.pages,
-      });
+      await recordLineage(svc, ctx, "extract", extracted.rows.length, { pages: extracted.pages });
 
-      // Stage: validating
       t = Date.now();
       await setStage(svc, runId, "validating", "validating");
-      const { valid, invalid } = transformWithMappings(
-        extracted.rows,
-        mappings,
-        connectorRow.name,
-      );
+      const { valid, invalid } = transformWithMappings(extracted.rows, mappings, connectorRow.name);
       stageTimings.validating = Date.now() - t;
       for (const inv of invalid.slice(0, 500)) {
         await recordError(svc, ctx, "validation", inv.reason, inv.index, inv.raw);
       }
-      await recordLineage(svc, ctx, "validate", valid.length, {
-        invalid: invalid.length,
-      });
+      await recordLineage(svc, ctx, "validate", valid.length, { invalid: invalid.length });
 
-      // Stage: persist raw
       t = Date.now();
       await setStage(svc, runId, "extracted", "extracted");
       await persistRawRecords(svc, ctx, extracted.rows);
       stageTimings.persist_raw = Date.now() - t;
 
-      // Stage: insert metrics
       t = Date.now();
       await setStage(svc, runId, "transforming", "transforming");
       const { inserted, errors: insertErrors } = await insertMetrics(svc, ctx, valid);
@@ -288,19 +225,19 @@ Deno.serve(async (req: Request) => {
       for (const err of insertErrors.slice(0, 500)) {
         await recordError(svc, ctx, "insert", err.reason, err.index);
       }
-      await recordLineage(svc, ctx, "transform", inserted);
+      await recordLineage(svc, ctx, "transform", inserted, { insert_errors: insertErrors.length });
 
-      // Stage: aggregate
       t = Date.now();
       await setStage(svc, runId, "aggregating", "aggregating");
-      await refreshAggregates(svc, ctx);
+      const aggregateResult = await refreshAggregates(svc, ctx);
       stageTimings.aggregating = Date.now() - t;
-      await recordLineage(svc, ctx, "aggregate", inserted);
+      await recordLineage(svc, ctx, "aggregate", inserted, {
+        ok: aggregateResult.ok,
+        errors: aggregateResult.errors,
+      });
 
-      // Compute checkpoint_after for incremental syncs
       let checkpointAfter: Record<string, unknown> | null = null;
       if (connectorRow.cursor_field && valid.length > 0) {
-        // pick the max cursor value seen
         const cursorSrc = Object.entries(mappings).find(
           ([, m]) => m.canonical === connectorRow.cursor_field,
         )?.[0];
@@ -312,6 +249,14 @@ Deno.serve(async (req: Request) => {
             .pop();
           if (max) checkpointAfter = { [connectorRow.cursor_field]: max };
         }
+      }
+
+      const issues: string[] = [];
+      if (invalid.length || insertErrors.length) {
+        issues.push(`${invalid.length} validation + ${insertErrors.length} insert errors`);
+      }
+      if (!aggregateResult.ok) {
+        issues.push(`aggregation degraded: ${aggregateResult.errors.join("; ")}`);
       }
 
       const result = await finalizeRun(
@@ -326,21 +271,31 @@ Deno.serve(async (req: Request) => {
           rows_skipped: 0,
         },
         stageTimings,
-        invalid.length + insertErrors.length > 0
-          ? `${invalid.length} validation + ${insertErrors.length} insert errors`
-          : undefined,
+        issues.length ? issues.join(" | ") : undefined,
         checkpointAfter,
       );
 
-      log.info("rest sync complete", { runId, ...result });
-      return jsonResponse(200, { sync_run_id: runId, ...result });
+      log.info("rest sync complete", {
+        runId,
+        status: result.status,
+        aggregate_ok: aggregateResult.ok,
+        rows_inserted: result.rows_inserted,
+      });
+      return jsonResponse(200, {
+        sync_run_id: runId,
+        aggregate_ok: aggregateResult.ok,
+        ...result,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log.error("rest sync failed", { runId, error: msg });
       await failRun(svc, ctx, startedAt, msg);
       return jsonResponse(500, { sync_run_id: runId, error: msg });
     } finally {
-      await svc.rpc("connector_release_lock", { _connector_id: connectorRow.id });
+      const { error: releaseError } = await svc.rpc("connector_release_lock", {
+        _connector_id: connectorRow.id,
+      });
+      if (releaseError) log.error("connector lock release failed", { error: releaseError.message });
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -349,9 +304,6 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-// ----------------------------------------------------------------------------
-// REST extraction
-// ----------------------------------------------------------------------------
 async function extractRest(
   config: RestConfig,
   secret: string | null,
@@ -375,13 +327,10 @@ async function extractRest(
 
   while (pagesFetched < maxPages) {
     const url = new URL(config.url);
-
-    // Auth: query param
     if (auth.kind === "query" && auth.query_param && secret) {
       url.searchParams.set(auth.query_param, secret);
     }
 
-    // Incremental
     if (
       incremental.kind === "since_param" &&
       incremental.since_param &&
@@ -391,7 +340,6 @@ async function extractRest(
       url.searchParams.set(incremental.since_param, String(checkpoint[cursorField]));
     }
 
-    // Pagination
     if (pagination.kind === "page" && pagination.page_param) {
       url.searchParams.set(pagination.page_param, String(page));
       if (pagination.page_size_param) {
@@ -403,7 +351,7 @@ async function extractRest(
 
     const headers: Record<string, string> = { Accept: "application/json" };
     if (auth.kind === "bearer" && secret) {
-      headers["Authorization"] = `Bearer ${secret}`;
+      headers.Authorization = `Bearer ${secret}`;
     } else if (auth.kind === "header" && auth.header_name && secret) {
       headers[auth.header_name] = secret;
     }
@@ -423,22 +371,16 @@ async function extractRest(
 
     const items = pickPath(json, dataPath);
     if (!Array.isArray(items)) {
-      throw new Error(
-        `Expected array at ${dataPath ?? "root"}, got ${typeof items}`,
-      );
+      throw new Error(`Expected array at ${dataPath ?? "root"}, got ${typeof items}`);
     }
     log.info("page fetched", { page, items: items.length });
     pagesFetched++;
 
     for (const item of items) {
       if (item && typeof item === "object" && !Array.isArray(item)) {
-        allRows.push({
-          raw: item as Record<string, unknown>,
-          index: allRows.length,
-        });
+        allRows.push({ raw: item as Record<string, unknown>, index: allRows.length });
       }
     }
-
     if (items.length === 0) break;
 
     if (pagination.kind === "page") {
