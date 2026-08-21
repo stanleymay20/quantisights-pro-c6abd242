@@ -46,6 +46,11 @@ export interface ExecutionReceipt {
   reconciled_by: string | null;
   reconciliation_note: string | null;
   external_reference: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  last_attempt_at: string | null;
+  last_retry_reason: string | null;
+  retry_exhausted_at: string | null;
 }
 
 export const useExecutionPlans = (organizationId: string | null, decisionId: string | null) => {
@@ -101,7 +106,6 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     fetchTimeline();
   }, [fetchTimeline]);
 
-  // Realtime subscription for plan updates
   useEffect(() => {
     if (!decisionId) return;
     return createSafeChannel(`exec-plans-${decisionId}`, (channel) =>
@@ -153,7 +157,6 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     const auth = await getVerifiedAuth();
     if (!auth) return;
 
-    // Optimistic update: apply status change immediately
     const previousPlans = plans;
     setPlans(prev => prev.map(p => p.id === planId ? { ...p, status } : p));
 
@@ -169,7 +172,6 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     });
 
     if (error) {
-      // Rollback on failure
       setPlans(previousPlans);
       toast({ title: "Failed to update status", description: error.message, variant: "destructive" });
     } else {
@@ -183,8 +185,6 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     const auth = await getVerifiedAuth();
     if (!auth) return;
 
-    // Create the execution-intent key before invokeWithRetry so every transport
-    // retry carries the same key and the backend can suppress duplicate sends.
     const idempotencyKey = crypto.randomUUID();
 
     const { data, error } = await invokeWithRetry("execute-decision-action", {
@@ -279,12 +279,14 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     ? plans.filter(p => p.status === "completed").length / plans.length
     : 0;
   const uncertainReceipts = receipts.filter(receipt => receipt.status === "uncertain");
+  const exhaustedReceipts = receipts.filter(receipt => receipt.retry_exhausted_at !== null);
 
   return {
     plans,
     events,
     receipts,
     uncertainReceipts,
+    exhaustedReceipts,
     loading,
     createPlan,
     updatePlanStatus,
