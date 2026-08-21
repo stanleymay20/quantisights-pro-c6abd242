@@ -4,8 +4,6 @@ import { applyRateLimit } from "../_shared/rate-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { requireFeatureAccess } from "../_shared/feature-access.ts";
 
-// ── Server-side statistical helpers ──
-
 function linearRegression(points: { x: number; y: number }[]) {
   const n = points.length;
   if (n < 2) return { slope: 0, intercept: points[0]?.y ?? 0 };
@@ -28,7 +26,6 @@ function stdDev(values: number[]) {
   return Math.sqrt(variance);
 }
 
-/** Simple Exponential Smoothing with Trend (Holt's method) */
 function holtSmoothing(values: number[], alpha = 0.3, beta = 0.1) {
   if (values.length < 2) return { level: values[0] ?? 0, trend: 0 };
   let level = values[0];
@@ -41,32 +38,27 @@ function holtSmoothing(values: number[], alpha = 0.3, beta = 0.1) {
   return { level, trend };
 }
 
-/** Aggregate irregular data into monthly buckets */
 function toMonthlyBuckets(metrics: { date: string; value: number }[]) {
   const buckets = new Map<string, number[]>();
   for (const m of metrics) {
     const d = new Date(m.date);
+    if (Number.isNaN(d.getTime()) || !Number.isFinite(m.value)) continue;
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(m.value);
   }
   const monthly: { date: string; value: number }[] = [];
   for (const [key, vals] of [...buckets.entries()].sort()) {
-    monthly.push({
-      date: `${key}-01`,
-      value: vals.reduce((s, v) => s + v, 0) / vals.length,
-    });
+    monthly.push({ date: `${key}-01`, value: vals.reduce((s, v) => s + v, 0) / vals.length });
   }
   return monthly;
 }
 
-/** Detect basic seasonality via autocorrelation */
 function detectSeasonality(values: number[], maxLag = 24): { detected: boolean; period: number | null } {
   if (values.length < 6) return { detected: false, period: null };
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
   const denom = values.reduce((s, v) => s + (v - mean) ** 2, 0);
   if (denom < 1e-10) return { detected: false, period: null };
-
   let bestLag = 0;
   let bestCorr = 0;
   for (let lag = 2; lag <= Math.min(maxLag, Math.floor(values.length / 2)); lag++) {
@@ -86,191 +78,173 @@ function detectSeasonality(values: number[], maxLag = 24): { detected: boolean; 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
+  const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
   try {
     const authHeader = req.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!authHeader?.startsWith("Bearer ")) return respond({ error: "Unauthorized" }, 401);
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!supabaseUrl || !serviceKey || !anonKey) return respond({ error: "Forecast service unavailable" }, 503);
 
-    const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
     const serviceClient = createClient(supabaseUrl, serviceKey);
-
-    // Auth via JWT claims (enterprise standard)
-    const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: claimsError } = await userClient.auth.getUser();
-    if (claimsError || !user?.id) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const userId = user?.id as string;
+    if (claimsError || !user?.id) return respond({ error: "Unauthorized" }, 401);
+    const userId = user.id;
 
-    const { organization_id, dataset_id, metric_type, horizon_months = 6, dry_run } = await req.json();
-    if (!organization_id || !metric_type) {
-      return new Response(JSON.stringify({ error: "organization_id and metric_type required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    if (!dataset_id) {
-      return new Response(JSON.stringify({ error: "dataset_id required by Active Data Contract" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const body = await req.json().catch(() => ({})) as {
+      organization_id?: string;
+      dataset_id?: string;
+      metric_type?: string;
+      horizon_months?: number;
+      dry_run?: boolean;
+    };
+    const organizationId = body.organization_id;
+    const datasetId = body.dataset_id;
+    const metricType = typeof body.metric_type === "string" ? body.metric_type.trim() : "";
+    const horizonMonths = Number(body.horizon_months ?? 6);
+
+    if (!organizationId || !metricType) return respond({ error: "organization_id and metric_type required" }, 400);
+    if (!datasetId) return respond({ error: "dataset_id required by Active Data Contract" }, 400);
+    if (!Number.isInteger(horizonMonths) || horizonMonths < 1 || horizonMonths > 60) {
+      return respond({ error: "horizon_months must be an integer between 1 and 60" }, 400);
     }
 
-    // Rate limit: intelligence tier (20/min per org)
-    const rl = applyRateLimit(req, organization_id, "intelligence", "predictive-forecast");
+    const rl = applyRateLimit(req, organizationId, "intelligence", "predictive-forecast");
     if (rl) return rl;
 
-    // Verify org membership
-    const { data: isMember } = await serviceClient.rpc("is_org_member", {
+    const { data: isMember, error: memberError } = await serviceClient.rpc("is_org_member", {
       _user_id: userId,
-      _org_id: organization_id,
+      _org_id: organizationId,
     });
-    if (!isMember) {
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (memberError) throw new Error(`Membership verification failed: ${memberError.message}`);
+    if (!isMember) return respond({ error: "Forbidden" }, 403);
 
-    // Tier gating: forecasting requires Growth/Enterprise
     const fcAccess = await requireFeatureAccess(supabaseUrl, serviceKey, authHeader, "forecasting");
-    if (fcAccess.ok === false) {
-      return new Response(JSON.stringify(fcAccess.body), {
-        status: fcAccess.status,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (fcAccess.ok === false) return respond(fcAccess.body, fcAccess.status);
+
+    const { data: dsCheck, error: dsError } = await serviceClient
+      .from("datasets")
+      .select("id")
+      .eq("id", datasetId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (dsError) throw new Error(`Dataset scope verification failed: ${dsError.message}`);
+    if (!dsCheck) return respond({ error: "dataset_id does not belong to this organization" }, 403);
+
+    if (body.dry_run) {
+      return respond({
+        dry_run: true,
+        status: "PASS",
+        dataset_id: datasetId,
+        organization_id: organizationId,
+        metric_type: metricType,
+        horizon_months: horizonMonths,
       });
     }
 
-    // Validate dataset belongs to org
-    const { data: dsCheck } = await serviceClient
-      .from("datasets").select("id")
-      .eq("id", dataset_id).eq("organization_id", organization_id).maybeSingle();
-    if (!dsCheck) {
-      return new Response(JSON.stringify({ error: "dataset_id does not belong to this organization" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (dry_run) {
-      return new Response(JSON.stringify({ dry_run: true, status: "PASS", dataset_id, organization_id }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Fetch historical metrics — use serviceClient for consistent reads
-    const { data: metrics, error: mErr } = await serviceClient
-      .from("metrics").select("value, date")
-      .eq("organization_id", organization_id)
-      .eq("dataset_id", dataset_id)
-      .eq("metric_type", metric_type)
+    const { data: metrics, error: metricsError } = await serviceClient
+      .from("metrics")
+      .select("value,date")
+      .eq("organization_id", organizationId)
+      .eq("dataset_id", datasetId)
+      .eq("metric_type", metricType)
       .order("date", { ascending: true });
-
-    if (mErr) throw mErr;
+    if (metricsError) throw new Error(`Historical metric read failed: ${metricsError.message}`);
     if (!metrics || metrics.length < 3) {
-      return new Response(JSON.stringify({
+      return respond({
         error: "Insufficient data",
-        detail: `Need at least 3 data points for ${metric_type}, found ${metrics?.length || 0}`,
-      }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        detail: `Need at least 3 data points for ${metricType}, found ${metrics?.length || 0}`,
+      }, 400);
     }
 
-    // ── REAL COMPUTATION (server-side) ──
+    const monthly = toMonthlyBuckets(metrics as { date: string; value: number }[]);
+    if (monthly.length < 3) {
+      return respond({
+        error: "Insufficient monthly data",
+        detail: `Need at least 3 usable monthly buckets for ${metricType}, found ${monthly.length}`,
+      }, 400);
+    }
 
-    // 1. Aggregate to monthly buckets
-    const monthly = toMonthlyBuckets(metrics);
-    const values = monthly.map(m => m.value);
-
-    // 2. Compute statistics
+    const values = monthly.map((m) => m.value);
     const mean = values.reduce((s, v) => s + v, 0) / values.length;
     const sd = stdDev(values);
     const seasonality = detectSeasonality(values);
-
-    // 3. Holt's exponential smoothing
     const { level, trend } = holtSmoothing(values);
 
-    // 4. Compute residual std for prediction intervals
     const fitted: number[] = [];
     {
-      let l = values[0], t = values.length > 1 ? values[1] - values[0] : 0;
+      let levelFit = values[0];
+      let trendFit = values.length > 1 ? values[1] - values[0] : 0;
       for (let i = 0; i < values.length; i++) {
-        fitted.push(l + t);
-        const prevL = l;
-        l = 0.3 * values[i] + 0.7 * (prevL + t);
-        t = 0.1 * (l - prevL) + 0.9 * t;
+        fitted.push(levelFit + trendFit);
+        const previousLevel = levelFit;
+        levelFit = 0.3 * values[i] + 0.7 * (previousLevel + trendFit);
+        trendFit = 0.1 * (levelFit - previousLevel) + 0.9 * trendFit;
       }
     }
     const residuals = values.map((v, i) => v - fitted[i]);
     const residualStd = stdDev(residuals) || sd * 0.5;
 
-    // 5. Generate predictions
     const lastDate = new Date(monthly[monthly.length - 1].date);
     const predictions: { date: string; value: number; lower_bound: number; upper_bound: number }[] = [];
-    for (let h = 1; h <= horizon_months; h++) {
+    for (let h = 1; h <= horizonMonths; h++) {
       const forecastDate = new Date(lastDate);
       forecastDate.setMonth(forecastDate.getMonth() + h);
-      const dateStr = forecastDate.toISOString().slice(0, 10);
       const pointForecast = level + trend * h;
       const intervalWidth = 1.28 * residualStd * Math.sqrt(h);
       predictions.push({
-        date: dateStr,
+        date: forecastDate.toISOString().slice(0, 10),
         value: Math.round(pointForecast * 100) / 100,
         lower_bound: Math.round(Math.max(0, pointForecast - intervalWidth) * 100) / 100,
         upper_bound: Math.round((pointForecast + intervalWidth) * 100) / 100,
       });
     }
 
-    // 6. Compute growth rate (linear regression)
-    const regPoints = monthly.map((m, i) => ({ x: i, y: m.value }));
-    const { slope } = linearRegression(regPoints);
-    const growthRatePct = mean > 0 ? (slope / mean) * 100 * 12 : 0;
-
-    // 7. Determine trend direction
-    const trendDirection = Math.abs(growthRatePct) < 5 ? "stable"
-      : growthRatePct > 0 ? "growing" : "declining";
-
-    // 8. MAPE from fitted vs actual
+    const { slope } = linearRegression(monthly.map((m, i) => ({ x: i, y: m.value })));
+    const growthRatePct = mean !== 0 ? (slope / Math.abs(mean)) * 100 * 12 : 0;
+    const trendDirection = Math.abs(growthRatePct) < 5 ? "stable" : growthRatePct > 0 ? "growing" : "declining";
     const absErrors = values.map((v, i) => (v !== 0 ? Math.abs((v - fitted[i]) / v) : 0));
     const mape = (absErrors.reduce((s, e) => s + e, 0) / absErrors.length) * 100;
 
-    // ── Use AI only for narrative interpretation ──
     let confidenceNarrative = `Forecast based on ${monthly.length} monthly observations with ${residualStd.toFixed(2)} residual standard deviation.`;
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (LOVABLE_API_KEY) {
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+    if (lovableApiKey) {
       try {
-        const statsSummary = `Metric: ${metric_type}, ${monthly.length} monthly data points, mean=${mean.toFixed(2)}, stddev=${sd.toFixed(2)}, trend=${trendDirection} (${growthRatePct.toFixed(1)}% annualized), seasonality=${seasonality.detected ? `yes (period ${seasonality.period})` : "no"}, MAPE=${mape.toFixed(1)}%, residual std=${residualStd.toFixed(2)}`;
-        
-        const aiController = new AbortController();
-        const aiTimeout = setTimeout(() => aiController.abort(), 15000);
-        const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          signal: aiController.signal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash-lite",
-            messages: [{
-              role: "user",
-              content: `You are a quantitative analyst. Given these forecast statistics, write ONE concise sentence about forecast reliability and key risk. Stats: ${statsSummary}`,
-            }],
-          }),
-        });
-        clearTimeout(aiTimeout);
-        if (aiRes.ok) {
-          const aiData = await aiRes.json();
-          const content = aiData.choices?.[0]?.message?.content;
-          if (content) confidenceNarrative = content.trim();
+        const statsSummary = `Metric: ${metricType}, ${monthly.length} monthly data points, mean=${mean.toFixed(2)}, stddev=${sd.toFixed(2)}, trend=${trendDirection} (${growthRatePct.toFixed(1)}% annualized), seasonality=${seasonality.detected ? `yes (period ${seasonality.period})` : "no"}, MAPE=${mape.toFixed(1)}%, residual std=${residualStd.toFixed(2)}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableApiKey}` },
+            body: JSON.stringify({
+              model: "google/gemini-2.5-flash-lite",
+              messages: [{
+                role: "user",
+                content: `You are a quantitative analyst. Given these forecast statistics, write ONE concise sentence about forecast reliability and key risk. Stats: ${statsSummary}`,
+              }],
+            }),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json() as { choices?: Array<{ message?: { content?: string } }> };
+            const content = aiData.choices?.[0]?.message?.content;
+            if (content) confidenceNarrative = content.trim();
+          }
+        } finally {
+          clearTimeout(timeout);
         }
       } catch {
-        // AI narrative is optional; keep default
+        // Narrative enrichment is optional and must not corrupt the forecast path.
       }
     }
 
@@ -284,48 +258,56 @@ serve(async (req) => {
       mape_estimate: Math.round(mape * 10) / 10,
     };
 
-    // Store in database
-    await serviceClient.from("forecast_results").insert({
-      organization_id,
-      dataset_id,
-      metric_type,
-      forecast_horizon_months: horizon_months,
-      model_used: "holt-exponential-smoothing",
-      predictions: forecast.predictions,
-      seasonality_detected: forecast.seasonality_detected,
-      trend_direction: forecast.trend_direction,
-      mape: forecast.mape_estimate,
-      created_by: userId,
-    });
+    const { data: forecastRow, error: forecastWriteError } = await serviceClient
+      .from("forecast_results")
+      .insert({
+        organization_id: organizationId,
+        dataset_id: datasetId,
+        metric_type: metricType,
+        forecast_horizon_months: horizonMonths,
+        model_used: "holt-exponential-smoothing",
+        predictions: forecast.predictions,
+        seasonality_detected: forecast.seasonality_detected,
+        trend_direction: forecast.trend_direction,
+        mape: forecast.mape_estimate,
+        created_by: userId,
+      })
+      .select("id")
+      .single();
+    if (forecastWriteError || !forecastRow?.id) {
+      throw new Error(`Forecast persistence failed: ${forecastWriteError?.message ?? "no forecast id returned"}`);
+    }
 
-    // Audit trail
-    await serviceClient.from("audit_log").insert({
-      organization_id,
+    const { error: auditError } = await serviceClient.from("audit_log").insert({
+      organization_id: organizationId,
       actor_id: userId,
       actor_type: "user",
       action_type: "forecast_generated",
       resource_type: "forecast",
+      resource_id: forecastRow.id,
       payload: {
-        dataset_id,
-        metric_type,
-        horizon_months,
+        dataset_id: datasetId,
+        metric_type: metricType,
+        horizon_months: horizonMonths,
         data_points: monthly.length,
         mape: forecast.mape_estimate,
         trend: trendDirection,
       },
     });
+    if (auditError) throw new Error(`Forecast audit persistence failed: ${auditError.message}`);
 
-    return new Response(JSON.stringify({
+    return respond({
       ...forecast,
       historical: monthly,
-      metric_type,
-      horizon_months,
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      metric_type: metricType,
+      horizon_months: horizonMonths,
+      forecast_id: forecastRow.id,
+      persisted: true,
+      audited: true,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("predictive-forecast error:", message);
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return respond({ error: message }, 500);
   }
 });
