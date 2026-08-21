@@ -51,6 +51,14 @@ describe("release certification chain", () => {
     expect(gaReadiness).toContain("ref: ${{ env.CERTIFIED_SHA }}");
   });
 
+  it("accepts a successful exact-SHA prerequisite even when duplicate runs were cancelled", () => {
+    expect(gaReadiness).toContain('.head_sha == $sha and .status == "completed" and .conclusion == "success"');
+    expect(gaReadiness).toContain("matching_success");
+    expect(gaReadiness).toContain("matching_active");
+    expect(gaReadiness).toContain("latest_terminal");
+    expect(gaReadiness).not.toContain("[.workflow_runs[] | select(.head_sha == $sha)][0]");
+  });
+
   it("publishes GA Readiness proof only after client review, release gate and live security", () => {
     const clientSource = gaReadiness.indexOf("Verify client-acceptance and staging-validation source runs");
     const releaseGate = gaReadiness.indexOf("Run official GA release gate");
@@ -82,7 +90,11 @@ describe("release certification chain", () => {
     expect(production).toContain('require_gate "deploy-supabase-staging.yml" "Deploy Supabase Staging"');
     expect(production).not.toContain('require_gate "ga-staging-validation.yml"');
     expect(production).not.toContain('require_gate "ga-readiness.yml"');
-    expect(production).toContain('select(.head_sha == $sha)');
+    expect(production).toContain('.head_sha == $sha and .status == "completed" and .conclusion == "success"');
+    expect(production).toContain("matching_success");
+    expect(production).toContain("matching_active");
+    expect(production).toContain("latest_terminal");
+    expect(production).not.toContain("[.workflow_runs[] | select(.head_sha == $sha)][0]");
   });
 
   it("emits immutable frontend provenance and verifies it before any production mutation", () => {
