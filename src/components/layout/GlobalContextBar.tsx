@@ -16,9 +16,10 @@ interface Segment {
   label: string | null;
   fallback: string;
   onClick?: () => void;
+  disabled?: boolean;
 }
 
-const ContextChip = ({ icon: Icon, label, fallback, onClick }: Segment) => {
+const ContextChip = ({ icon: Icon, label, fallback, onClick, disabled = false }: Segment) => {
   const text = label || fallback || "";
   const isMissing = !label;
 
@@ -28,10 +29,13 @@ const ContextChip = ({ icon: Icon, label, fallback, onClick }: Segment) => {
         <TooltipTrigger asChild>
           <button
             onClick={onClick}
-            className={`inline-flex items-center gap-1.5 text-[12px] font-normal transition-colors max-w-[140px] truncate cursor-pointer ${
-              isMissing
-                ? "text-muted-foreground italic"
-                : "text-muted-foreground hover:text-foreground hover:underline"
+            disabled={disabled}
+            className={`inline-flex items-center gap-1.5 text-[12px] font-normal transition-colors max-w-[140px] truncate ${
+              disabled
+                ? "text-muted-foreground/70 cursor-wait"
+                : isMissing
+                  ? "text-muted-foreground italic cursor-pointer"
+                  : "text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
             }`}
           >
             <Icon className="w-3 h-3 shrink-0" />
@@ -200,49 +204,65 @@ const GlobalNotificationBell = ({ orgId, datasetId }: { orgId: string | null; da
 
 const GlobalContextBar = () => {
   const location = useLocation();
-  // Dashboard page has its own notification bell in DashboardHeader — hide here to avoid duplicate.
   const isDashboard = location.pathname === "/dashboard";
-  const { currentOrg } = useOrganization();
-  const { currentWorkspace } = useWorkspace();
-  const { currentProject, activeDatasetId } = useProject();
-  const { activeDataset } = useDataset();
+  const { currentOrg, loading: orgLoading } = useOrganization();
+  const { currentWorkspace, loading: workspaceLoading } = useWorkspace();
+  const { currentProject, loading: projectLoading } = useProject();
+  // The dataset shown globally must come from DatasetContext, which verifies the
+  // project_datasets link. Never use the raw projects.active_dataset_id pointer.
+  const { activeDataset, activeDatasetId, loading: datasetLoading } = useDataset();
   const navigate = useNavigate();
+  const contextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
 
   return (
     <div className="h-10 border-b border-border/30 bg-background hidden md:flex items-center px-4 md:px-6 gap-0.5 shrink-0 overflow-x-auto scrollbar-hide">
       <ContextChip
         icon={Building2}
-        label={currentOrg?.name?.replace(/\s+'/g, "'").replace(/'\s+/g, "'").trim() ?? null}
-        fallback="No org"
+        label={orgLoading ? null : currentOrg?.name?.replace(/\s+'/g, "'").replace(/'\s+/g, "'").trim() ?? null}
+        fallback={orgLoading ? "Loading org…" : "No org"}
+        disabled={orgLoading}
         onClick={() => navigate("/settings")}
       />
       <Separator />
       <ContextChip
         icon={Layers}
-        label={currentWorkspace?.name ?? null}
-        fallback={currentOrg ? "Set up workspace" : "No workspace"}
+        label={workspaceLoading ? null : currentWorkspace?.name ?? null}
+        fallback={workspaceLoading ? "Loading workspace…" : currentOrg ? "Set up workspace" : "No workspace"}
+        disabled={workspaceLoading || orgLoading}
         onClick={() => navigate("/settings")}
       />
-      {currentProject?.name && (
+      {(projectLoading || currentProject?.name) && (
         <>
           <Separator />
-          <ContextChip icon={FolderKanban} label={currentProject.name} fallback={null} onClick={() => navigate("/settings")} />
+          <ContextChip
+            icon={FolderKanban}
+            label={projectLoading ? null : currentProject?.name ?? null}
+            fallback={projectLoading ? "Loading project…" : "No project"}
+            disabled={projectLoading || workspaceLoading}
+            onClick={() => navigate("/settings")}
+          />
         </>
       )}
-      {activeDataset?.name && (
+      {(datasetLoading || activeDataset?.name) && (
         <>
           <Separator />
-          <ContextChip icon={Database} label={activeDataset.name} fallback={null} onClick={() => navigate("/data-upload")} />
+          <ContextChip
+            icon={Database}
+            label={datasetLoading ? null : activeDataset?.name ?? null}
+            fallback={datasetLoading ? "Loading dataset…" : "No dataset"}
+            disabled={datasetLoading || projectLoading}
+            onClick={() => navigate("/data-upload")}
+          />
         </>
       )}
-      {!currentProject?.name && !activeDataset?.name && (
+      {!contextLoading && !currentProject?.name && !activeDataset?.name && (
         <>
           <Separator />
           <span className="text-[11px] text-muted-foreground italic px-1">Decision context</span>
         </>
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
-        {!isDashboard && (
+        {!isDashboard && !contextLoading && (
           <GlobalNotificationBell orgId={currentOrg?.id ?? null} datasetId={activeDatasetId ?? null} />
         )}
       </div>
