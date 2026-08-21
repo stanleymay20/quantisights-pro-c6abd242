@@ -2,6 +2,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { isValidUUID, isValidString, isValidEnum, validateCreatePlan, validationErrorResponse } from "../_shared/input-validation.ts";
+import {
+  claimExecutionReceipt,
+  completeExecutionReceipt,
+  validateIdempotencyKey,
+  type ExecutionReceipt,
+} from "./idempotency.ts";
 
 /** Require owner/admin role for sensitive execution actions */
 async function requirePrivilegedRole(
@@ -151,6 +157,95 @@ async function requireExecutablePlan(
   }
 
   return { plan };
+}
+
+function replayReceiptResponse(receipt: ExecutionReceipt, corsHdrs: Record<string, string>): Response {
+  if (receipt.status === "succeeded") {
+    return new Response(JSON.stringify({
+      success: true,
+      idempotent_replay: true,
+      execution_status: receipt.status,
+      status_code: receipt.response_status,
+      data: receipt.response_metadata,
+    }), {
+      status: 200,
+      headers: { ...corsHdrs, "Content-Type": "application/json" },
+    });
+  }
+
+  if (receipt.status === "claimed") {
+    return new Response(JSON.stringify({
+      success: false,
+      idempotent_replay: true,
+      execution_status: receipt.status,
+      message: "This outbound execution intent is already in progress; duplicate dispatch was suppressed.",
+    }), {
+      status: 202,
+      headers: { ...corsHdrs, "Content-Type": "application/json" },
+    });
+  }
+
+  return new Response(JSON.stringify({
+    success: false,
+    idempotent_replay: true,
+    execution_status: receipt.status,
+    status_code: receipt.response_status,
+    error: receipt.status === "uncertain"
+      ? "The previous outbound attempt has an uncertain result. Reconcile the external system before issuing a new execution intent."
+      : (receipt.error_message || "The previous outbound attempt failed. Issue a new intent only after reviewing the recorded result."),
+    data: receipt.response_metadata,
+  }), {
+    status: 409,
+    headers: { ...corsHdrs, "Content-Type": "application/json" },
+  });
+}
+
+async function logIdempotentSuppression(
+  supabase: any,
+  organizationId: string,
+  planId: string,
+  userId: string,
+  actionType: string,
+  receipt: ExecutionReceipt,
+) {
+  await supabase.from("execution_events").insert({
+    execution_plan_id: planId,
+    organization_id: organizationId,
+    event_type: "outbound_action_duplicate_suppressed",
+    actor_id: userId,
+    metadata: {
+      action: actionType,
+      idempotency_key: receipt.idempotency_key,
+      receipt_status: receipt.status,
+      receipt_id: receipt.id,
+    },
+  });
+}
+
+async function logIdempotencyConflict(
+  supabase: any,
+  organizationId: string,
+  planId: string,
+  userId: string,
+  actionType: string,
+  idempotencyKey: string,
+  receipt: ExecutionReceipt,
+) {
+  await supabase.from("audit_log").insert({
+    organization_id: organizationId,
+    actor_id: userId,
+    actor_type: "user",
+    action_type: "outbound_execution_idempotency_conflict",
+    resource_type: "execution_plan",
+    resource_id: planId,
+    payload: {
+      action: actionType,
+      idempotency_key: idempotencyKey,
+      existing_receipt_id: receipt.id,
+      existing_action_type: receipt.action_type,
+      existing_execution_plan_id: receipt.execution_plan_id,
+    },
+  });
 }
 
 /** Validate webhook URL against org-approved destinations */
@@ -389,9 +484,15 @@ Deno.serve(async (req) => {
       }
 
       case "trigger_webhook": {
-        const { plan_id, webhook_url, payload } = params;
+        const { plan_id, webhook_url, payload, idempotency_key } = params;
         if (!plan_id || !webhook_url) {
           return new Response(JSON.stringify({ error: "plan_id and webhook_url required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!validateIdempotencyKey(idempotency_key)) {
+          return new Response(JSON.stringify({ error: "A valid idempotency_key (16-200 safe characters) is required for outbound execution" }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -409,6 +510,7 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
         if (executionGate.response) return executionGate.response;
+        const plan = executionGate.plan!;
 
         // Validate webhook URL (SSRF prevention + mandatory allowlist)
         const validation = await validateWebhookUrl(supabase, organization_id, webhook_url);
@@ -425,26 +527,62 @@ Deno.serve(async (req) => {
           });
         }
 
+        const claim = await claimExecutionReceipt(supabase, {
+          organizationId: organization_id,
+          executionPlanId: plan.id,
+          decisionId: plan.decision_id,
+          actionType: "trigger_webhook",
+          idempotencyKey: idempotency_key,
+          initiatedBy: userId,
+          request: {
+            action: "trigger_webhook",
+            plan_id: plan.id,
+            webhook_url,
+            payload: payload || {},
+          },
+        });
+
+        if (claim.kind === "conflict") {
+          await logIdempotencyConflict(supabase, organization_id, plan.id, userId, "trigger_webhook", idempotency_key, claim.receipt);
+          return new Response(JSON.stringify({ error: "idempotency_key is already bound to a different execution intent" }), {
+            status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (claim.kind === "replay") {
+          await logIdempotentSuppression(supabase, organization_id, plan.id, userId, "trigger_webhook", claim.receipt);
+          return replayReceiptResponse(claim.receipt, corsHeaders);
+        }
+
+        const receipt = claim.receipt;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
 
         try {
           const webhookResp = await fetch(webhook_url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": idempotency_key,
+            },
             body: JSON.stringify(payload || {}),
             signal: controller.signal,
           });
           clearTimeout(timeout);
 
           const success = webhookResp.ok;
+          await completeExecutionReceipt(supabase, receipt.id, success ? "succeeded" : "failed", {
+            responseStatus: webhookResp.status,
+            responseMetadata: { webhook_url, status_code: webhookResp.status, success },
+            errorMessage: success ? null : `Webhook returned HTTP ${webhookResp.status}`,
+          });
 
           await supabase.from("execution_events").insert({
             execution_plan_id: plan_id,
             organization_id,
             event_type: success ? "webhook_success" : "webhook_failed",
             actor_id: userId,
-            metadata: { webhook_url, status_code: webhookResp.status, success },
+            metadata: { webhook_url, status_code: webhookResp.status, success, receipt_id: receipt.id },
           });
 
           await supabase.from("audit_log").insert({
@@ -454,32 +592,44 @@ Deno.serve(async (req) => {
             action_type: "webhook_triggered",
             resource_type: "execution_plan",
             resource_id: plan_id,
-            payload: { webhook_url, status_code: webhookResp.status, success },
+            payload: { webhook_url, status_code: webhookResp.status, success, receipt_id: receipt.id },
           });
 
-          return new Response(JSON.stringify({ success, status_code: webhookResp.status }), {
+          return new Response(JSON.stringify({ success, status_code: webhookResp.status, receipt_id: receipt.id }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } catch (e) {
           clearTimeout(timeout);
+          const message = (e as Error).message;
+          await completeExecutionReceipt(supabase, receipt.id, "uncertain", {
+            errorMessage: message,
+            responseMetadata: { webhook_url, uncertain: true },
+          }).catch((receiptError) => console.error("Failed to mark webhook receipt uncertain:", receiptError));
+
           await supabase.from("execution_events").insert({
             execution_plan_id: plan_id,
             organization_id,
-            event_type: "webhook_failed",
+            event_type: "webhook_uncertain",
             actor_id: userId,
-            metadata: { webhook_url, error: (e as Error).message },
+            metadata: { webhook_url, error: message, receipt_id: receipt.id },
           });
-          return new Response(JSON.stringify({ success: false, error: (e as Error).message }), {
+          return new Response(JSON.stringify({ success: false, uncertain: true, receipt_id: receipt.id, error: message }), {
             status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
       }
 
       case "notify_slack": {
-        const { plan_id, channel, message } = params;
+        const { plan_id, channel, message, idempotency_key } = params;
 
         if (!plan_id) {
           return new Response(JSON.stringify({ error: "plan_id is required for governed Slack execution" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!validateIdempotencyKey(idempotency_key)) {
+          return new Response(JSON.stringify({ error: "A valid idempotency_key (16-200 safe characters) is required for outbound execution" }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -497,6 +647,7 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
         if (executionGate.response) return executionGate.response;
+        const plan = executionGate.plan!;
 
         // Channel is REQUIRED — no defaults
         if (!channel || typeof channel !== "string" || !channel.trim()) {
@@ -520,44 +671,120 @@ Deno.serve(async (req) => {
           });
         }
 
-        const GATEWAY_URL = "https://connector-gateway.lovable.dev/slack/api";
-        const resp = await fetch(`${GATEWAY_URL}/chat.postMessage`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "X-Connection-Api-Key": SLACK_API_KEY,
-            "Content-Type": "application/json",
+        const normalizedChannel = channel.trim();
+        const normalizedMessage = message.trim().slice(0, 4000);
+        const claim = await claimExecutionReceipt(supabase, {
+          organizationId: organization_id,
+          executionPlanId: plan.id,
+          decisionId: plan.decision_id,
+          actionType: "notify_slack",
+          idempotencyKey: idempotency_key,
+          initiatedBy: userId,
+          request: {
+            action: "notify_slack",
+            plan_id: plan.id,
+            channel: normalizedChannel,
+            message: normalizedMessage,
           },
-          body: JSON.stringify({
-            channel: channel.trim(),
-            text: message.trim().slice(0, 4000),
-          }),
         });
 
-        const data = await resp.json();
+        if (claim.kind === "conflict") {
+          await logIdempotencyConflict(supabase, organization_id, plan.id, userId, "notify_slack", idempotency_key, claim.receipt);
+          return new Response(JSON.stringify({ error: "idempotency_key is already bound to a different execution intent" }), {
+            status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
 
-        // Always log Slack sends
-        await supabase.from("execution_events").insert({
-          execution_plan_id: plan_id,
-          organization_id,
-          event_type: resp.ok ? "slack_sent" : "slack_failed",
-          actor_id: userId,
-          metadata: { channel: channel.trim(), success: resp.ok, response_ok: data?.ok },
-        });
+        if (claim.kind === "replay") {
+          await logIdempotentSuppression(supabase, organization_id, plan.id, userId, "notify_slack", claim.receipt);
+          return replayReceiptResponse(claim.receipt, corsHeaders);
+        }
 
-        await supabase.from("audit_log").insert({
-          organization_id,
-          actor_id: userId,
-          actor_type: "user",
-          action_type: "slack_notification_sent",
-          resource_type: "execution_plan",
-          resource_id: plan_id,
-          payload: { channel: channel.trim(), success: resp.ok },
-        });
+        const receipt = claim.receipt;
+        const GATEWAY_URL = "https://connector-gateway.lovable.dev/slack/api";
 
-        return new Response(JSON.stringify({ success: resp.ok, data }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          let resp: Response;
+          try {
+            resp = await fetch(`${GATEWAY_URL}/chat.postMessage`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "X-Connection-Api-Key": SLACK_API_KEY,
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotency_key,
+              },
+              body: JSON.stringify({
+                channel: normalizedChannel,
+                text: normalizedMessage,
+              }),
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
+
+          let data: Record<string, unknown> = {};
+          try {
+            data = await resp.json();
+          } catch {
+            data = { parse_error: true };
+          }
+
+          const success = resp.ok && data?.ok !== false;
+          await completeExecutionReceipt(supabase, receipt.id, success ? "succeeded" : "failed", {
+            responseStatus: resp.status,
+            responseMetadata: {
+              channel: normalizedChannel,
+              success,
+              response_ok: data?.ok ?? null,
+            },
+            errorMessage: success ? null : `Slack gateway returned HTTP ${resp.status}`,
+          });
+
+          await supabase.from("execution_events").insert({
+            execution_plan_id: plan_id,
+            organization_id,
+            event_type: success ? "slack_sent" : "slack_failed",
+            actor_id: userId,
+            metadata: { channel: normalizedChannel, success, response_ok: data?.ok, receipt_id: receipt.id },
+          });
+
+          await supabase.from("audit_log").insert({
+            organization_id,
+            actor_id: userId,
+            actor_type: "user",
+            action_type: "slack_notification_sent",
+            resource_type: "execution_plan",
+            resource_id: plan_id,
+            payload: { channel: normalizedChannel, success, receipt_id: receipt.id },
+          });
+
+          return new Response(JSON.stringify({ success, data, receipt_id: receipt.id }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (e) {
+          const message = (e as Error).message;
+          await completeExecutionReceipt(supabase, receipt.id, "uncertain", {
+            errorMessage: message,
+            responseMetadata: { channel: normalizedChannel, uncertain: true },
+          }).catch((receiptError) => console.error("Failed to mark Slack receipt uncertain:", receiptError));
+
+          await supabase.from("execution_events").insert({
+            execution_plan_id: plan_id,
+            organization_id,
+            event_type: "slack_uncertain",
+            actor_id: userId,
+            metadata: { channel: normalizedChannel, error: message, receipt_id: receipt.id },
+          });
+
+          return new Response(JSON.stringify({ success: false, uncertain: true, receipt_id: receipt.id, error: message }), {
+            status: 502,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
       }
 
       case "get_timeline": {
