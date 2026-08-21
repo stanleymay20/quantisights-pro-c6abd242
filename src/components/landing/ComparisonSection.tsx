@@ -55,7 +55,12 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
       </motion.div>
 
       <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div
+          className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          tabIndex={0}
+          role="region"
+          aria-label="Quantivis product fit comparison table; scroll horizontally for all columns"
+        >
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
