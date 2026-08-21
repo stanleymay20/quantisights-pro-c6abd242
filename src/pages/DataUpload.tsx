@@ -682,9 +682,9 @@ const DataUpload = () => {
         });
         rawRecords.push({
           organization_id: currentOrgId,
-          workspace_id: currentWorkspaceId || null,
+          workspace_id: currentWorkspaceId,
           dataset_id: dataset.id,
-          dataset_version_id: versionData?.id || null,
+          dataset_version_id: versionData.id,
           row_index: i,
           raw_data: rowData,
         });
@@ -700,9 +700,12 @@ const DataUpload = () => {
       }
 
       // Update pipeline with raw count
-      if (pipelineRunId) {
-        await supabase.from("pipeline_runs").update({ raw_count: rawInserted, stage: "raw_complete" }).eq("id", pipelineRunId);
-      }
+      const { error: rawStageErr } = await supabase
+        .from("pipeline_runs")
+        .update({ raw_count: rawInserted, stage: "raw_complete" })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", currentOrgId);
+      if (rawStageErr) throw new Error(`Pipeline raw stage update failed: ${rawStageErr.message}`);
 
       // ═══════════════════════════════════════════════════════
       // TIER 2: CLEAN LAYER — Transform raw → normalized metrics
