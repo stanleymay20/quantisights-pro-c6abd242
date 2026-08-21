@@ -116,16 +116,22 @@ describe("release certification chain", () => {
     expect(production).toContain("node scripts/verify-live-release-provenance.mjs");
   });
 
-  it("routes client-experience and release-pipeline changes through staging on main only", () => {
+  it("routes every client source change and release-pipeline change through staging on main only", () => {
     expect(staging).toContain("branches: [main]");
     expect(staging).not.toContain("agent/fix-staging-edge-imports");
+
+    // `src/**` is deliberate: enumerating individual pages/components allowed new
+    // executive surfaces to bypass staging until somebody remembered to update
+    // this workflow. The broad source invariant is safer and simpler.
+    expect(staging).toContain('"src/**"');
+    expect(staging).not.toContain('"src/pages/Register.tsx"');
+    expect(staging).not.toContain('"src/components/layout/**"');
+    expect(staging).not.toContain('"src/routes/**"');
+
     expect(staging).toContain('"tests/client-acceptance/**"');
     expect(staging).toContain('"playwright.client-acceptance.config.ts"');
     expect(staging).toContain('"vite.config.ts"');
     expect(staging).toContain('"scripts/verify-live-release-provenance.mjs"');
-    expect(staging).toContain('"src/pages/Register.tsx"');
-    expect(staging).toContain('"src/components/layout/**"');
-    expect(staging).toContain('"src/routes/**"');
     expect(staging).toContain('".github/workflows/client-acceptance.yml"');
     expect(staging).toContain('".github/workflows/ga-staging-validation.yml"');
     expect(staging).toContain('".github/workflows/ga-readiness.yml"');
