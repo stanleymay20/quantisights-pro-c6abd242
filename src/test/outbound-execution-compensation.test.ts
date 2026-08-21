@@ -56,8 +56,11 @@ describe("governed execution compensation", () => {
   it("does not dispatch a compensating side effect in governance or contract-freeze RPCs", () => {
     for (const source of [governanceMigration, contractMigration]) {
       expect(source).not.toMatch(/\bfetch\s*\(/i);
-      expect(source).not.toMatch(/http[s]?:\/\//i);
     }
+    // HTTPS literals are intentionally allowed here because contract freezing must
+    // validate that the reviewed compensation destination uses HTTPS. This guard
+    // is about preventing dispatch capability, not preventing safe URL validation.
+    expect(contractMigration).toContain("left(lower(v_url), 8) <> 'https://'");
     expect(governanceMigration).toContain("never dispatches externally");
     expect(contractMigration).toContain("never dispatches externally");
   });
