@@ -442,6 +442,20 @@ const DataUpload = () => {
       return;
     }
 
+    // The workspace is part of the tenancy contract for every row this flow
+    // writes. Creating datasets/pipeline rows with workspace_id null here would
+    // produce records the workspace-scoped surfaces can never resolve again.
+    if (!currentWorkspaceId) {
+      toast({ title: "No workspace selected", description: "Wait for your workspace to load, or select one, before importing.", variant: "destructive" });
+      return;
+    }
+
+    const trimmedDatasetName = datasetName.trim();
+    if (!trimmedDatasetName) {
+      toast({ title: "Dataset name required", description: "Give this dataset a name before importing.", variant: "destructive" });
+      return;
+    }
+
     if (tier === "starter") {
       const { count } = await supabase
         .from("datasets")
@@ -459,12 +473,20 @@ const DataUpload = () => {
     }
 
     setStep("importing");
+    setDegradedStages([]);
     const pipelineStartedAt = Date.now();
     let pipelineRunId: string | null = null;
+    // Only resources created by THIS import are eligible for rollback. Existing
+    // data is never touched.
+    let uploadedFilePath: string | null = null;
+    let createdDatasetId: string | null = null;
 
     try {
       const filePath = `${currentOrgId}/${Date.now()}_${file.name}`;
-      await supabase.storage.from("datasets").upload(filePath, file);
+      const { error: uploadErr } = await supabase.storage.from("datasets").upload(filePath, file);
+      if (uploadErr) throw new Error(`File upload failed: ${uploadErr.message}`);
+      uploadedFilePath = filePath;
+
 
       // Convert colIdx mapping to deterministic composite keys for storage
       const storedMapping: Record<string, ColumnTarget> = {};
