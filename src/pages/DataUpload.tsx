@@ -89,6 +89,9 @@ const DataUpload = () => {
   const [datasetName, setDatasetName] = useState("");
   const [defaultMetricType, setDefaultMetricType] = useState("revenue");
   const [importCount, setImportCount] = useState(0);
+  // Stages that failed after the raw + clean layers were already durable. A
+  // non-empty list means the import is PARTIAL, never a plain success.
+  const [degradedStages, setDegradedStages] = useState<string[]>([]);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [detectedSchema, setDetectedSchema] = useState<DetectedSchema[]>([]);
   const [intelligence, setIntelligence] = useState<DatasetIntelligence | null>(null);
