@@ -568,7 +568,7 @@ const DataUpload = () => {
           .from("datasets")
           .select("id, current_version, column_mapping")
           .eq("organization_id", currentOrgId)
-          .eq("name", datasetName)
+          .eq("name", trimmedDatasetName)
           .neq("id", dataset.id)
           .order("created_at", { ascending: false })
           .limit(1);
