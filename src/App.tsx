@@ -22,6 +22,7 @@ import { routes, RouteLayout, NotFound } from "@/routes";
 import RouteEntitlement from "@/components/auth/RouteEntitlement";
 import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
+import LandingHeroMedia from "@/components/landing/LandingHeroMedia";
 import { metadataForPath } from "@/lib/page-metadata";
 
 // ═══════════════════════════════════════════════════════
@@ -120,6 +121,7 @@ const App = () => (
             the old `future` prop is no longer part of BrowserRouterProps. */}
         <BrowserRouter>
           <RouteMetadata />
+          <LandingHeroMedia />
           <AuthProvider>
             <CookieConsent />
             <SessionTimeout />
