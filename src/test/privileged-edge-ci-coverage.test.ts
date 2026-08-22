@@ -19,6 +19,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/connector-sheets-pull/index.ts",
       "supabase/functions/connector-dynamics-pull/index.ts",
       "supabase/functions/connector-netsuite-pull/index.ts",
+      "supabase/functions/connector-dq-compute/index.ts",
       "supabase/functions/connector-bigquery-pull/index.ts",
       "supabase/functions/connector-snowflake-pull/index.ts",
       "supabase/functions/connector-s3-pull/index.ts",
