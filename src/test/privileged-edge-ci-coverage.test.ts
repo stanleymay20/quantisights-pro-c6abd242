@@ -14,6 +14,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/api-ingest/index.ts",
       "supabase/functions/webhook-ingest/index.ts",
       "supabase/functions/event-stream/index.ts",
+      "supabase/functions/process-metric-ingest-queue/index.ts",
       "supabase/functions/ingest-csv-pipeline/index.ts",
       "supabase/functions/ingest-external-signals/index.ts",
       "supabase/functions/connector-rest-sync/index.ts",
