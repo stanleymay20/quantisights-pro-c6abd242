@@ -11,8 +11,8 @@ interface DatasetRequiredProps {
 }
 
 /**
- * Gates data-dependent modules on a verified Org → Workspace → Project → Dataset
- * hierarchy. Read failures are unavailable evidence, never onboarding/empty data.
+ * Gates data-dependent modules on a verified Organization → Workspace → Project
+ * → Dataset hierarchy. Read failures are unavailable evidence, never onboarding.
  */
 const DatasetRequired = ({
   children,
@@ -26,6 +26,7 @@ const DatasetRequired = ({
     hasDataset,
     contextLoading,
     contextError,
+    orgEvidenceReady,
     workspaceEvidenceReady,
     projectEvidenceReady,
     datasetEvidenceReady,
@@ -41,18 +42,17 @@ const DatasetRequired = ({
     );
   }
 
-  const unresolvedVerifiedLayer = hasOrg && (
-    !workspaceEvidenceReady
+  const unresolvedVerifiedLayer = !orgEvidenceReady
+    || (hasOrg && !workspaceEvidenceReady)
     || (hasWorkspace && !projectEvidenceReady)
-    || (hasProject && !datasetEvidenceReady)
-  );
+    || (hasProject && !datasetEvidenceReady);
 
   if (contextError || unresolvedVerifiedLayer) {
     return (
       <EmptyState
         icon={<AlertTriangle className="w-8 h-8 text-destructive" />}
         title="Data context unavailable"
-        description={contextError ?? "Quantivis could not verify the active workspace, project, or dataset hierarchy. No empty-data claim has been made."}
+        description={contextError ?? "Quantivis could not verify the active organization, workspace, project, or dataset hierarchy. No empty-data claim has been made."}
         action={
           <Button size="sm" variant="outline" onClick={() => void retryContext()}>
             <RefreshCw className="w-4 h-4 mr-2" />
