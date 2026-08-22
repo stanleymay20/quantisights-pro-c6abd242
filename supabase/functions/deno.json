@@ -15,6 +15,7 @@
   "imports": {
     "@lovable.dev/email-js": "npm:@lovable.dev/email-js@0.1.2",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2",
+    "https://esm.sh/@supabase/supabase-js@2": "npm:@supabase/supabase-js@2.57.2",
     "zod": "npm:zod@^3.25.76",
     "@/lib/": "../../src/lib/",
     "@/lib/agent-gateway": "../../src/lib/agent-gateway.ts",
