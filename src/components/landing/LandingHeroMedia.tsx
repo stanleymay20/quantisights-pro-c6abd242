@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
+import heroVideo from "@/assets/hero-video.mp4";
+import heroPoster from "@/assets/hero-dashboard.jpg";
 
-// Existing Lovable asset from src/assets/hero-video.mp4.asset.json.
-const HERO_VIDEO_URL = "/__l5e/assets-v1/650ac6ec-87f9-4c92-a456-2c8bd77e9d9a/hero-video.mp4";
+// Bundled by Vite so the published build always ships a same-origin, hashed URL.
+const HERO_VIDEO_URL = heroVideo;
+
 
 export default function LandingHeroMedia() {
   const { pathname } = useLocation();
