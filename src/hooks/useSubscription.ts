@@ -1,62 +1,50 @@
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { createSafeChannel } from "@/lib/realtime-channel";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
-import { TierKey } from "@/lib/stripe-tiers";
-
-interface SubscriptionState {
-  subscribed: boolean;
-  tier: TierKey | null;
-  subscriptionEnd: string | null;
-  isTrial: boolean;
-  trialEnd: string | null;
-  isPilot: boolean;
-  inGracePeriod: boolean;
-  gracePeriodEnd: string | null;
-  paymentFailed: boolean;
-  billingInterval: "month" | "year" | null;
-  loading: boolean;
-}
+import type { TierKey } from "@/lib/stripe-tiers";
+import {
+  createUnavailableSubscriptionEvidence,
+  maskSubscriptionEvidenceForScope,
+  type SubscriptionEvidence,
+} from "@/lib/subscription-evidence";
 
 export const useSubscription = () => {
   const { user } = useAuth();
   const { currentOrgId } = useOrganization();
-  const [state, setState] = useState<SubscriptionState>({
-    subscribed: false,
-    tier: null,
-    subscriptionEnd: null,
-    isTrial: false,
-    trialEnd: null,
-    isPilot: false,
-    inGracePeriod: false,
-    gracePeriodEnd: null,
-    paymentFailed: false,
-    billingInterval: null,
-    loading: true,
-  });
+  const [state, setState] = useState<SubscriptionEvidence>(() =>
+    createUnavailableSubscriptionEvidence({ loading: true }),
+  );
+  const requestSeq = useRef(0);
 
   const checkSubscription = useCallback(async () => {
-    if (!user || !currentOrgId) {
-      setState({
-        subscribed: false, tier: null, subscriptionEnd: null,
-        isTrial: false, trialEnd: null, isPilot: false, inGracePeriod: false,
-        gracePeriodEnd: null, paymentFailed: false, billingInterval: null,
-        loading: false,
-      });
+    const seq = ++requestSeq.current;
+    const scopeOrgId = currentOrgId;
+
+    if (!user || !scopeOrgId) {
+      setState(createUnavailableSubscriptionEvidence({ loading: false }));
       return;
     }
+
+    // Clear all values from the previous organization before this scope is
+    // verified. Unknown entitlement must never inherit paid access.
+    setState(createUnavailableSubscriptionEvidence({
+      organizationId: scopeOrgId,
+      loading: true,
+    }));
 
     try {
       const { data, error } = await supabase
         .from("subscriptions")
         .select("tier, status, stripe_subscription_id, current_period_end, is_trial, trial_end, grace_period_end, payment_failed_at, billing_interval")
-        .eq("organization_id", currentOrgId)
+        .eq("organization_id", scopeOrgId)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (error) throw error;
+      if (seq !== requestSeq.current) return;
 
       const now = Date.now();
       const graceEnd = data?.grace_period_end ? new Date(data.grace_period_end).getTime() : 0;
@@ -67,7 +55,7 @@ export const useSubscription = () => {
       const isPilot = Boolean(data?.stripe_subscription_id?.startsWith("pilot_"));
 
       setState({
-        subscribed: !!data && isActive,
+        subscribed: Boolean(data && isActive),
         tier: (data?.tier as TierKey) ?? null,
         subscriptionEnd: data?.current_period_end ?? null,
         isTrial: data?.is_trial ?? false,
@@ -75,9 +63,14 @@ export const useSubscription = () => {
         isPilot,
         inGracePeriod: inGrace,
         gracePeriodEnd: data?.grace_period_end ?? null,
-        paymentFailed: !!data?.payment_failed_at,
+        paymentFailed: Boolean(data?.payment_failed_at),
         billingInterval: (data?.billing_interval as "month" | "year") ?? null,
+        status: data?.status ?? null,
+        hasSubscriptionRecord: Boolean(data),
         loading: false,
+        error: null,
+        evidenceReady: true,
+        organizationId: scopeOrgId,
       });
 
       // Reconcile real Stripe subscriptions in the background. Synthetic
@@ -87,25 +80,45 @@ export const useSubscription = () => {
         supabase.functions.invoke("check-subscription").catch(() => { /* best-effort */ });
       }
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       console.error("[useSubscription] Failed to check subscription:", err instanceof Error ? err.message : err);
-      setState((s) => ({ ...s, loading: false }));
+      setState(createUnavailableSubscriptionEvidence({
+        organizationId: scopeOrgId,
+        loading: false,
+        error: "Unable to verify subscription access.",
+      }));
     }
   }, [user, currentOrgId]);
 
   useEffect(() => {
-    checkSubscription();
+    void checkSubscription();
 
-    // Listen for realtime changes
-    if (!currentOrgId) return;
-    return createSafeChannel(`sub-${currentOrgId}`, (channel) =>
+    if (!currentOrgId) {
+      return () => {
+        requestSeq.current += 1;
+      };
+    }
+
+    const unsubscribe = createSafeChannel(`sub-${currentOrgId}`, (channel) =>
       channel.on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subscriptions", filter: `organization_id=eq.${currentOrgId}` },
-        () => checkSubscription()
+        () => void checkSubscription(),
       )
-      .subscribe()
+      .subscribe(),
     );
+
+    return () => {
+      requestSeq.current += 1;
+      unsubscribe();
+    };
   }, [checkSubscription, currentOrgId]);
 
-  return { ...state, refresh: checkSubscription };
+  const safeState = maskSubscriptionEvidenceForScope(
+    state,
+    currentOrgId,
+    Boolean(user),
+  );
+
+  return { ...safeState, refresh: checkSubscription };
 };

@@ -1,6 +1,6 @@
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/contexts/AuthContext";
-import { TierKey } from "@/lib/stripe-tiers";
+import type { TierKey } from "@/lib/stripe-tiers";
 
 /**
  * Feature → tier access matrix.
@@ -53,7 +53,7 @@ export const requiredTierFor = (feature: FeatureKey): "growth" | "enterprise" =>
   (FEATURE_TIERS[feature] as readonly TierKey[]).includes("growth") ? "growth" : "enterprise";
 
 export const useSubscriptionGate = () => {
-  const { subscribed, tier, loading, isPilot } = useSubscription();
+  const subscription = useSubscription();
   const { user } = useAuth();
 
   // Demo users bypass all subscription gates
@@ -61,14 +61,21 @@ export const useSubscriptionGate = () => {
 
   const canAccess = (feature: FeatureKey): boolean => {
     if (isDemoUser) return true;
-    if (loading) return false;
-    if (!subscribed || !tier) return false;
+    if (subscription.loading || !subscription.evidenceReady || subscription.error) return false;
+    if (!subscription.subscribed || !subscription.tier) return false;
     const allowed = FEATURE_TIERS[feature] as readonly TierKey[] | undefined;
     if (!allowed) return true;
-    return allowed.includes(tier);
+    return allowed.includes(subscription.tier);
   };
 
-  const isExpired = !loading && !subscribed && !isDemoUser;
+  const isExpired = Boolean(
+    !isDemoUser
+      && subscription.evidenceReady
+      && !subscription.loading
+      && !subscription.error
+      && subscription.hasSubscriptionRecord
+      && !subscription.subscribed,
+  );
 
-  return { canAccess, isExpired, tier, loading, subscribed, isPilot, isDemoUser };
+  return { ...subscription, canAccess, isExpired, isDemoUser };
 };

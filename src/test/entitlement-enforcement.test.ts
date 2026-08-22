@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  createUnavailableSubscriptionEvidence,
+  maskSubscriptionEvidenceForScope,
+} from "@/lib/subscription-evidence";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -53,6 +57,43 @@ describe("plan entitlement enforcement", () => {
     expect(tiers).toMatch(/simulations:\s*\["growth",\s*"enterprise"\]/);
     expect(tiers).toMatch(/biasDetection:\s*\["enterprise"\]/);
     expect(tiers).toContain("requiredTierFor");
+  });
+
+  it("masks paid evidence from a previous organization synchronously", () => {
+    const orgAEvidence = {
+      ...createUnavailableSubscriptionEvidence({ organizationId: "org-a" }),
+      subscribed: true,
+      tier: "enterprise" as const,
+      hasSubscriptionRecord: true,
+      evidenceReady: true,
+    };
+
+    const orgBEvidence = maskSubscriptionEvidenceForScope(orgAEvidence, "org-b", true);
+
+    expect(orgBEvidence.organizationId).toBeNull();
+    expect(orgBEvidence.evidenceReady).toBe(false);
+    expect(orgBEvidence.loading).toBe(true);
+    expect(orgBEvidence.subscribed).toBe(false);
+    expect(orgBEvidence.tier).toBeNull();
+    expect(orgBEvidence.hasSubscriptionRecord).toBe(false);
+  });
+
+  it("fails closed while entitlement evidence is loading or unavailable", () => {
+    const gate = read("src/components/SubscriptionGate.tsx");
+    const hook = read("src/hooks/useSubscription.ts");
+
+    expect(gate).not.toContain("if (loading) return <>{children}</>;");
+    expect(gate).toContain("Verifying subscription access");
+    expect(gate).toContain("if (!evidenceReady || error)");
+    expect(hook).not.toContain("setState((s) => ({ ...s, loading: false }))");
+    expect(hook).toContain("createUnavailableSubscriptionEvidence");
+    expect(hook).toContain("maskSubscriptionEvidenceForScope");
+  });
+
+  it("only offers a new pilot after verified subscription absence", () => {
+    const gate = read("src/components/SubscriptionGate.tsx");
+    expect(gate).toContain("const canStartPilot = !hasSubscriptionRecord;");
+    expect(gate).toContain("const pilotEnded = hasSubscriptionRecord && !subscribed && isPilot;");
   });
 
   it("enforces entitlements server-side, not only in the UI", () => {
