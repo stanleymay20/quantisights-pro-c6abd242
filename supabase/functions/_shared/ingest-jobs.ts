@@ -5,6 +5,7 @@ export interface SyncJobRecord {
   status: string;
   records_synced: number | null;
   error_message: string | null;
+  governance_warning: string | null;
 }
 
 export async function findIdempotentJob(
@@ -15,7 +16,7 @@ export async function findIdempotentJob(
 ): Promise<SyncJobRecord | null> {
   let query = svc
     .from("data_sync_jobs")
-    .select("id,status,records_synced,error_message")
+    .select("id,status,records_synced,error_message,governance_warning")
     .eq("request_id", requestId)
     .eq("organization_id", organizationId)
     .limit(1);
