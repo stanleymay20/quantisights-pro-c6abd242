@@ -97,6 +97,8 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = false
   [functions.process-email-queue]
     verify_jwt = true
+  [functions.process-metric-ingest-queue]
+    verify_jwt = false
   [functions.refresh-aggregates]
     verify_jwt = false
   [functions.rollback-dataset-version]
