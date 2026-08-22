@@ -10,8 +10,22 @@ import { useDataset } from "@/contexts/DatasetContext";
  */
 export const useActiveDataContext = () => {
   const { currentOrgId, currentOrg, loading: orgLoading } = useOrganization();
-  const { currentWorkspaceId, currentWorkspace, loading: workspaceLoading } = useWorkspace();
-  const { currentProject, currentProjectId, loading: projectLoading } = useProject();
+  const {
+    currentWorkspaceId,
+    currentWorkspace,
+    loading: workspaceLoading,
+    error: workspaceError,
+    evidenceReady: workspaceEvidenceReady,
+    refreshWorkspaces,
+  } = useWorkspace();
+  const {
+    currentProject,
+    currentProjectId,
+    loading: projectLoading,
+    error: projectError,
+    evidenceReady: projectEvidenceReady,
+    refreshProjects,
+  } = useProject();
   const {
     activeDataset,
     activeDatasetId,
@@ -26,11 +40,25 @@ export const useActiveDataContext = () => {
   const hasWorkspace = !!currentWorkspaceId && !!currentWorkspace;
   const hasProject = !!currentProjectId && !!currentProject;
   const hasDataset = !!activeDatasetId && !!activeDataset;
-  const contextError = datasetError;
+
+  const contextError = workspaceError ?? projectError ?? datasetError;
+  const hierarchyEvidenceReady = workspaceEvidenceReady && projectEvidenceReady && datasetEvidenceReady;
+
+  const retryContext = async () => {
+    if (workspaceError || !workspaceEvidenceReady) {
+      await refreshWorkspaces();
+      return;
+    }
+    if (projectError || !projectEvidenceReady) {
+      await refreshProjects();
+      return;
+    }
+    await refreshDatasets();
+  };
 
   const isReady = !contextLoading
     && !contextError
-    && datasetEvidenceReady
+    && hierarchyEvidenceReady
     && hasOrg
     && hasWorkspace
     && hasProject
@@ -54,7 +82,13 @@ export const useActiveDataContext = () => {
 
     contextLoading,
     contextError,
+    workspaceEvidenceReady,
+    projectEvidenceReady,
     datasetEvidenceReady,
+    hierarchyEvidenceReady,
+    retryContext,
+    refreshWorkspaces,
+    refreshProjects,
     refreshDatasets,
     isReady,
   };
