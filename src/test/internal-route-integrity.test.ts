@@ -8,16 +8,14 @@ const routesSource = readFileSync(resolve(srcRoot, "routes/index.tsx"), "utf8");
 const aliasesSource = readFileSync(resolve(srcRoot, "lib/public-route-aliases.ts"), "utf8");
 
 const registeredRoutes = [...routesSource.matchAll(/\bpath:\s*["'`]([^"'`]+)["'`]/g)].map((match) => match[1]);
+const concreteRoutes = registeredRoutes.filter((route) => route !== "*");
 const aliases = [...aliasesSource.matchAll(/["'`]([^"'`]+)["'`]\s*:\s*["'`]([^"'`]+)["'`]/g)];
 const aliasSources = aliases.map((match) => match[1]);
 const aliasTargets = aliases.map((match) => match[2]);
-const knownRoutes = [...new Set([...registeredRoutes, ...aliasSources])];
+const knownRoutes = [...new Set([...concreteRoutes, ...aliasSources])];
 
 function routePattern(route: string): RegExp {
-  if (route === "*") return /^.*$/;
-
   const parts = route.split("/").map((part) => {
-    if (part === "*") return ".*";
     if (part.startsWith(":")) {
       return part.endsWith("?") ? "(?:[^/]+)?" : "[^/]+";
     }
@@ -70,7 +68,6 @@ function literalTargets(source: string, rel: string): string[] {
     /\b(?:href|to|url)\s*:\s*`([^`]+)`/g,
   ];
 
-  // Navigation registries often store destinations as plain string arrays/sets.
   if (/Nav|Navbar|Sidebar|Menu|useRoleNav/.test(rel)) {
     patterns.push(/["'](\/[A-Za-z0-9_./:-]+)["']/g);
   }
@@ -96,16 +93,16 @@ describe("internal route integrity", () => {
     expect(duplicates(aliasSources), "Duplicate aliases make redirects order-dependent").toEqual([]);
   });
 
-  it("keeps public aliases pointed at registered destinations", () => {
+  it("keeps aliases pointed at concrete registered destinations", () => {
     for (const target of aliasTargets) {
       expect(
-        registeredRoutes.some((route) => routePattern(route).test(target)),
-        `Alias target ${target} is not registered`,
+        concreteRoutes.some((route) => routePattern(route).test(target)),
+        `Alias target ${target} is not a concrete registered route`,
       ).toBe(true);
     }
   });
 
-  it("keeps literal internal navigation targets backed by a route or alias", () => {
+  it("keeps literal internal navigation targets backed by a concrete route or alias", () => {
     const broken: string[] = [];
 
     for (const file of walk(srcRoot)) {
@@ -114,7 +111,6 @@ describe("internal route integrity", () => {
       for (const rawTarget of literalTargets(source, rel)) {
         const target = normalizeTarget(rawTarget);
         if (!target) continue;
-        // Browser/static resources are not React Router destinations.
         if (/^\/(?:assets|lovable-uploads|favicon|robots\.txt|sitemap\.xml|manifest)/.test(target)) continue;
         if (!isRegistered(target)) broken.push(`${rel}: ${rawTarget}`);
       }
