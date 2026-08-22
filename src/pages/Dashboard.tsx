@@ -31,7 +31,12 @@ const Dashboard = () => {
   const { activeDatasetId, loading: datasetLoading } = useDataset();
 
   const {
-    topMetrics, hasData, loading: metricsLoading,
+    topMetrics,
+    hasData,
+    loading: metricsLoading,
+    stale: metricsStale,
+    error: metricsError,
+    cachedAt: metricsCachedAt,
   } = useMetricsSummary(currentOrgId, activeDatasetId);
 
   const { insights, loading: insightsLoading } = useInsights(currentOrgId, activeDatasetId);
@@ -45,7 +50,12 @@ const Dashboard = () => {
   const displayName = profile?.full_name || formattedEmailName || "User";
   const isDemoUser = Boolean(user?.user_metadata?.is_demo);
 
-  const [pendingDecisions, setPendingDecisions] = useState(0);
+  // `null` means the value is unknown because the query failed. Zero is only
+  // used after a successful query proving that no governed decisions are
+  // awaiting review.
+  const [pendingDecisions, setPendingDecisions] = useState<number | null>(0);
+  const [decisionStatsError, setDecisionStatsError] = useState<string | null>(null);
+  const [onboardingVerificationError, setOnboardingVerificationError] = useState<string | null>(null);
   const decisionSyncRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -53,34 +63,46 @@ const Dashboard = () => {
     const cacheKey = `onboarding_checked_${currentOrgId}`;
     if (sessionStorage.getItem(cacheKey) === "done") return;
 
+    let cancelled = false;
     const checkOnboarding = async () => {
+      setOnboardingVerificationError(null);
       try {
         const { data, error } = await supabase
           .from("organizations")
           .select("onboarding_completed")
           .eq("id", currentOrgId)
           .maybeSingle();
+        if (cancelled) return;
         if (error) {
           console.warn("[Dashboard] Onboarding check failed:", error.message);
-          sessionStorage.setItem(cacheKey, "done");
+          setOnboardingVerificationError(error.message);
           return;
         }
-        if (data && !data.onboarding_completed) {
-          navigate("/onboarding", { replace: true });
-        } else {
-          sessionStorage.setItem(cacheKey, "done");
+        if (!data) {
+          setOnboardingVerificationError("Organization onboarding status could not be verified.");
+          return;
         }
-      } catch (error) {
-        console.warn("[Dashboard] Onboarding check threw:", error);
+        if (!data.onboarding_completed) {
+          navigate("/onboarding", { replace: true });
+          return;
+        }
+        // Cache only a successfully verified completed state. Unknown/error
+        // states remain retryable on the next mount instead of becoming truth.
         sessionStorage.setItem(cacheKey, "done");
+      } catch (error) {
+        if (cancelled) return;
+        console.warn("[Dashboard] Onboarding check threw:", error);
+        setOnboardingVerificationError(error instanceof Error ? error.message : "Onboarding verification failed.");
       }
     };
     void checkOnboarding();
+    return () => { cancelled = true; };
   }, [currentOrgId, orgLoading, navigate]);
 
   const refreshDecisionStats = useCallback(async () => {
     if (!currentOrgId || !activeDatasetId) {
       setPendingDecisions(0);
+      setDecisionStatsError(null);
       return;
     }
 
@@ -94,10 +116,13 @@ const Dashboard = () => {
 
     if (error) {
       console.warn("[Dashboard] Pending-decision count failed:", error.message);
-      setPendingDecisions(0);
+      setPendingDecisions(null);
+      setDecisionStatsError(error.message);
       return;
     }
+
     setPendingDecisions(count ?? 0);
+    setDecisionStatsError(null);
   }, [currentOrgId, activeDatasetId]);
 
   useEffect(() => {
@@ -135,7 +160,8 @@ const Dashboard = () => {
   const isLoading = isContextLoading || metricsLoading || insightsLoading;
   const isDemoHydrating = isDemoUser && (!currentWorkspaceId || !activeDatasetId);
   const showWelcomeFlow = !isDemoUser && !isContextLoading;
-  const showEmptyState = !hasData && !isLoading && !isDemoHydrating;
+  // An unavailable metrics source is not the same as an empty dataset.
+  const showEmptyState = !metricsError && !hasData && !isLoading && !isDemoHydrating;
 
   useEffect(() => {
     if (isDemoUser && hasData) sessionStorage.removeItem("quantivis_demo_mode");
@@ -162,11 +188,56 @@ const Dashboard = () => {
       {isDemoUser && hasData && <DemoBanner />}
 
       <main id="main-content" className="flex-1 overflow-auto">
-        <div className="p-4 sm:p-6 md:p-8">
+        <div className="p-4 sm:p-6 md:p-8 space-y-4">
+          {(metricsStale || metricsError) && (
+            <section className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3" role="status" aria-live="polite">
+              <p className="text-sm font-semibold text-foreground">
+                {metricsError ? "Live metric evidence could not be verified" : "Metric evidence is awaiting live verification"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {metricsStale
+                  ? `Cached evidence${metricsCachedAt ? ` from ${new Date(metricsCachedAt).toLocaleString()}` : ""} is shown as stale and must not be treated as current.`
+                  : "Quantivis is not presenting unavailable evidence as an empty or healthy state."}
+              </p>
+            </section>
+          )}
+
+          {onboardingVerificationError && (
+            <section className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3" role="status" aria-live="polite">
+              <p className="text-sm font-semibold text-foreground">Onboarding status is unverified</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Quantivis could not verify whether onboarding is complete. This state has not been cached as completed and will be checked again.
+              </p>
+            </section>
+          )}
+
+          {decisionStatsError && (
+            <section className="rounded-xl border border-destructive/30 bg-destructive/[0.04] px-4 py-3" role="alert">
+              <p className="text-sm font-semibold text-foreground">Pending decisions cannot currently be verified</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Quantivis will not convert this query failure into “0 awaiting review.” Refresh the page or retry after the data service recovers.
+              </p>
+            </section>
+          )}
+
           {(isLoading || isDemoHydrating) && !hasData ? (
             <DashboardSkeleton />
+          ) : metricsError && !hasData ? (
+            <section className="rounded-2xl border border-destructive/30 bg-card p-8 text-center">
+              <h2 className="text-base font-semibold">Executive evidence is temporarily unavailable</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The active dataset could not be verified. Quantivis is withholding an empty-state or all-clear interpretation until live evidence is available.
+              </p>
+            </section>
           ) : showEmptyState ? (
             <DashboardEmptyState />
+          ) : pendingDecisions === null ? (
+            <section className="rounded-2xl border border-destructive/30 bg-card p-8 text-center">
+              <h2 className="text-base font-semibold">Executive decision state is temporarily unavailable</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The governed decision count could not be verified, so Quantivis is withholding the executive all-clear surface rather than displaying a misleading zero.
+              </p>
+            </section>
           ) : (
             <SectionErrorBoundary sectionName="Dashboard">
               <ExecutiveDailyDriver
