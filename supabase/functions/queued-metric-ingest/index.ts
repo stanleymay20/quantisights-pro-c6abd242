@@ -1,12 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { createLogger } from "../_shared/logger.ts";
-import { createSyncJob, failSyncJob, findIdempotentJob } from "../_shared/ingest-jobs.ts";
+import { failSyncJob, findIdempotentJob } from "../_shared/ingest-jobs.ts";
 import { isRecord, normalizeDateInput, parseJsonBody, sha256Hex, toDateOnly } from "../_shared/ingest-utils.ts";
 
 const MAX_RECORDS = 50_000;
 const CHUNK_SIZE = 500;
 const MAX_VALUE = 1e12;
+const OVERLOAD_RETRY_AFTER_SECONDS = 30;
 
 type CanonicalMetric = {
   metric_type: string;
@@ -17,6 +18,14 @@ type CanonicalMetric = {
   quality_score: number;
 };
 
+type ClaimedJob = {
+  job_id: string;
+  created: boolean;
+  job_status: string;
+  records_synced: number | null;
+  error_message: string | null;
+};
+
 function identity(metric: CanonicalMetric): string {
   return [metric.metric_type.toLowerCase(), metric.date, metric.region, metric.segment].join("\u001f");
 }
@@ -25,9 +34,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
   const logger = createLogger("queued-metric-ingest", req);
-  const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  const respond = (body: unknown, status = 200, extraHeaders: Record<string, string> = {}) => new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeaders, ...extraHeaders, "Content-Type": "application/json" },
   });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -142,12 +151,29 @@ Deno.serve(async (req) => {
     for (const metric of validated) deduped.set(identity(metric), metric);
     const metrics = Array.from(deduped.values());
 
-    jobId = await createSyncJob(svc, {
-      dataSourceId: source.id,
-      organizationId: source.organization_id,
-      requestId,
-      status: "pending",
+    // Atomic database claim closes the read-before-insert race above. If an
+    // identical request won between the early lookup and this RPC, this caller
+    // returns that same job instead of creating or enqueueing duplicate work.
+    const { data: claimRows, error: claimError } = await svc.rpc("claim_metric_ingest_job", {
+      _organization_id: source.organization_id,
+      _data_source_id: source.id,
+      _request_id: requestId,
     });
+    if (claimError) throw new Error(`Idempotency claim failed: ${claimError.message}`);
+    const claim = Array.isArray(claimRows) ? claimRows[0] as ClaimedJob | undefined : undefined;
+    if (!claim?.job_id) throw new Error("Idempotency claim returned no job");
+
+    if (!claim.created) {
+      const terminal = ["completed", "partial", "failed"].includes(claim.job_status);
+      return respond({
+        idempotent_replay: true,
+        job_id: claim.job_id,
+        job_status: claim.job_status,
+        records_synced: claim.records_synced ?? 0,
+        error_message: claim.error_message,
+      }, claim.job_status === "failed" ? 409 : terminal ? 200 : 202);
+    }
+    jobId = claim.job_id;
 
     const chunks: Array<Record<string, unknown>> = [];
     for (let i = 0; i < metrics.length; i += CHUNK_SIZE) {
@@ -171,6 +197,40 @@ Deno.serve(async (req) => {
       _chunks: chunks,
     });
     if (enqueueError) {
+      const isBackpressure = enqueueError.message.includes("METRIC_QUEUE_BACKPRESSURE") || enqueueError.message.includes("METRIC_QUEUE_PAUSED");
+      if (isBackpressure) {
+        // The enqueue RPC rejects before sending any PGMQ message. Remove the
+        // provisional idempotency claim so the SAME request ID can be retried
+        // after capacity becomes available.
+        const { error: cleanupError } = await svc
+          .from("data_sync_jobs")
+          .delete()
+          .eq("id", jobId)
+          .eq("organization_id", source.organization_id)
+          .eq("data_source_id", source.id)
+          .eq("status", "pending")
+          .eq("chunks_total", 0);
+        if (cleanupError) {
+          await failSyncJob(svc, { jobId, errorMessage: `Backpressure rejection cleanup failed: ${cleanupError.message}` });
+          return respond({ error: "Queue overloaded and retry state could not be reset safely", job_id: jobId }, 503);
+        }
+
+        const rejectedJobId = jobId;
+        jobId = null;
+        logger.info("queued ingest rejected by backpressure", {
+          request_id: requestId,
+          dataset_id: datasetId,
+          provisional_job_id: rejectedJobId,
+          reason: enqueueError.message,
+        });
+        return respond({
+          accepted: false,
+          retryable: true,
+          error: enqueueError.message.includes("PAUSED") ? "Metric ingestion is temporarily paused" : "Metric ingestion queue is at capacity",
+          retry_after_seconds: OVERLOAD_RETRY_AFTER_SECONDS,
+        }, 429, { "Retry-After": String(OVERLOAD_RETRY_AFTER_SECONDS) });
+      }
+
       await failSyncJob(svc, { jobId, errorMessage: `Atomic queue enqueue failed: ${enqueueError.message}` });
       return respond({ error: "Queued ingestion could not be accepted", job_id: jobId }, 503);
     }
