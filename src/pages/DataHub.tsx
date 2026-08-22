@@ -1,10 +1,10 @@
 /**
  * Data Hub — Reference Intelligence Command Center
  *
- * Enterprise hardening note:
- * This page must never trap onboarding users in an infinite spinner. It now
- * handles missing organization context, slow Supabase responses, table/RLS
- * errors, and empty first-run accounts with clear recovery actions.
+ * Trust contract: prior-tenant evidence is cleared before every organization
+ * transition; core signal/source reads must verify before counts are shown;
+ * sync-history degradation is visible rather than rendered as an empty history;
+ * manual sync messages reflect the Edge Function's completed result contract.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,7 +18,6 @@ import {
   Layers,
   Loader2,
   RefreshCw,
-  ShieldCheck,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -73,6 +72,20 @@ interface SyncRun {
   duration_ms: number | null;
 }
 
+interface ManualSyncResult {
+  ok?: boolean;
+  status?: "completed" | "partial" | "failed" | string;
+  results?: Array<{
+    vendor_key?: string;
+    status?: string;
+    rows_fetched?: number;
+    upserted?: number;
+    warnings?: string[];
+    error?: string;
+  }>;
+  error?: string;
+}
+
 const LOAD_TIMEOUT_MS = 9000;
 
 const num = (value: unknown, digits = 0) => {
@@ -83,15 +96,13 @@ const num = (value: unknown, digits = 0) => {
 const fmtAge = (iso: string | null | undefined) => {
   if (!iso) return "—";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return formatDistanceToNow(date, { addSuffix: true });
+  return Number.isNaN(date.getTime()) ? "—" : formatDistanceToNow(date, { addSuffix: true });
 };
 
 const fmtDate = (iso: string | null | undefined) => {
   if (!iso) return "—";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return format(date, "PPp");
+  return Number.isNaN(date.getTime()) ? "—" : format(date, "PPp");
 };
 
 const getProvider = (row: ReferenceRow) => {
@@ -113,20 +124,30 @@ export default function DataHub() {
   const [loading, setLoading] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [coreReady, setCoreReady] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
   const [rows, setRows] = useState<ReferenceRow[]>([]);
   const [sources, setSources] = useState<VendorSource[]>([]);
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [syncing, setSyncing] = useState<string | null>(null);
 
+  const clearEvidence = useCallback(() => {
+    setRows([]);
+    setSources([]);
+    setRuns([]);
+    setCoreReady(false);
+    setHistoryReady(false);
+  }, []);
+
   const load = useCallback(async () => {
     setTimedOut(false);
     setError(null);
+    setHistoryError(null);
+    clearEvidence();
 
     if (!currentOrgId) {
       setLoading(false);
-      setRows([]);
-      setSources([]);
-      setRuns([]);
       return;
     }
 
@@ -156,22 +177,31 @@ export default function DataHub() {
           .limit(50),
       ]);
 
-      if (refRes.error) throw refRes.error;
-      if (srcRes.error) throw srcRes.error;
-      if (runRes.error) console.warn("Data Hub sync run history unavailable", runRes.error);
+      if (refRes.error) throw new Error(`Reference signal query failed: ${refRes.error.message}`);
+      if (srcRes.error) throw new Error(`Vendor source query failed: ${srcRes.error.message}`);
 
       setRows((refRes.data ?? []) as ReferenceRow[]);
       setSources((srcRes.data ?? []) as VendorSource[]);
-      setRuns((runRes.data ?? []) as SyncRun[]);
+      setCoreReady(true);
+
+      if (runRes.error) {
+        setRuns([]);
+        setHistoryReady(false);
+        setHistoryError(`Sync history could not be verified: ${runRes.error.message}`);
+      } else {
+        setRuns((runRes.data ?? []) as SyncRun[]);
+        setHistoryReady(true);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      clearEvidence();
       setError(message);
       toast({ title: "Failed to load Data Hub", description: message, variant: "destructive" });
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
       setLoading(false);
     }
-  }, [currentOrgId, toast]);
+  }, [clearEvidence, currentOrgId, toast]);
 
   useEffect(() => {
     if (!orgLoading) void load();
@@ -180,12 +210,29 @@ export default function DataHub() {
   const triggerSync = async (sourceId: string, vendorName: string) => {
     setSyncing(sourceId);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("ingest-external-signals", {
+      const { data, error: fnError } = await supabase.functions.invoke<ManualSyncResult>("ingest-external-signals", {
         body: { mode: "manual", source_id: sourceId },
       });
       if (fnError) throw fnError;
-      toast({ title: "Sync started", description: `${vendorName}: ${data?.rows_ingested ?? data?.message ?? "Refresh dispatched"}` });
-      setTimeout(() => void load(), 1500);
+      if (!data || data.error || !data.status || !Array.isArray(data.results)) {
+        throw new Error(data?.error || "External ingestion returned no verifiable completion result.");
+      }
+      if (data.status === "failed" || data.ok === false) {
+        const issue = data.results.find(result => result.error)?.error || "External ingestion failed.";
+        throw new Error(issue);
+      }
+
+      const saved = data.results.reduce((sum, result) => sum + (Number(result.upserted) || 0), 0);
+      const warnings = data.results.reduce((sum, result) => sum + (result.warnings?.length ?? 0), 0);
+      if (data.status === "partial" || warnings > 0) {
+        toast({
+          title: "Sync completed with warnings",
+          description: `${vendorName}: ${saved.toLocaleString()} reference rows persisted; ${warnings} warning${warnings === 1 ? "" : "s"} require review.`,
+        });
+      } else {
+        toast({ title: "Sync completed", description: `${vendorName}: ${saved.toLocaleString()} reference rows persisted.` });
+      }
+      await load();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast({ title: "Sync failed", description: message, variant: "destructive" });
@@ -195,29 +242,30 @@ export default function DataHub() {
   };
 
   const overview = useMemo(() => {
-    const countries = new Set(rows.map((r) => r.region).filter(Boolean)).size;
+    if (!coreReady) return { countries: 0, domains: 0, providers: 0, activeSources: 0, lastSync: undefined as string | undefined };
+    const countries = new Set(rows.map(row => row.region).filter(Boolean)).size;
     const domains = new Set(rows.map(getDomain).filter(Boolean)).size;
     const providers = new Set(rows.map(getProvider).filter(Boolean)).size;
-    const activeSources = sources.filter((s) => s.is_active).length;
-    const lastSync = sources.map((s) => s.last_refreshed_at).filter(Boolean).sort().reverse()[0] as string | undefined;
+    const activeSources = sources.filter(source => source.is_active).length;
+    const lastSync = sources.map(source => source.last_refreshed_at).filter(Boolean).sort().reverse()[0] as string | undefined;
     return { countries, domains, providers, activeSources, lastSync };
-  }, [rows, sources]);
+  }, [coreReady, rows, sources]);
 
   const providerBreakdown = useMemo(() => {
+    if (!coreReady) return [] as Array<[string, number]>;
     const map = new Map<string, number>();
-    rows.forEach((row) => map.set(getProvider(row), (map.get(getProvider(row)) ?? 0) + 1));
+    rows.forEach(row => map.set(getProvider(row), (map.get(getProvider(row)) ?? 0) + 1));
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
-  }, [rows]);
+  }, [coreReady, rows]);
 
-  const showInitialLoading = orgLoading || (loading && rows.length === 0 && !timedOut);
+  const showInitialLoading = orgLoading || (loading && !coreReady && !timedOut);
 
   if (showInitialLoading) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         <Card role="status" aria-live="polite">
           <CardContent className="p-8 flex items-center justify-center gap-3 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            Loading Data Hub…
+            <Loader2 className="h-5 w-5 animate-spin text-primary" /> Loading Data Hub…
           </CardContent>
         </Card>
       </div>
@@ -227,16 +275,12 @@ export default function DataHub() {
   if (!currentOrgId) {
     return (
       <DataHubShell onReload={load} loading={loading}>
-        <EmptyState
-          icon={<Database className="h-8 w-8" />}
-          title="No organization selected"
-          description="Select or create an organization before viewing reference intelligence sources."
-        />
+        <EmptyState icon={<Database className="h-8 w-8" />} title="No organization selected" description="Select or create an organization before viewing reference intelligence sources." />
       </DataHubShell>
     );
   }
 
-  if (timedOut && rows.length === 0 && sources.length === 0) {
+  if (timedOut && !coreReady) {
     return (
       <DataHubShell onReload={load} loading={loading}>
         <Card className="border-amber-500/30 bg-amber-500/5">
@@ -244,16 +288,11 @@ export default function DataHub() {
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5" />
               <div>
-                <h3 className="font-semibold">Data Hub is taking longer than expected</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  The reference intelligence query did not finish quickly. This can happen on first-run accounts, missing reference tables, or temporary network delay.
-                </p>
+                <h3 className="font-semibold">Data Hub evidence is taking longer than expected</h3>
+                <p className="text-sm text-muted-foreground mt-1">The organization-scoped reference queries have not been verified yet. Quantivis is withholding counts rather than displaying stale or zero values.</p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              <RefreshCw className={`h-3.5 w-3.5 mr-2 ${loading ? "animate-spin" : ""}`} />
-              Retry Data Hub load
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className={`h-3.5 w-3.5 mr-2 ${loading ? "animate-spin" : ""}`} /> Retry Data Hub load</Button>
           </CardContent>
         </Card>
       </DataHubShell>
@@ -266,27 +305,22 @@ export default function DataHub() {
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="p-4 flex items-start gap-3 text-sm">
             <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />
-            <div>
-              <div className="font-medium">Data Hub loaded with an issue</div>
-              <div className="text-muted-foreground">{error}</div>
-            </div>
+            <div><div className="font-medium">Data Hub evidence unavailable</div><div className="text-muted-foreground">{error}</div></div>
           </CardContent>
         </Card>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard icon={<Database className="h-4 w-4" />} label="Reference signals" value={num(rows.length)} hint="Loaded from internal_reference_data" />
-        <KpiCard icon={<Activity className="h-4 w-4" />} label="Active sources" value={`${overview.activeSources} / ${sources.length}`} hint="Vendor connections" />
-        <KpiCard icon={<Globe2 className="h-4 w-4" />} label="Countries covered" value={num(overview.countries)} hint="ISO3 regions" />
-        <KpiCard icon={<Layers className="h-4 w-4" />} label="Domains covered" value={num(overview.domains)} hint="Reference categories" />
+        <KpiCard icon={<Database className="h-4 w-4" />} label="Reference signals" value={coreReady ? num(rows.length) : "—"} hint="Loaded from internal_reference_data" />
+        <KpiCard icon={<Activity className="h-4 w-4" />} label="Active sources" value={coreReady ? `${overview.activeSources} / ${sources.length}` : "—"} hint="Vendor connections" />
+        <KpiCard icon={<Globe2 className="h-4 w-4" />} label="Countries covered" value={coreReady ? num(overview.countries) : "—"} hint="ISO3 regions" />
+        <KpiCard icon={<Layers className="h-4 w-4" />} label="Domains covered" value={coreReady ? num(overview.domains) : "—"} hint="Reference categories" />
       </div>
 
-      {rows.length === 0 && sources.length === 0 ? (
-        <EmptyState
-          icon={<Database className="h-8 w-8" />}
-          title="No reference intelligence configured yet"
-          description="Data Hub is ready, but this organization has no external reference sources or ingested signals yet. Configure vendors in Admin → Data Vendors or continue with uploaded client data."
-        />
+      {!coreReady ? (
+        <EmptyState icon={<AlertTriangle className="h-8 w-8" />} title="Reference evidence unavailable" description="Retry the organization-scoped Data Hub queries before relying on reference-intelligence counts." />
+      ) : rows.length === 0 && sources.length === 0 ? (
+        <EmptyState icon={<Database className="h-8 w-8" />} title="No reference intelligence configured yet" description="The core Data Hub queries succeeded, but this organization has no external reference sources or ingested signals yet." />
       ) : (
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
@@ -300,9 +334,7 @@ export default function DataHub() {
             <Card>
               <CardHeader>
                 <CardTitle>What lives here</CardTitle>
-                <CardDescription>
-                  Data Hub holds external reference intelligence used to enrich and benchmark decisions. Client truth remains under Data Sources and Dataset Explorer.
-                </CardDescription>
+                <CardDescription>Data Hub holds external reference intelligence used to enrich and benchmark decisions. Client truth remains under Data Sources and Dataset Explorer.</CardDescription>
               </CardHeader>
               <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MiniStat label="Providers" value={num(overview.providers)} />
@@ -312,16 +344,10 @@ export default function DataHub() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader>
-                <CardTitle>Provider breakdown</CardTitle>
-                <CardDescription>Loaded signal distribution by provider.</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Provider breakdown</CardTitle><CardDescription>Loaded signal distribution by provider.</CardDescription></CardHeader>
               <CardContent>
-                {providerBreakdown.length === 0 ? <EmptyState icon={<Database className="h-8 w-8" />} title="No providers yet" description="Provider distribution appears after reference signals are ingested." /> : (
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Provider</TableHead><TableHead className="text-right">Signals</TableHead></TableRow></TableHeader>
-                    <TableBody>{providerBreakdown.map(([provider, count]) => <TableRow key={provider}><TableCell>{provider}</TableCell><TableCell className="text-right">{num(count)}</TableCell></TableRow>)}</TableBody>
-                  </Table>
+                {providerBreakdown.length === 0 ? <EmptyState icon={<Database className="h-8 w-8" />} title="No providers yet" description="The verified signal set currently contains no providers." /> : (
+                  <Table><TableHeader><TableRow><TableHead>Provider</TableHead><TableHead className="text-right">Signals</TableHead></TableRow></TableHeader><TableBody>{providerBreakdown.map(([provider, count]) => <TableRow key={provider}><TableCell>{provider}</TableCell><TableCell className="text-right">{num(count)}</TableCell></TableRow>)}</TableBody></Table>
                 )}
               </CardContent>
             </Card>
@@ -329,16 +355,10 @@ export default function DataHub() {
 
           <TabsContent value="signals">
             <Card>
-              <CardHeader>
-                <CardTitle>Reference signals</CardTitle>
-                <CardDescription>Latest 500 reference records loaded for this organization.</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Reference signals</CardTitle><CardDescription>Latest 500 verified reference records loaded for this organization.</CardDescription></CardHeader>
               <CardContent>
-                {rows.length === 0 ? <EmptyState icon={<Globe2 className="h-8 w-8" />} title="No signals yet" description="Reference signals will appear after a vendor sync completes." /> : (
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Region</TableHead><TableHead>Domain</TableHead><TableHead>Metric</TableHead><TableHead className="text-right">Value</TableHead><TableHead>Provider</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader>
-                    <TableBody>{rows.slice(0, 100).map((row) => <TableRow key={row.id}><TableCell>{row.region ?? "—"}</TableCell><TableCell>{getDomain(row)}</TableCell><TableCell className="font-mono text-xs max-w-[280px] truncate" title={row.metric_name}>{row.metric_name}</TableCell><TableCell className="text-right">{num(row.value, 4)} {row.unit ?? ""}</TableCell><TableCell>{getProvider(row)}</TableCell><TableCell className="text-xs text-muted-foreground">{fmtAge(row.updated_at)}</TableCell></TableRow>)}</TableBody>
-                  </Table>
+                {rows.length === 0 ? <EmptyState icon={<Globe2 className="h-8 w-8" />} title="No signals yet" description="The signal query succeeded and returned no reference signals." /> : (
+                  <Table><TableHeader><TableRow><TableHead>Region</TableHead><TableHead>Domain</TableHead><TableHead>Metric</TableHead><TableHead className="text-right">Value</TableHead><TableHead>Provider</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{rows.slice(0, 100).map(row => <TableRow key={row.id}><TableCell>{row.region ?? "—"}</TableCell><TableCell>{getDomain(row)}</TableCell><TableCell className="font-mono text-xs max-w-[280px] truncate" title={row.metric_name}>{row.metric_name}</TableCell><TableCell className="text-right">{num(row.value, 4)} {row.unit ?? ""}</TableCell><TableCell>{getProvider(row)}</TableCell><TableCell className="text-xs text-muted-foreground">{fmtAge(row.updated_at)}</TableCell></TableRow>)}</TableBody></Table>
                 )}
               </CardContent>
             </Card>
@@ -346,15 +366,12 @@ export default function DataHub() {
 
           <TabsContent value="sources">
             <Card>
-              <CardHeader>
-                <CardTitle>Vendor sources</CardTitle>
-                <CardDescription>Configured external sources and manual sync controls.</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Vendor sources</CardTitle><CardDescription>Configured external sources and manual sync controls.</CardDescription></CardHeader>
               <CardContent>
-                {sources.length === 0 ? <EmptyState icon={<Database className="h-8 w-8" />} title="No vendor sources configured" description="Configure vendor connections under Admin → Data Vendors to begin ingesting reference intelligence." /> : (
+                {sources.length === 0 ? <EmptyState icon={<Database className="h-8 w-8" />} title="No vendor sources configured" description="The vendor-source query succeeded and returned no configured sources." /> : (
                   <Table>
                     <TableHeader><TableRow><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead>Last refreshed</TableHead><TableHead>Trust</TableHead><TableHead>Issue</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
-                    <TableBody>{sources.map((source) => <TableRow key={source.id}><TableCell><div className="font-medium">{source.vendor_name}</div><div className="text-xs text-muted-foreground font-mono">{source.vendor_key}</div></TableCell><TableCell>{source.is_active ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-3 w-3 mr-1" /> Active</Badge> : <Badge variant="secondary">Paused</Badge>}</TableCell><TableCell>{fmtAge(source.last_refreshed_at)}</TableCell><TableCell><Badge variant="outline">{source.trust_level ?? "—"}/100</Badge></TableCell><TableCell className="max-w-[240px] truncate text-xs text-muted-foreground" title={source.last_error ?? undefined}>{source.last_error ?? "None"}</TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => triggerSync(source.id, source.vendor_name)} disabled={!source.is_active || syncing === source.id}>{syncing === source.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}</Button></TableCell></TableRow>)}</TableBody>
+                    <TableBody>{sources.map(source => <TableRow key={source.id}><TableCell><div className="font-medium">{source.vendor_name}</div><div className="text-xs text-muted-foreground font-mono">{source.vendor_key}</div></TableCell><TableCell>{source.is_active ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-3 w-3 mr-1" /> Active</Badge> : <Badge variant="secondary">Paused</Badge>}</TableCell><TableCell>{fmtAge(source.last_refreshed_at)}</TableCell><TableCell><Badge variant="outline">{source.trust_level ?? "—"}/100</Badge></TableCell><TableCell className="max-w-[240px] truncate text-xs text-muted-foreground" title={source.last_error ?? undefined}>{source.last_error ?? "None"}</TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => void triggerSync(source.id, source.vendor_name)} disabled={!source.is_active || syncing === source.id}>{syncing === source.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}</Button></TableCell></TableRow>)}</TableBody>
                   </Table>
                 )}
               </CardContent>
@@ -363,15 +380,18 @@ export default function DataHub() {
 
           <TabsContent value="sync">
             <Card>
-              <CardHeader>
-                <CardTitle>Recent sync runs</CardTitle>
-                <CardDescription>Last 50 vendor refresh attempts.</CardDescription>
-              </CardHeader>
+              <CardHeader><CardTitle>Recent sync runs</CardTitle><CardDescription>Last 50 vendor refresh attempts.</CardDescription></CardHeader>
               <CardContent>
-                {runs.length === 0 ? <EmptyState icon={<Clock className="h-8 w-8" />} title="No sync runs yet" description="Manual or scheduled sync runs will appear here with row counts and errors." /> : (
+                {historyError ? (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/[0.03] p-4 flex items-start gap-3"><AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" /><div><p className="text-sm font-medium">Sync history unavailable</p><p className="text-xs text-muted-foreground mt-1">{historyError}</p></div></div>
+                ) : !historyReady ? (
+                  <div className="text-sm text-muted-foreground py-8 text-center">Sync history is not verified yet.</div>
+                ) : runs.length === 0 ? (
+                  <EmptyState icon={<Clock className="h-8 w-8" />} title="No sync runs yet" description="The sync-history query succeeded and returned no vendor refresh attempts." />
+                ) : (
                   <Table>
                     <TableHeader><TableRow><TableHead>Started</TableHead><TableHead>Vendor</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Fetched</TableHead><TableHead className="text-right">Saved</TableHead><TableHead>Issue</TableHead></TableRow></TableHeader>
-                    <TableBody>{runs.map((run) => <TableRow key={run.id}><TableCell><div>{fmtAge(run.started_at)}</div><div className="text-xs text-muted-foreground">{fmtDate(run.started_at)}</div></TableCell><TableCell className="font-mono text-xs">{run.vendor_key}</TableCell><TableCell><Badge variant={run.status === "success" ? "default" : run.status === "running" ? "secondary" : "destructive"}>{run.status ?? "unknown"}</Badge></TableCell><TableCell className="text-right">{num(run.rows_fetched)}</TableCell><TableCell className="text-right">{num(run.rows_upserted)}</TableCell><TableCell className="text-xs text-muted-foreground max-w-[240px] truncate" title={run.error_message ?? undefined}>{run.error_message ?? "—"}</TableCell></TableRow>)}</TableBody>
+                    <TableBody>{runs.map(run => <TableRow key={run.id}><TableCell><div>{fmtAge(run.started_at)}</div><div className="text-xs text-muted-foreground">{fmtDate(run.started_at)}</div></TableCell><TableCell className="font-mono text-xs">{run.vendor_key}</TableCell><TableCell><Badge variant={run.status === "success" ? "default" : run.status === "running" || run.status === "partial" ? "secondary" : "destructive"}>{run.status ?? "unknown"}</Badge></TableCell><TableCell className="text-right">{num(run.rows_fetched)}</TableCell><TableCell className="text-right">{num(run.rows_upserted)}</TableCell><TableCell className="text-xs text-muted-foreground max-w-[240px] truncate" title={run.error_message ?? undefined}>{run.error_message ?? "—"}</TableCell></TableRow>)}</TableBody>
                   </Table>
                 )}
               </CardContent>
@@ -388,17 +408,11 @@ function DataHubShell({ children, onReload, loading }: { children: React.ReactNo
     <div className="container mx-auto px-4 py-8 space-y-6 max-w-7xl">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Badge variant="outline" className="text-xs">Reference Intelligence</Badge>
-            <Badge variant="secondary" className="text-xs">Read-only · Org-scoped</Badge>
-          </div>
+          <div className="flex items-center gap-2 mb-1"><Badge variant="outline" className="text-xs">Reference Intelligence</Badge><Badge variant="secondary" className="text-xs">Read-only · Org-scoped</Badge></div>
           <h1 className="text-3xl font-bold tracking-tight">Data Hub</h1>
           <p className="text-muted-foreground mt-1">Curated external intelligence signals kept separate from uploaded client datasets.</p>
         </div>
-        <Button onClick={onReload} variant="outline" size="sm" disabled={loading}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Reload
-        </Button>
+        <Button onClick={onReload} variant="outline" size="sm" disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload</Button>
       </div>
       {children}
     </div>
@@ -406,34 +420,13 @@ function DataHubShell({ children, onReload, loading }: { children: React.ReactNo
 }
 
 function KpiCard({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: string; hint?: string }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between text-muted-foreground mb-2"><span className="text-xs uppercase tracking-wide">{label}</span>{icon}</div>
-        <div className="text-2xl font-bold">{value}</div>
-        {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}
-      </CardContent>
-    </Card>
-  );
+  return <Card><CardContent className="pt-6"><div className="flex items-center justify-between text-muted-foreground mb-2"><span className="text-xs uppercase tracking-wide">{label}</span>{icon}</div><div className="text-2xl font-bold">{value}</div>{hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}</CardContent></Card>;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-l-2 border-border/60 pl-3">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold">{value}</div>
-    </div>
-  );
+  return <div className="border-l-2 border-border/60 pl-3"><div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div><div className="text-sm font-semibold">{value}</div></div>;
 }
 
 function EmptyState({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
-  return (
-    <Card>
-      <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-        <div className="text-muted-foreground mb-3">{icon}</div>
-        <h3 className="font-medium mb-1">{title}</h3>
-        <p className="text-sm text-muted-foreground max-w-md">{description}</p>
-      </CardContent>
-    </Card>
-  );
+  return <Card><CardContent className="flex flex-col items-center justify-center py-12 text-center"><div className="text-muted-foreground mb-3">{icon}</div><h3 className="font-medium mb-1">{title}</h3><p className="text-sm text-muted-foreground max-w-md">{description}</p></CardContent></Card>;
 }
