@@ -13,50 +13,95 @@ export type Permission =
 
 export function usePermissions() {
   const { user } = useAuth();
-  const { currentOrg: organization } = useOrganization();
+  const {
+    currentOrg: organization,
+    error: organizationError,
+    evidenceReady: organizationEvidenceReady,
+  } = useOrganization();
 
-  const { data: orgRole } = useQuery({
+  const roleQuery = useQuery({
     queryKey: ["org-role", user?.id, organization?.id],
     queryFn: async () => {
       if (!user?.id || !organization?.id) return null;
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("organization_members")
         .select("role")
         .eq("user_id", user.id)
         .eq("organization_id", organization.id)
         .single();
-      return data?.role ?? null;
+      if (error) throw error;
+      if (!data?.role) throw new Error("Organization role could not be verified");
+      return data.role;
     },
-    enabled: !!user?.id && !!organization?.id,
+    enabled: !!user?.id && !!organization?.id && organizationEvidenceReady && !organizationError,
+    retry: 1,
   });
 
-  const { data: permissions = [], isLoading } = useQuery({
+  const orgRole = roleQuery.data ?? null;
+
+  const permissionQuery = useQuery({
     queryKey: ["permissions", user?.id, organization?.id, orgRole],
     queryFn: async () => {
       if (!user?.id || !organization?.id || !orgRole) return [];
-      // Only fetch permissions for the user's actual role in this org
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("role_permissions")
         .select("permission, granted")
         .eq("organization_id", organization.id)
         .eq("role", orgRole);
+      if (error) throw error;
       return data ?? [];
     },
-    enabled: !!user?.id && !!organization?.id && !!orgRole,
+    enabled: !!user?.id
+      && !!organization?.id
+      && !!orgRole
+      && organizationEvidenceReady
+      && !organizationError
+      && !roleQuery.error,
+    retry: 1,
   });
 
+  const permissions = permissionQuery.data ?? [];
+  const authorizationError = organizationError
+    ?? (roleQuery.error instanceof Error ? roleQuery.error.message : roleQuery.error ? String(roleQuery.error) : null)
+    ?? (permissionQuery.error instanceof Error ? permissionQuery.error.message : permissionQuery.error ? String(permissionQuery.error) : null);
+
+  const evidenceReady = organizationEvidenceReady
+    && !organizationError
+    && !!user?.id
+    && !!organization?.id
+    && !!orgRole
+    && roleQuery.isSuccess
+    && permissionQuery.isSuccess
+    && !authorizationError;
 
   const hasPermission = (permission: Permission): boolean => {
-    // Check explicit permissions first
-    const explicit = permissions.find((p: { permission: string; granted: boolean }) => p.permission === permission);
+    // Authorization evidence is fail-closed. A policy-table or role lookup
+    // outage must never activate fallback privileges.
+    if (!evidenceReady) return false;
+
+    const explicit = permissions.find(
+      (entry: { permission: string; granted: boolean }) => entry.permission === permission
+    );
     if (explicit) return explicit.granted;
 
-    // Fallback defaults by role
+    // Role defaults are allowed only after both role and policy reads succeeded.
     if (orgRole === "owner" || orgRole === "admin") return true;
     if ((orgRole === "analyst" || orgRole === "executive") && permission.endsWith(".view")) return true;
     if (orgRole === "viewer" && permission === "dashboard.view") return true;
     return false;
   };
 
-  return { hasPermission, orgRole, isLoading };
+  const isLoading = roleQuery.isLoading || permissionQuery.isLoading;
+
+  return {
+    hasPermission,
+    orgRole,
+    isLoading,
+    error: authorizationError,
+    evidenceReady,
+    refresh: async () => {
+      await roleQuery.refetch();
+      if (orgRole) await permissionQuery.refetch();
+    },
+  };
 }
