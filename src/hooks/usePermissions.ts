@@ -37,23 +37,23 @@ export function usePermissions() {
     retry: 1,
   });
 
-  const orgRole = roleQuery.data ?? null;
+  const verifiedRole = roleQuery.data ?? null;
 
   const permissionQuery = useQuery({
-    queryKey: ["permissions", user?.id, organization?.id, orgRole],
+    queryKey: ["permissions", user?.id, organization?.id, verifiedRole],
     queryFn: async () => {
-      if (!user?.id || !organization?.id || !orgRole) return [];
+      if (!user?.id || !organization?.id || !verifiedRole) return [];
       const { data, error } = await supabase
         .from("role_permissions")
         .select("permission, granted")
         .eq("organization_id", organization.id)
-        .eq("role", orgRole);
+        .eq("role", verifiedRole);
       if (error) throw error;
       return data ?? [];
     },
     enabled: !!user?.id
       && !!organization?.id
-      && !!orgRole
+      && !!verifiedRole
       && organizationEvidenceReady
       && !organizationError
       && !roleQuery.error,
@@ -69,14 +69,17 @@ export function usePermissions() {
     && !organizationError
     && !!user?.id
     && !!organization?.id
-    && !!orgRole
+    && !!verifiedRole
     && roleQuery.isSuccess
     && permissionQuery.isSuccess
     && !authorizationError;
 
+  // Public role exposure is itself authorization evidence because a number of
+  // UI/action surfaces gate capabilities directly on owner/admin. Withhold it
+  // until the policy read has succeeded as well as the membership-role read.
+  const orgRole = evidenceReady ? verifiedRole : null;
+
   const hasPermission = (permission: Permission): boolean => {
-    // Authorization evidence is fail-closed. A policy-table or role lookup
-    // outage must never activate fallback privileges.
     if (!evidenceReady) return false;
 
     const explicit = permissions.find(
@@ -84,10 +87,9 @@ export function usePermissions() {
     );
     if (explicit) return explicit.granted;
 
-    // Role defaults are allowed only after both role and policy reads succeeded.
-    if (orgRole === "owner" || orgRole === "admin") return true;
-    if ((orgRole === "analyst" || orgRole === "executive") && permission.endsWith(".view")) return true;
-    if (orgRole === "viewer" && permission === "dashboard.view") return true;
+    if (verifiedRole === "owner" || verifiedRole === "admin") return true;
+    if ((verifiedRole === "analyst" || verifiedRole === "executive") && permission.endsWith(".view")) return true;
+    if (verifiedRole === "viewer" && permission === "dashboard.view") return true;
     return false;
   };
 
@@ -101,7 +103,7 @@ export function usePermissions() {
     evidenceReady,
     refresh: async () => {
       await roleQuery.refetch();
-      if (orgRole) await permissionQuery.refetch();
+      if (verifiedRole) await permissionQuery.refetch();
     },
   };
 }
