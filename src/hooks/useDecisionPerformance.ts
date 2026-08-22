@@ -29,15 +29,24 @@ export const useDecisionPerformance = (orgId: string | null) => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchPerformance = useCallback(async () => {
-    if (!orgId) return;
+    if (!orgId) {
+      setPerformance(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    // Never carry a prior organization's outcome evidence into a new scope while
+    // the new request is resolving. Unknown is safer than stale cross-org truth.
+    setPerformance(null);
     setLoading(true);
     setError(null);
 
     try {
       const auth = await getVerifiedAuth();
       if (!auth) {
+        setPerformance(null);
         setError("Not authenticated");
-        setLoading(false);
         return;
       }
 
@@ -47,29 +56,39 @@ export const useDecisionPerformance = (orgId: string | null) => {
       });
 
       if (fnErr) {
+        setPerformance(null);
         setError(fnErr.message);
-      } else if (data) {
-        setPerformance({
-          totalDecisions: (data.total_decisions as number) ?? 0,
-          evaluableDecisions: (data.evaluable_decisions as number) ?? 0,
-          successCount: (data.success_count as number) ?? 0,
-          successRate: (data.success_rate as number) ?? null,
-          negativeCount: (data.negative_count as number) ?? 0,
-          falsePositiveRate: (data.false_positive_rate as number) ?? null,
-          avgAccuracy: (data.avg_accuracy as number) ?? null,
-          calibrationGap: (data.calibration_gap as number) ?? null,
-          metricBreakdown: (data.metric_breakdown as MetricBreakdown[]) ?? [],
-          learnings: (data.learnings as string[]) ?? [],
-        });
+        return;
       }
+
+      if (!data) {
+        setPerformance(null);
+        setError("Decision performance returned no data");
+        return;
+      }
+
+      setPerformance({
+        totalDecisions: (data.total_decisions as number) ?? 0,
+        evaluableDecisions: (data.evaluable_decisions as number) ?? 0,
+        successCount: (data.success_count as number) ?? 0,
+        successRate: (data.success_rate as number) ?? null,
+        negativeCount: (data.negative_count as number) ?? 0,
+        falsePositiveRate: (data.false_positive_rate as number) ?? null,
+        avgAccuracy: (data.avg_accuracy as number) ?? null,
+        calibrationGap: (data.calibration_gap as number) ?? null,
+        metricBreakdown: (data.metric_breakdown as MetricBreakdown[]) ?? [],
+        learnings: (data.learnings as string[]) ?? [],
+      });
     } catch (e: unknown) {
+      setPerformance(null);
       setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [orgId]);
 
   useEffect(() => {
-    fetchPerformance();
+    void fetchPerformance();
   }, [fetchPerformance]);
 
   return { performance, loading, error, refresh: fetchPerformance };
@@ -104,6 +123,7 @@ export const scheduleOutcomeEvaluation = async (params: {
   });
 
   if (error) throw error;
+  if (!data) throw new Error("Outcome evaluation scheduling returned no confirmation");
   return data;
 };
 
@@ -120,5 +140,6 @@ export const getReliabilityIndex = async (orgId: string, metricType: string) => 
   );
 
   if (error) throw error;
+  if (!data) throw new Error("Reliability evaluation returned no data");
   return data;
 };
