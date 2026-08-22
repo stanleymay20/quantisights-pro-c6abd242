@@ -20,6 +20,8 @@ interface ProjectContextType {
   currentProjectId: string | null;
   activeDatasetId: string | null;
   loading: boolean;
+  error: string | null;
+  evidenceReady: boolean;
   switchProject: (projectId: string) => void;
   setActiveDataset: (projectId: string, datasetId: string) => Promise<void>;
   createProject: (name: string, description?: string, workspaceIdOverride?: string) => Promise<Project>;
@@ -40,19 +42,47 @@ const STORAGE_KEY = "quantivis_project_id";
 export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
   const { currentOrgId } = useOrganization();
-  const { currentWorkspaceId, workspaces, loading: workspaceLoading } = useWorkspace();
+  const {
+    currentWorkspaceId,
+    workspaces,
+    loading: workspaceLoading,
+    error: workspaceError,
+    evidenceReady: workspaceEvidenceReady,
+  } = useWorkspace();
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [evidenceReady, setEvidenceReady] = useState(false);
   const requestSeq = useRef(0);
 
   const fetchProjects = useCallback(async () => {
     const seq = ++requestSeq.current;
+    setError(null);
+    setEvidenceReady(false);
 
-    if (!currentOrgId || workspaceLoading) {
+    if (workspaceLoading) {
       setProjects([]);
       setCurrentProjectId(null);
-      setLoading(workspaceLoading);
+      setLoading(true);
+      return;
+    }
+
+    if (workspaceError || !workspaceEvidenceReady) {
+      setProjects([]);
+      setCurrentProjectId(null);
+      sessionStorage.removeItem(STORAGE_KEY);
+      setError(workspaceError ? `Workspace context unavailable: ${workspaceError}` : "Workspace context is not verified.");
+      setLoading(false);
+      return;
+    }
+
+    if (!currentOrgId) {
+      setProjects([]);
+      setCurrentProjectId(null);
+      sessionStorage.removeItem(STORAGE_KEY);
+      setEvidenceReady(true);
+      setLoading(false);
       return;
     }
 
@@ -60,12 +90,15 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
       setProjects([]);
       setCurrentProjectId(null);
       sessionStorage.removeItem(STORAGE_KEY);
+      setEvidenceReady(true);
       setLoading(false);
       return;
     }
 
+    setProjects([]);
+    setCurrentProjectId(null);
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error: projectError } = await supabase
       .from("projects")
       .select("id, name, description, active_dataset_id, organization_id, workspace_id, created_at")
       .eq("organization_id", currentOrgId)
@@ -74,10 +107,12 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
 
     if (seq !== requestSeq.current) return;
 
-    if (error) {
-      console.error("[ProjectContext] Failed to fetch projects:", error.message);
+    if (projectError) {
+      const message = `Unable to verify projects: ${projectError.message}`;
+      console.error("[ProjectContext]", message);
       setProjects([]);
       setCurrentProjectId(null);
+      setError(message);
       sessionStorage.removeItem(STORAGE_KEY);
       setLoading(false);
       return;
@@ -89,25 +124,30 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
     setProjects(scopedProjects);
 
     const stored = sessionStorage.getItem(STORAGE_KEY);
-    const valid = scopedProjects.find((p) => p.id === stored);
+    const valid = scopedProjects.find((project) => project.id === stored);
     const nextId = valid ? valid.id : scopedProjects[0]?.id ?? null;
     setCurrentProjectId(nextId);
     if (nextId) sessionStorage.setItem(STORAGE_KEY, nextId);
     else sessionStorage.removeItem(STORAGE_KEY);
+    setEvidenceReady(true);
     setLoading(false);
-  }, [currentOrgId, currentWorkspaceId, workspaceLoading]);
+  }, [currentOrgId, currentWorkspaceId, workspaceLoading, workspaceError, workspaceEvidenceReady]);
 
   useEffect(() => {
-    // Workspace changes are a hard boundary. Clear prior selection immediately;
-    // the replacement project is chosen only from the new workspace-scoped query.
     setProjects([]);
     setCurrentProjectId(null);
+    setError(null);
+    setEvidenceReady(false);
     setLoading(true);
     if (!workspaceLoading) sessionStorage.removeItem(STORAGE_KEY);
     void fetchProjects();
   }, [fetchProjects, workspaceLoading]);
 
   const switchProject = useCallback((projectId: string) => {
+    if (!evidenceReady || error) {
+      console.warn("[ProjectContext] Refused project selection while evidence is unavailable", projectId);
+      return;
+    }
     const allowed = projects.some((project) => project.id === projectId);
     if (!allowed) {
       console.warn("[ProjectContext] Refused project outside current workspace", projectId);
@@ -117,9 +157,10 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
     if (projectId === currentProjectId) return;
     setCurrentProjectId(projectId);
     sessionStorage.setItem(STORAGE_KEY, projectId);
-  }, [projects, currentProjectId]);
+  }, [projects, currentProjectId, evidenceReady, error]);
 
   const assertProjectInCurrentScope = useCallback((projectId: string) => {
+    if (!evidenceReady || error) throw new Error("Project context is not verified");
     const project = projects.find((candidate) => candidate.id === projectId);
     if (!project || !currentOrgId || !currentWorkspaceId) {
       throw new Error("Project is not available in the active workspace");
@@ -128,7 +169,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
       throw new Error("Project is outside the active organization/workspace scope");
     }
     return project;
-  }, [projects, currentOrgId, currentWorkspaceId]);
+  }, [projects, currentOrgId, currentWorkspaceId, evidenceReady, error]);
 
   const assertDatasetLinked = useCallback(async (projectId: string, datasetId: string) => {
     assertProjectInCurrentScope(projectId);
@@ -157,7 +198,7 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
   const setActiveDataset = useCallback(async (projectId: string, datasetId: string) => {
     await assertDatasetLinked(projectId, datasetId);
 
-    const { data: updated, error } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from("projects")
       .update({ active_dataset_id: datasetId })
       .eq("id", projectId)
@@ -166,47 +207,50 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
       .select("id")
       .maybeSingle();
 
-    if (error) throw error;
+    if (updateError) throw updateError;
     if (!updated) throw new Error("Project context changed before the active dataset could be saved");
 
-    setProjects((prev) =>
-      prev.map((p) => (p.id === projectId ? { ...p, active_dataset_id: datasetId } : p))
+    setProjects((previous) =>
+      previous.map((project) => project.id === projectId ? { ...project, active_dataset_id: datasetId } : project)
     );
   }, [assertDatasetLinked, currentOrgId, currentWorkspaceId]);
 
   const createProject = useCallback(async (name: string, description?: string, workspaceIdOverride?: string): Promise<Project> => {
-    if (!currentOrgId || !user || workspaceLoading) throw new Error("Organization and workspace context required");
+    if (!currentOrgId || !user || workspaceLoading || workspaceError || !workspaceEvidenceReady) {
+      throw new Error("Verified organization and workspace context required");
+    }
 
     const trimmed = name.trim().slice(0, 120);
     if (!trimmed) throw new Error("Project name is required");
 
-    const wsId = workspaceIdOverride || currentWorkspaceId;
-    if (!wsId || !workspaces.some((workspace) => workspace.id === wsId && workspace.organization_id === currentOrgId)) {
+    const workspaceId = workspaceIdOverride || currentWorkspaceId;
+    if (!workspaceId || !workspaces.some((workspace) => workspace.id === workspaceId && workspace.organization_id === currentOrgId)) {
       throw new Error("Project workspace is not accessible");
     }
 
-    const { data, error } = await supabase
+    const { data, error: createError } = await supabase
       .from("projects")
       .insert({
         organization_id: currentOrgId,
         name: trimmed,
         description: description?.trim().slice(0, 1000) || null,
         created_by: user.id,
-        workspace_id: wsId,
+        workspace_id: workspaceId,
       })
       .select("id, name, description, active_dataset_id, organization_id, workspace_id, created_at")
       .single();
 
-    if (error || !data) throw error || new Error("Failed to create project");
+    if (createError || !data) throw createError || new Error("Failed to create project");
 
-    // Only select it locally when it belongs to the workspace currently in view.
-    if (wsId === currentWorkspaceId) {
-      setProjects((prev) => prev.some((p) => p.id === data.id) ? prev : [data, ...prev]);
+    if (workspaceId === currentWorkspaceId) {
+      setProjects((previous) => previous.some((project) => project.id === data.id) ? previous : [data, ...previous]);
       setCurrentProjectId(data.id);
+      setError(null);
+      setEvidenceReady(true);
       sessionStorage.setItem(STORAGE_KEY, data.id);
     }
     return data;
-  }, [currentOrgId, user, workspaceLoading, currentWorkspaceId, workspaces]);
+  }, [currentOrgId, user, workspaceLoading, workspaceError, workspaceEvidenceReady, currentWorkspaceId, workspaces]);
 
   const attachDataset = useCallback(async (projectId: string, datasetId: string) => {
     if (!user || !currentOrgId) throw new Error("Authenticated organization context required");
@@ -222,14 +266,16 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
     if (datasetError) throw datasetError;
     if (!dataset) throw new Error("Dataset is not available in the active organization");
 
-    const { error } = await supabase.from("project_datasets").upsert(
+    const { error: attachError } = await supabase.from("project_datasets").upsert(
       { project_id: projectId, dataset_id: datasetId, added_by: user.id },
       { onConflict: "project_id,dataset_id" }
     );
-    if (error) throw error;
+    if (attachError) throw attachError;
   }, [user, currentOrgId, assertProjectInCurrentScope]);
 
-  const currentProject = projects.find((p) => p.id === currentProjectId) ?? null;
+  const currentProject = evidenceReady && !error
+    ? projects.find((project) => project.id === currentProjectId) ?? null
+    : null;
   const activeDatasetId = currentProject?.active_dataset_id ?? null;
 
   return (
@@ -237,9 +283,11 @@ export const ProjectProvider = ({ children }: { children: ReactNode }) => {
       value={{
         projects,
         currentProject,
-        currentProjectId,
+        currentProjectId: currentProject?.id ?? null,
         activeDatasetId,
         loading,
+        error,
+        evidenceReady,
         switchProject,
         setActiveDataset,
         createProject,
