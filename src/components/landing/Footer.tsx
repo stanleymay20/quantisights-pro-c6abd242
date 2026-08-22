@@ -21,9 +21,9 @@ const FOOTER_SECTIONS = [
   {
     title: "Platform",
     links: [
-      { label: "How It Works", to: "/#how-it-works" },
-      { label: "Capabilities", to: "/#features" },
-      { label: "Case Studies", to: "/#case-studies" },
+      { label: "How It Works", to: "/#platform" },
+      { label: "Capabilities", to: "/decision-intelligence-platforms" },
+      { label: "Request Demo", to: "/#demo" },
       { label: "Pricing", to: "/pricing" },
     ],
   },
