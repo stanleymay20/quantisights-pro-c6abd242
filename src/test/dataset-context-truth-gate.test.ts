@@ -5,14 +5,24 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
 
-describe("Active data-context truth gate", () => {
-  it("WorkspaceContext separates query failure from verified empty", () => {
+describe("Organization-to-dataset context truth gate", () => {
+  it("useOrganization exposes membership failure and synchronizes tenant switches", () => {
+    const source = read("src/hooks/useOrganization.ts");
+    expect(source).toContain("error,\n    evidenceReady");
+    expect(source).toContain("Unable to verify organization membership");
+    expect(source).toContain('ORG_SWITCH_EVENT = "quantivis:org-switch"');
+    expect(source).toContain("window.addEventListener(ORG_SWITCH_EVENT, handleOrgSwitch)");
+    expect(source).toContain("detail: { organizationId: orgId }");
+    expect(source).not.toContain("platform running in reduced mode");
+  });
+
+  it("WorkspaceContext separates query failure from verified empty and propagates org evidence", () => {
     const source = read("src/contexts/WorkspaceContext.tsx");
     expect(source).toContain("error: string | null");
     expect(source).toContain("evidenceReady: boolean");
+    expect(source).toContain("Organization context unavailable");
     expect(source).toContain("Unable to verify workspace membership");
     expect(source).toContain("Unable to verify accessible workspaces");
-    expect(source).toContain("setEvidenceReady(true)");
   });
 
   it("ProjectContext separates project-read failure from verified no-project", () => {
@@ -31,18 +41,22 @@ describe("Active data-context truth gate", () => {
     expect(source).toContain("Unable to verify linked datasets");
   });
 
-  it("ActiveDataContext composes the three evidence layers and retries the failed layer", () => {
+  it("ActiveDataContext composes all four evidence layers and retries the failed layer", () => {
     const source = read("src/hooks/useActiveDataContext.ts");
-    expect(source).toContain("contextError = workspaceError ?? projectError ?? datasetError");
-    expect(source).toContain("hierarchyEvidenceReady = workspaceEvidenceReady && projectEvidenceReady && datasetEvidenceReady");
+    expect(source).toContain("contextError = orgError ?? workspaceError ?? projectError ?? datasetError");
+    expect(source).toContain("orgEvidenceReady");
+    expect(source).toContain("workspaceEvidenceReady");
+    expect(source).toContain("projectEvidenceReady");
+    expect(source).toContain("datasetEvidenceReady");
+    expect(source).toContain("refreshOrganizations");
     expect(source).toContain("retryContext");
-    expect(source).toContain("!contextError");
   });
 
-  it("DatasetRequired renders unavailable evidence instead of onboarding on hierarchy failure", () => {
+  it("DatasetRequired renders unavailable evidence instead of onboarding on any hierarchy failure", () => {
     const source = read("src/components/layout/DatasetRequired.tsx");
     expect(source).toContain('title="Data context unavailable"');
     expect(source).toContain("Retry Context Verification");
+    expect(source).toContain("!orgEvidenceReady");
     expect(source).toContain("workspaceEvidenceReady");
     expect(source).toContain("projectEvidenceReady");
     expect(source).toContain("datasetEvidenceReady");
