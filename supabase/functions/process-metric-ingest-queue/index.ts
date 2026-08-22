@@ -112,6 +112,48 @@ Deno.serve(async (req) => {
       if (!source?.id) throw new Error("Data source does not belong to queue organization");
       if (!job?.id) throw new Error("Sync job does not belong to queue source/organization");
 
+      // At-least-once delivery means a message can reappear after its terminal
+      // chunk result was already committed (for example if queue deletion/DLQ
+      // movement failed after progress persistence). Never execute business
+      // writes again once that durable terminal marker exists.
+      const { data: terminalChunk, error: terminalChunkError } = await svc
+        .from("metric_ingest_chunk_results")
+        .select("status,inserted_count,error_message")
+        .eq("chunk_id", envelope.chunk_id)
+        .eq("job_id", envelope.job_id)
+        .eq("organization_id", envelope.organization_id)
+        .maybeSingle();
+      if (terminalChunkError) throw new Error(`Chunk-result lookup failed: ${terminalChunkError.message}`);
+
+      if (terminalChunk?.status === "completed") {
+        const { data: deleted, error: deleteError } = await svc.rpc("delete_metric_ingest", { _message_id: raw.msg_id });
+        if (deleteError || deleted !== true) {
+          errors.push(`msg ${raw.msg_id}: completed chunk cleanup failed: ${deleteError?.message ?? "message not deleted"}`);
+          retriedChunks += 1;
+          continue;
+        }
+        processedChunks += 1;
+        continue;
+      }
+
+      if (terminalChunk?.status === "failed") {
+        const { error: dlqError } = await svc.rpc("move_metric_ingest_to_dlq", {
+          _message_id: raw.msg_id,
+          _payload: {
+            ...raw.message,
+            dlq_reason: terminalChunk.error_message ?? "Previously recorded terminal chunk failure",
+            dlq_at: new Date().toISOString(),
+          },
+        });
+        if (dlqError) {
+          errors.push(`msg ${raw.msg_id}: failed chunk DLQ cleanup failed: ${dlqError.message}`);
+          retriedChunks += 1;
+          continue;
+        }
+        failedChunks += 1;
+        continue;
+      }
+
       const canonical = envelope.metrics.map((metric, index) => {
         const metricType = typeof metric.metric_type === "string" ? metric.metric_type.trim() : "";
         if (!metricType || metricType.length > 200) throw new Error(`Metric ${index}: invalid metric_type`);
@@ -188,9 +230,8 @@ Deno.serve(async (req) => {
 
           // Persist terminal job progress BEFORE removing the poison message
           // from the live queue. If the DLQ move fails afterward, the message
-          // can be redelivered and this progress call is idempotent by chunk_id.
-          // The reverse order could permanently orphan a job if the live message
-          // disappeared and progress persistence then failed.
+          // can be redelivered and the terminal-chunk short circuit above will
+          // retry only the DLQ cleanup, never the metric business write.
           if (fallback?.chunk_id && fallback?.job_id && fallback?.organization_id && fallback?.dataset_id) {
             const { error: progressError } = await svc.rpc("record_metric_ingest_chunk_result", {
               _chunk_id: fallback.chunk_id,
