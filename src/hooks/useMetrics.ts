@@ -25,14 +25,23 @@ export interface MetricTypeSummary {
 }
 
 const REALTIME_TIERS: TierKey[] = ["growth", "enterprise"];
+const PAGE_SIZE = 1000;
+const MAX_CLIENT_ROWS = 50_000;
 
 /**
  * Hook to fetch metrics — REQUIRES dataset_id (Active Data Contract).
  * Returns BOTH legacy SaaS KPIs (for backward compat) AND dynamic metric summaries.
+ *
+ * Trust contract: this hook never presents a partially loaded raw dataset as a
+ * complete one. Query failures discard partial pages. Datasets above the client
+ * safety ceiling are marked truncated and must be served through aggregates or
+ * another bounded/server-side path.
  */
 export const useMetrics = (orgId: string | null, datasetId: string | null) => {
   const [metrics, setMetrics] = useState<MetricRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState<{ loaded: number; total: number | null } | null>(null);
@@ -53,23 +62,35 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
     if (!orgId || !datasetId) {
       setMetrics([]);
       setLoading(false);
+      setLoadError(null);
+      setIsTruncated(false);
       setLastUpdated(null);
       return;
     }
 
+    let cancelled = false;
+
+    const failClosed = (message: string, truncated = false) => {
+      if (cancelled) return;
+      setMetrics([]);
+      setLastUpdated(null);
+      setLoadError(message);
+      setIsTruncated(truncated);
+      setLoading(false);
+      setLoadingProgress(null);
+    };
+
     const fetchMetrics = async () => {
       setLoading(true);
+      setLoadError(null);
+      setIsTruncated(false);
       setLoadingProgress({ loaded: 0, total: null });
-      // Paginated fetch with safety cap to prevent client-side memory crashes
+
       const allMetrics: MetricRow[] = [];
-      const PAGE_SIZE = 1000;
-      const MAX_CLIENT_ROWS = 50_000; // Safety cap: ~50K rows ≈ 10MB in memory
       let offset = 0;
       let hasMore = true;
-      let pageNum = 0;
 
       while (hasMore) {
-        pageNum++;
         const { data, error } = await supabase
           .from("metrics")
           .select("id, metric_type, value, date, region, segment, dataset_id, created_at")
@@ -78,31 +99,74 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
           .order("date", { ascending: true })
           .range(offset, offset + PAGE_SIZE - 1);
 
-        if (error || !data) break;
+        if (cancelled) return;
+        if (error) {
+          failClosed(`Metric data could not be loaded completely: ${error.message}`);
+          return;
+        }
+        if (!data) {
+          failClosed("Metric data could not be loaded completely: the database returned no page payload.");
+          return;
+        }
+
         allMetrics.push(...data);
-        setLoadingProgress({ loaded: allMetrics.length, total: data.length === PAGE_SIZE ? null : allMetrics.length });
-        hasMore = data.length === PAGE_SIZE && allMetrics.length < MAX_CLIENT_ROWS;
+        setLoadingProgress({
+          loaded: allMetrics.length,
+          total: data.length === PAGE_SIZE ? null : allMetrics.length,
+        });
+
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+          break;
+        }
+
         offset += PAGE_SIZE;
+        if (allMetrics.length >= MAX_CLIENT_ROWS) {
+          // A full final page does not prove there are more rows. Probe exactly
+          // one row beyond the ceiling before declaring the view truncated.
+          const { data: overflow, error: overflowError } = await supabase
+            .from("metrics")
+            .select("id")
+            .eq("organization_id", orgId)
+            .eq("dataset_id", datasetId)
+            .order("date", { ascending: true })
+            .range(MAX_CLIENT_ROWS, MAX_CLIENT_ROWS);
+
+          if (cancelled) return;
+          if (overflowError) {
+            failClosed(`Metric volume boundary could not be verified: ${overflowError.message}`);
+            return;
+          }
+          if ((overflow?.length ?? 0) > 0) {
+            console.warn(`[useMetrics] Dataset ${datasetId} exceeds ${MAX_CLIENT_ROWS} client rows; refusing to compute KPIs from a partial raw slice.`);
+            failClosed(
+              `This dataset exceeds the ${MAX_CLIENT_ROWS.toLocaleString()}-row client safety limit. Use server-side aggregates or a bounded drill-down instead of partial raw metrics.`,
+              true,
+            );
+            return;
+          }
+          hasMore = false;
+        }
       }
 
-      if (allMetrics.length >= MAX_CLIENT_ROWS) {
-        console.warn(`[useMetrics] Dataset ${datasetId} capped at ${MAX_CLIENT_ROWS} rows to prevent memory issues. Consider server-side aggregation.`);
-      }
-
+      if (cancelled) return;
       setMetrics(allMetrics);
       updateLastUpdated(allMetrics);
+      setLoadError(null);
+      setIsTruncated(false);
       setLoading(false);
       setLoadingProgress(null);
     };
 
-    fetchMetrics();
+    void fetchMetrics();
+    return () => { cancelled = true; };
   }, [orgId, datasetId, updateLastUpdated]);
 
   // Realtime subscription (Growth+ only) — per-instance unique topic name
   // prevents any possibility of reusing a subscribed channel across
   // StrictMode remounts or concurrent hook instances.
   useEffect(() => {
-    if (!orgId || !datasetId || !canStream) {
+    if (!orgId || !datasetId || !canStream || loadError || isTruncated) {
       setIsStreaming(false);
       return;
     }
@@ -151,7 +215,7 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
       setIsStreaming(false);
       if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
     };
-  }, [orgId, datasetId, canStream]);
+  }, [orgId, datasetId, canStream, loadError, isTruncated]);
 
   // ═══════════════════════════════════════════════════════
   // DYNAMIC METRIC SUMMARIES — domain-agnostic
@@ -177,7 +241,6 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
         const total = rows.reduce((s, r) => s + Number(r.value), 0);
         const latest = sorted[sorted.length - 1]?.value ?? 0;
 
-        // Compute trend: compare first half vs second half
         let trend: "up" | "down" | "flat" | null = null;
         let previousTotal: number | null = null;
         if (sorted.length >= 2) {
@@ -229,14 +292,14 @@ export const useMetrics = (orgId: string | null, datasetId: string | null) => {
   return {
     metrics,
     loading,
+    loadError,
+    isTruncated,
     lastUpdated,
     isStreaming,
     canStream,
-    // Dynamic (domain-agnostic)
     metricTypes,
     metricSummaries,
     topMetrics,
-    // Legacy SaaS
     totalRevenue,
     totalCustomers,
     latestCost,
