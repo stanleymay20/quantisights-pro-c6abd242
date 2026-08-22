@@ -33,7 +33,7 @@ async function rest(path, extraHeaders = {}) {
 
 async function loadJobs() {
   const params = new URLSearchParams();
-  params.set("select", "id,status,records_synced,chunks_total,chunks_completed,chunks_failed,error_message,request_id,queued_at,last_progress_at,completed_at");
+  params.set("select", "id,status,records_synced,chunks_total,chunks_completed,chunks_failed,error_message,governance_warning,request_id,queued_at,last_progress_at,completed_at");
   params.set("request_id", `like.${runId}-%`);
   params.set("order", "created_at.asc");
   const response = await rest(`data_sync_jobs?${params}`);
@@ -56,6 +56,7 @@ const failed = jobs.filter((job) => job.status === "failed");
 const partial = jobs.filter((job) => job.status === "partial");
 const badChunks = jobs.filter((job) => Number(job.chunks_failed || 0) > 0);
 const incomplete = jobs.filter((job) => Number(job.chunks_completed || 0) + Number(job.chunks_failed || 0) !== Number(job.chunks_total || 0));
+const governanceDegraded = jobs.filter((job) => typeof job.governance_warning === "string" && job.governance_warning.trim().length > 0);
 const recordedRows = jobs.reduce((sum, job) => sum + Number(job.records_synced || 0), 0);
 
 let persistedRows = 0;
@@ -77,6 +78,7 @@ if (failed.length) problems.push(`${failed.length} jobs failed`);
 if (partial.length) problems.push(`${partial.length} jobs were partial`);
 if (badChunks.length) problems.push(`${badChunks.length} jobs contain DLQ/failed chunks`);
 if (incomplete.length) problems.push(`${incomplete.length} jobs have inconsistent chunk accounting`);
+if (governanceDegraded.length) problems.push(`${governanceDegraded.length} jobs have degraded governance/audit evidence`);
 if (recordedRows !== persistedRows) problems.push(`persisted rows (${persistedRows}) != job recorded rows (${recordedRows})`);
 
 const report = {
@@ -92,6 +94,7 @@ const report = {
   stuck_jobs: stuck.length,
   jobs_with_failed_chunks: badChunks.length,
   jobs_with_incomplete_chunk_accounting: incomplete.length,
+  jobs_with_governance_warnings: governanceDegraded.length,
   recorded_rows_synced: recordedRows,
   persisted_load_rows: persistedRows,
   drain_seconds: Math.round((Date.now() - started) / 100) / 10,
@@ -107,4 +110,4 @@ if (problems.length) {
   process.exit(1);
 }
 
-console.log(`GO: queued enterprise ingestion drained completely with matching persisted-row evidence (${reportPath})`);
+console.log(`GO: queued enterprise ingestion drained completely with matching persisted-row and governance evidence (${reportPath})`);
