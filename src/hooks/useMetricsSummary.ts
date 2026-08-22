@@ -12,55 +12,106 @@ interface SummaryRow {
   previous_half_total: number;
 }
 
+interface SummaryCacheEntry {
+  cachedAt: string;
+  summaries: MetricTypeSummary[];
+}
+
 /**
  * Fast-path hook: fetches pre-aggregated metric summaries from DB function.
  * Returns ~20 rows instead of thousands. Dashboard first paint source.
+ *
+ * Cached values are explicitly marked stale until live revalidation succeeds.
+ * A summary outage never falls back to an exact raw-table count; dataset row
+ * metadata is the O(1) existence fallback for enterprise-scale datasets.
  */
 export const useMetricsSummary = (orgId: string | null, datasetId: string | null) => {
   const [summaries, setSummaries] = useState<MetricTypeSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasData, setHasData] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!orgId || !datasetId) {
       setSummaries([]);
       setLoading(false);
       setHasData(false);
-      return;
+      setStale(false);
+      setError(null);
+      setCachedAt(null);
+      return () => { cancelled = true; };
     }
 
     const cacheKey = `metrics_summary_${orgId}_${datasetId}`;
+    let cachedSummaries: MetricTypeSummary[] | null = null;
 
-    // Stale-while-revalidate: show cached data instantly
+    // Stale-while-revalidate: cached values can accelerate first paint, but are
+    // never represented as freshly verified until the RPC succeeds.
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
-        const parsed = JSON.parse(cached) as MetricTypeSummary[];
-        setSummaries(parsed);
-        setHasData(parsed.length > 0);
-        setLoading(false);
+        const parsed = JSON.parse(cached) as SummaryCacheEntry | MetricTypeSummary[];
+        if (Array.isArray(parsed)) {
+          // Backward compatibility for old cache entries created before cache
+          // freshness metadata was introduced.
+          cachedSummaries = parsed;
+          setCachedAt(null);
+        } else if (Array.isArray(parsed?.summaries)) {
+          cachedSummaries = parsed.summaries;
+          setCachedAt(typeof parsed.cachedAt === "string" ? parsed.cachedAt : null);
+        }
+        if (cachedSummaries) {
+          setSummaries(cachedSummaries);
+          setHasData(cachedSummaries.length > 0);
+          setStale(true);
+          setLoading(false);
+        }
       } catch {
-        // ignore corrupt cache
+        sessionStorage.removeItem(cacheKey);
       }
     }
 
-    const fetchSummary = async () => {
-      if (!cached) setLoading(true);
+    const loadDatasetHasData = async (): Promise<boolean> => {
+      const { data, error: datasetError } = await supabase
+        .from("datasets")
+        .select("row_count")
+        .eq("id", datasetId)
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (datasetError) throw new Error(`Dataset metadata fallback failed: ${datasetError.message}`);
+      return Number(data?.row_count ?? 0) > 0;
+    };
 
-      const { data, error } = await supabase.rpc("get_metrics_summary", {
+    const fetchSummary = async () => {
+      if (!cachedSummaries) setLoading(true);
+      setError(null);
+
+      const { data, error: rpcError } = await supabase.rpc("get_metrics_summary", {
         _org_id: orgId,
         _dataset_id: datasetId,
       });
 
-      if (error || !data) {
-        if (!cached) {
-          const { count } = await supabase
-            .from("metrics")
-            .select("id", { count: "exact", head: true })
-            .eq("organization_id", orgId)
-            .eq("dataset_id", datasetId);
-          setHasData((count ?? 0) > 0);
-          setLoading(false);
+      if (cancelled) return;
+
+      if (rpcError || !data) {
+        const message = rpcError?.message ?? "Metric summary revalidation returned no data";
+        setError(message);
+        setStale(!!cachedSummaries);
+
+        if (!cachedSummaries) {
+          try {
+            setHasData(await loadDatasetHasData());
+          } catch (fallbackError) {
+            if (!cancelled) {
+              setHasData(false);
+              setError(fallbackError instanceof Error ? `${message}; ${fallbackError.message}` : message);
+            }
+          }
+          if (!cancelled) setLoading(false);
         }
         return;
       }
@@ -76,31 +127,42 @@ export const useMetricsSummary = (orgId: string | null, datasetId: string | null
         values: [], // not available from summary — charts use full useMetrics
       }));
 
+      if (cancelled) return;
       setSummaries(mapped);
+      setStale(false);
+      setError(null);
+
       if (mapped.length > 0) {
         setHasData(true);
       } else {
-        const { count } = await supabase
-          .from("metrics")
-          .select("id", { count: "exact", head: true })
-          .eq("organization_id", orgId)
-          .eq("dataset_id", datasetId);
-        setHasData((count ?? 0) > 0);
+        try {
+          setHasData(await loadDatasetHasData());
+        } catch (fallbackError) {
+          if (!cancelled) {
+            setHasData(false);
+            setError(fallbackError instanceof Error ? fallbackError.message : "Dataset metadata fallback failed");
+          }
+        }
       }
-      setLoading(false);
 
-      // Cache for instant repeat loads
+      if (cancelled) return;
+      setLoading(false);
+      const now = new Date().toISOString();
+      setCachedAt(now);
+
       try {
-        sessionStorage.setItem(cacheKey, JSON.stringify(mapped));
+        const entry: SummaryCacheEntry = { cachedAt: now, summaries: mapped };
+        sessionStorage.setItem(cacheKey, JSON.stringify(entry));
       } catch {
-        // storage full — ignore
+        // Storage capacity is non-critical. Fresh in-memory data remains valid.
       }
     };
 
-    fetchSummary();
+    void fetchSummary();
+    return () => { cancelled = true; };
   }, [orgId, datasetId]);
 
   const topMetrics = summaries.slice(0, 4);
 
-  return { summaries, topMetrics, loading, hasData };
+  return { summaries, topMetrics, loading, hasData, stale, error, cachedAt };
 };
