@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { createSafeChannel } from "@/lib/realtime-channel";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
@@ -34,7 +34,6 @@ export interface FusionCluster {
   status: string;
   generated_at: string;
   updated_at: string;
-  // Phase 5D
   narrative_class?: string | null;
   narrative_scope?: string | null;
   narrative_severity?: string | null;
@@ -107,10 +106,33 @@ export const useNarrativeFusion = () => {
   const [auditLog, setAuditLog] = useState<NarrativeAuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const scopeRef = useRef<string | null>(null);
+
+  const clearFusion = useCallback(() => {
+    setClusters([]);
+    setPressureHistory([]);
+    setObservability(null);
+    setConflicts([]);
+    setAuditLog([]);
+  }, []);
 
   const refresh = useCallback(async () => {
-    if (!orgId) return;
+    if (!orgId) {
+      scopeRef.current = null;
+      clearFusion();
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (scopeRef.current !== orgId) {
+      scopeRef.current = orgId;
+      clearFusion();
+    }
+
     setLoading(true);
+    setError(null);
     try {
       const sb = supabase as unknown as { from: (t: string) => any };
       const [cl, ph, ob, cf, au] = await Promise.all([
@@ -130,41 +152,67 @@ export const useNarrativeFusion = () => {
           .select("*").eq("organization_id", orgId)
           .order("created_at", { ascending: false }).limit(50),
       ]);
+
+      const failures = [
+        ["fusion clusters", cl.error],
+        ["pressure history", ph.error],
+        ["fusion observability", ob.error],
+        ["narrative conflicts", cf.error],
+        ["narrative audit", au.error],
+      ].filter(([, queryError]) => Boolean(queryError)) as Array<[string, { message?: string }]>;
+
+      if (failures.length > 0) {
+        const message = failures.map(([surface, queryError]) => `${surface}: ${queryError.message ?? "query failed"}`).join("; ");
+        clearFusion();
+        setError(`Narrative fusion evidence could not be verified: ${message}`);
+        return;
+      }
+
       setClusters((cl.data as FusionCluster[]) || []);
       setPressureHistory(((ph.data as PressureModel[]) || []).slice().reverse());
       setObservability((ob.data as FusionObservability) || null);
       setConflicts((cf.data as NarrativeConflict[]) || []);
       setAuditLog((au.data as NarrativeAuditEntry[]) || []);
+      setError(null);
+    } catch (e) {
+      clearFusion();
+      setError(e instanceof Error ? e.message : "Narrative fusion refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [clearFusion, orgId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
     if (!orgId) return;
     return createSafeChannel(`fusion-${orgId}`, (ch) =>
       ch.on("postgres_changes",
         { event: "*", schema: "public", table: "intelligence_fusion_clusters", filter: `organization_id=eq.${orgId}` },
-        () => refresh())
+        () => void refresh())
       .subscribe()
     );
   }, [orgId, refresh]);
 
   const regenerate = useCallback(async () => {
-    if (!orgId) return null;
+    if (!orgId) throw new Error("Organization context is required to regenerate narrative fusion.");
     setGenerating(true);
+    setError(null);
     try {
       const auth = await getVerifiedAuth();
-      if (!auth) return null;
-      const { data, error } = await invokeWithRetry("narrative-fusion-engine", {
+      if (!auth) throw new Error("A verified authenticated session is required to regenerate narrative fusion.");
+      const { data, error: fnError } = await invokeWithRetry("narrative-fusion-engine", {
         body: { organization_id: orgId },
         headers: authHeaders(auth),
       });
-      if (error) throw error;
+      if (fnError) throw fnError;
+      if (!data) throw new Error("Narrative fusion engine returned no confirmation payload.");
       await refresh();
       return data;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Narrative fusion regeneration failed";
+      setError(message);
+      throw e instanceof Error ? e : new Error(message);
     } finally {
       setGenerating(false);
     }
@@ -172,6 +220,6 @@ export const useNarrativeFusion = () => {
 
   return {
     clusters, pressureHistory, observability, conflicts, auditLog,
-    loading, generating, refresh, regenerate,
+    loading, generating, error, refresh, regenerate,
   };
 };
