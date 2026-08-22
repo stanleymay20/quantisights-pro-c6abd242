@@ -14,6 +14,14 @@ interface Props {
   onSubmitted?: () => void;
 }
 
+interface OutcomeConfirmation {
+  success?: boolean;
+  recorded?: boolean;
+  decision_id?: string;
+  total_evaluated?: number;
+  correlation_id?: string;
+}
+
 /**
  * One-click outcome capture for AICIS-linked decisions.
  *
@@ -43,9 +51,12 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
     setSubmitting(verdict);
     try {
       const parsedImpact = impact.trim() ? Number(impact) : NaN;
+      if (impact.trim() && !Number.isFinite(parsedImpact)) {
+        throw new Error("Actual impact must be a valid number.");
+      }
       const actualValue = Number.isFinite(parsedImpact) ? parsedImpact : undefined;
 
-      const { error } = await invokeWithRetry("aicis-evaluate-outcomes", {
+      const { data, error } = await invokeWithRetry<OutcomeConfirmation>("aicis-evaluate-outcomes", {
         body: {
           organization_id: organizationId,
           decision_id: decisionId,
@@ -54,10 +65,18 @@ const OutcomeFeedbackWidget = ({ decisionId, organizationId, alreadyEvaluated, o
         },
       });
       if (error) throw error;
+      if (
+        !data?.success ||
+        !data.recorded ||
+        data.decision_id !== decisionId ||
+        data.total_evaluated !== 1
+      ) {
+        throw new Error("The outcome service did not provide durable-recording confirmation.");
+      }
 
       toast({
         title: "Outcome recorded",
-        description: "Business outcome saved; calibration updated without fabricating forecast accuracy.",
+        description: "Business outcome, calibration evidence, and audit evidence were saved atomically.",
       });
       onSubmitted?.();
     } catch (e) {
