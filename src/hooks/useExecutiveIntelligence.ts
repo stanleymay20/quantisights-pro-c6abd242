@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
@@ -116,6 +116,14 @@ export interface ExecIntelSnapshot {
   confidence: number | null;
 }
 
+type QueryResult<T> = { data: T | null; error: { message?: string } | null };
+
+const syntheticDegradation = (surface: string, message: string): SignalHealthSurface => ({
+  surface,
+  consecutive_failures: 999,
+  last_success_at: null,
+  last_error_message: message,
+});
 
 export const useExecutiveIntelligence = () => {
   const { orgId } = useActiveDataContext();
@@ -126,12 +134,25 @@ export const useExecutiveIntelligence = () => {
   const [observability, setObservability] = useState<ExecObservability | null>(null);
   const [snapshot, setSnapshot] = useState<ExecIntelSnapshot | null>(null);
   const [degradedSurfaces, setDegradedSurfaces] = useState<SignalHealthSurface[]>([]);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const staleRefreshAttemptRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!orgId) return;
+    if (!orgId) {
+      setBrief(null);
+      setInterventions([]);
+      setNarratives([]);
+      setExposure(null);
+      setObservability(null);
+      setSnapshot(null);
+      setDegradedSurfaces([]);
+      setLastError(null);
+      return;
+    }
+
     setLoading(true);
     try {
       const [b, iv, nar, exp, obs, snap, health] = await Promise.all([
@@ -169,7 +190,7 @@ export const useExecutiveIntelligence = () => {
           .order("snapshot_day", { ascending: false })
           .limit(1)
           .maybeSingle(),
-        (supabase as unknown as { from: (t: string) => { select: (s: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown }> } } } } } })
+        (supabase as any)
           .from("executive_intelligence_snapshots")
           .select("id,snapshot_date,generated_at,generated_by,headline,top_interventions,pressure_queue,cross_domain_narratives,emerging_threats,fatigue_warning,conversion_metrics,recommended_actions,provenance,risk_score,confidence")
           .eq("organization_id", orgId)
@@ -181,25 +202,48 @@ export const useExecutiveIntelligence = () => {
           .select("surface,consecutive_failures,last_success_at,last_error_message")
           .eq("organization_id", orgId),
       ]);
-      setBrief((b.data as unknown as ExecBrief) || null);
-      setInterventions((iv.data as unknown as Intervention[]) || []);
-      setNarratives((nar.data as unknown as Narrative[]) || []);
-      setExposure((exp.data as unknown as Exposure) || null);
-      setObservability((obs.data as unknown as ExecObservability) || null);
-      setSnapshot((snap.data as unknown as ExecIntelSnapshot) || null);
-      // A signal source stuck at 3+ consecutive failures means the metrics
-      // above may be computed from incomplete/stale data, not genuine "all
-      // clear" — the UI must say so instead of presenting zeros as fact.
-      setDegradedSurfaces(
-        ((health.data as unknown as SignalHealthSurface[]) || []).filter((s) => (s.consecutive_failures ?? 0) >= 3)
-      );
 
+      const queryResults: Array<{ name: string; result: QueryResult<unknown> }> = [
+        { name: "executive_briefs", result: b as unknown as QueryResult<unknown> },
+        { name: "executive_interventions", result: iv as unknown as QueryResult<unknown> },
+        { name: "executive_cross_domain_narratives", result: nar as unknown as QueryResult<unknown> },
+        { name: "executive_exposure_snapshots", result: exp as unknown as QueryResult<unknown> },
+        { name: "executive_intel_observability", result: obs as unknown as QueryResult<unknown> },
+        { name: "executive_intelligence_snapshots", result: snap as unknown as QueryResult<unknown> },
+        { name: "aicis_sync_surface_status", result: health as unknown as QueryResult<unknown> },
+      ];
+
+      const queryFailures = queryResults
+        .filter(({ result }) => Boolean(result.error))
+        .map(({ name, result }) => syntheticDegradation(name, result.error?.message ?? `${name} query failed`));
+
+      // Only clear/replace each surface after its query completed successfully.
+      // A failed query must not silently become an empty array or null all-clear.
+      if (!b.error) setBrief((b.data as unknown as ExecBrief) || null);
+      if (!iv.error) setInterventions((iv.data as unknown as Intervention[]) || []);
+      if (!nar.error) setNarratives((nar.data as unknown as Narrative[]) || []);
+      if (!exp.error) setExposure((exp.data as unknown as Exposure) || null);
+      if (!obs.error) setObservability((obs.data as unknown as ExecObservability) || null);
+      if (!(snap as QueryResult<unknown>).error) setSnapshot(((snap as QueryResult<unknown>).data as ExecIntelSnapshot) || null);
+
+      const upstreamHealth = health.error
+        ? []
+        : (((health.data as unknown as SignalHealthSurface[]) || []).filter((s) => (s.consecutive_failures ?? 0) >= 3));
+      setDegradedSurfaces([...queryFailures, ...upstreamHealth]);
+      setLastError(queryFailures.length > 0
+        ? `${queryFailures.length} executive intelligence surface${queryFailures.length === 1 ? "" : "s"} could not be verified.`
+        : null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[useExecutiveIntelligence] refresh failed:", error);
+      setLastError(message);
+      setDegradedSurfaces([syntheticDegradation("executive_intelligence_refresh", message)]);
     } finally {
       setLoading(false);
     }
   }, [orgId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   // Realtime on interventions — per-instance unique channel name prevents
   // "cannot add postgres_changes callbacks after subscribe()" when StrictMode
@@ -213,10 +257,11 @@ export const useExecutiveIntelligence = () => {
         .channel(`exec-intel-${orgId}-${uniq}`)
         .on("postgres_changes",
           { event: "*", schema: "public", table: "executive_interventions", filter: `organization_id=eq.${orgId}` },
-          () => refresh())
+          () => void refresh())
         .subscribe();
     } catch (err) {
       console.warn("[useExecutiveIntelligence] realtime subscribe failed:", err);
+      setLastError(err instanceof Error ? err.message : "Executive realtime subscription failed.");
     }
     return () => { if (ch) { try { supabase.removeChannel(ch); } catch { /* noop */ } } };
   }, [orgId, refresh]);
@@ -226,51 +271,86 @@ export const useExecutiveIntelligence = () => {
     setGenerating(true);
     try {
       const auth = await getVerifiedAuth();
-      if (!auth) return null;
+      if (!auth) {
+        const message = "Executive intelligence regeneration requires a verified authenticated session.";
+        setLastError(message);
+        throw new Error(message);
+      }
       const { data, error } = await invokeWithRetry("executive-brief-generator", {
         body: { organization_id: orgId },
         headers: authHeaders(auth),
       });
-      if (error) throw error;
+      if (error) {
+        setLastError(error.message);
+        throw error;
+      }
       await refresh();
+      setLastError(null);
       return data;
     } finally {
       setGenerating(false);
     }
   }, [orgId, refresh]);
 
-  // Auto-regenerate if brief is stale (>6 hours) — declared AFTER regenerate to avoid TDZ
+  // Auto-regenerate if brief is stale (>6 hours). A failed attempt is never
+  // cached as success; the in-memory attempt guard prevents a render loop while
+  // still allowing a later retry/remount.
   useEffect(() => {
     if (!brief || generating || !orgId) return;
     const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
     const generatedAt = new Date(brief.generated_at).getTime();
-    if (Date.now() - generatedAt > SIX_HOURS_MS) {
-      const cacheKey = `brief_stale_refresh_${orgId}_${new Date().toISOString().slice(0, 13)}`;
-      if (!sessionStorage.getItem(cacheKey)) {
-        sessionStorage.setItem(cacheKey, "1");
-        regenerate();
-      }
-    }
+    if (Date.now() - generatedAt <= SIX_HOURS_MS) return;
+
+    const cacheKey = `brief_stale_refresh_${orgId}_${new Date().toISOString().slice(0, 13)}`;
+    if (sessionStorage.getItem(cacheKey) === "done" || staleRefreshAttemptRef.current === cacheKey) return;
+
+    staleRefreshAttemptRef.current = cacheKey;
+    void regenerate()
+      .then((result) => {
+        if (result) sessionStorage.setItem(cacheKey, "done");
+      })
+      .catch((error) => {
+        console.warn("[useExecutiveIntelligence] stale brief regeneration failed:", error);
+      })
+      .finally(() => {
+        staleRefreshAttemptRef.current = null;
+      });
   }, [brief, generating, orgId, regenerate]);
 
   const updateIntervention = useCallback(async (
     id: string,
     patch: { status?: string; owner_id?: string | null; resolved?: boolean; acknowledged?: boolean }
   ) => {
-    if (!orgId) return;
-    setInterventions((cur) => cur.map((i) => i.id === id ? {
-      ...i,
-      ...patch,
-      acknowledged_at: patch.acknowledged ? new Date().toISOString() : i.acknowledged_at,
-      resolved_at: patch.resolved ? new Date().toISOString() : i.resolved_at,
-    } as Intervention : i));
+    if (!orgId) throw new Error("Organization context is required to update an intervention.");
+
     const updates: Record<string, unknown> = {};
     if (patch.status) updates.status = patch.status;
     if (patch.owner_id !== undefined) updates.owner_id = patch.owner_id;
     if (patch.acknowledged && !patch.status) updates.status = "acknowledged";
     if (patch.resolved && !patch.status) updates.status = "resolved";
-    await supabase.from("executive_interventions").update(updates as never).eq("id", id).eq("organization_id", orgId);
-    refresh();
+    if (Object.keys(updates).length === 0) return;
+
+    const { error } = await supabase
+      .from("executive_interventions")
+      .update(updates as never)
+      .eq("id", id)
+      .eq("organization_id", orgId);
+
+    if (error) {
+      setLastError(error.message);
+      throw new Error(`Intervention update failed: ${error.message}`);
+    }
+
+    setInterventions((cur) => cur.map((i) => i.id === id ? {
+      ...i,
+      ...patch,
+      status: String(updates.status ?? i.status),
+      owner_id: patch.owner_id !== undefined ? patch.owner_id : i.owner_id,
+      acknowledged_at: patch.acknowledged ? new Date().toISOString() : i.acknowledged_at,
+      resolved_at: patch.resolved ? new Date().toISOString() : i.resolved_at,
+    } as Intervention : i));
+
+    await refresh();
   }, [orgId, refresh]);
 
   const topByPressure = useMemo(
@@ -280,7 +360,7 @@ export const useExecutiveIntelligence = () => {
 
   return {
     brief, interventions, topByPressure, narratives, exposure, observability, snapshot,
-    degradedSurfaces, loading, generating, refresh, regenerate, updateIntervention,
+    degradedSurfaces, lastError, loading, generating, refresh, regenerate, updateIntervention,
   };
 
 };
