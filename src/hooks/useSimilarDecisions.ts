@@ -1,7 +1,7 @@
 /**
  * Hook to fetch similar past decisions with hybrid retrieval and match quality.
  */
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getVerifiedAuth, authHeaders } from "@/lib/auth-helpers";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 
@@ -68,43 +68,71 @@ export const useSimilarDecisions = (organizationId: string | null): SimilarDecis
   const [neuralConcepts, setNeuralConcepts] = useState<string[]>([]);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
 
+  const resetEvidence = useCallback(() => {
+    setSimilar([]);
+    setHistoricalSuccessRate(null);
+    setAvgAccuracy(null);
+    setConfidenceAdjustment(0);
+    setRetrievalQuality("none");
+    setPrecedentType("novel_decision");
+    setQueryCategory(null);
+    setNeuralFallbackUsed(false);
+    setNeuralConcepts([]);
+    setMatchSummary(null);
+  }, []);
+
+  // Org switches invalidate every precedent and derived confidence adjustment.
+  useEffect(() => {
+    resetEvidence();
+    setError(null);
+    setLoading(false);
+  }, [organizationId, resetEvidence]);
+
   const fetchSimilar = useCallback(async (queryText: string) => {
-    if (!organizationId || !queryText) return;
-    setLoading(true);
+    const normalizedQuery = queryText.trim();
+    resetEvidence();
     setError(null);
 
+    if (!organizationId) {
+      setError("Organization context is required to retrieve precedent evidence.");
+      return;
+    }
+    if (!normalizedQuery) {
+      setError("Decision context is required to retrieve precedent evidence.");
+      return;
+    }
+
+    setLoading(true);
     try {
       const auth = await getVerifiedAuth();
-      if (!auth) {
-        setError("Not authenticated");
-        setLoading(false);
-        return;
-      }
+      if (!auth) throw new Error("Not authenticated");
 
       const { data, error: fnErr } = await invokeWithRetry<Record<string, unknown>>("similar-decisions", {
-        body: { organization_id: organizationId, query_text: queryText },
+        body: { organization_id: organizationId, query_text: normalizedQuery },
         headers: authHeaders(auth),
       });
 
-      if (fnErr) {
-        setError(fnErr.message);
-      } else if (data) {
-        setSimilar((data.similar as SimilarDecision[]) || []);
-        setHistoricalSuccessRate((data.historical_success_rate as number) ?? null);
-        setAvgAccuracy((data.avg_accuracy as number) ?? null);
-        setConfidenceAdjustment((data.confidence_adjustment as number) ?? 0);
-        setRetrievalQuality((data.retrieval_quality as RetrievalQuality) ?? "none");
-        setPrecedentType((data.precedent_type as PrecedentType) ?? "novel_decision");
-        setQueryCategory((data.query_category as string) ?? null);
-        setNeuralFallbackUsed((data.neural_fallback_used as boolean) ?? false);
-        setNeuralConcepts((data.neural_concepts as string[]) ?? []);
-        setMatchSummary((data.match_summary as MatchSummary) ?? null);
-      }
+      if (fnErr) throw fnErr;
+      if (!data) throw new Error("Similar-decision retrieval returned no evidence payload.");
+
+      setSimilar((data.similar as SimilarDecision[]) || []);
+      setHistoricalSuccessRate((data.historical_success_rate as number) ?? null);
+      setAvgAccuracy((data.avg_accuracy as number) ?? null);
+      setConfidenceAdjustment((data.confidence_adjustment as number) ?? 0);
+      setRetrievalQuality((data.retrieval_quality as RetrievalQuality) ?? "none");
+      setPrecedentType((data.precedent_type as PrecedentType) ?? "novel_decision");
+      setQueryCategory((data.query_category as string) ?? null);
+      setNeuralFallbackUsed((data.neural_fallback_used as boolean) ?? false);
+      setNeuralConcepts((data.neural_concepts as string[]) ?? []);
+      setMatchSummary((data.match_summary as MatchSummary) ?? null);
+      setError(null);
     } catch (e: unknown) {
+      resetEvidence();
       setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [organizationId]);
+  }, [organizationId, resetEvidence]);
 
   return {
     similar, loading, error, historicalSuccessRate, avgAccuracy,
