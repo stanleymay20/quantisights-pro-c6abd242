@@ -5,6 +5,8 @@ import { Eyebrow, MarketingCard, MarketingCTA, MarketingSection, TagBadge } from
 import { REGION_DISCLOSURE_SHORT } from "@/lib/reliability-claims";
 import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
+import LandingHeroMedia from "@/components/landing/LandingHeroMedia";
+
 
 const NAVY = "hsl(var(--brand-executive-navy))";
 const DEEP = "hsl(var(--brand-marketing-deep))";
