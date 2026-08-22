@@ -58,20 +58,33 @@ export const useIntelligenceInbox = (opts: { includeTestMode?: boolean } = {}) =
   const [loading, setLoading] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [observabilityError, setObservabilityError] = useState<string | null>(null);
   const refreshSeq = useRef(0);
+  const scopeRef = useRef<string | null>(null);
   const includeTest = !!opts.includeTestMode;
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
     setTimedOut(false);
     setError(null);
+    setObservabilityError(null);
 
     if (!orgId) {
+      scopeRef.current = null;
       setItems([]);
       setBriefs([]);
       setObservability(null);
       setLoading(false);
       return;
+    }
+
+    // Never display a previous tenant's intelligence while the new scope is
+    // resolving. Same-org refreshes retain verified data to avoid flicker.
+    if (scopeRef.current !== orgId) {
+      scopeRef.current = orgId;
+      setItems([]);
+      setBriefs([]);
+      setObservability(null);
     }
 
     setLoading(true);
@@ -114,11 +127,18 @@ export const useIntelligenceInbox = (opts: { includeTestMode?: boolean } = {}) =
       if (refreshSeq.current !== seq) return;
       if (itemsRes.error) throw itemsRes.error;
       if (briefsRes.error) throw briefsRes.error;
-      if (obsRes.error) console.warn("Intelligence observability unavailable", obsRes.error);
 
       setItems((itemsRes.data as unknown as IntelligenceItem[]) || []);
       setBriefs((briefsRes.data as unknown as IntelligenceBrief[]) || []);
-      setObservability((obsRes.data as unknown as Observability) || null);
+
+      if (obsRes.error) {
+        console.warn("Intelligence observability unavailable", obsRes.error);
+        setObservability(null);
+        setObservabilityError(obsRes.error.message);
+      } else {
+        setObservability((obsRes.data as unknown as Observability) || null);
+        setObservabilityError(null);
+      }
     } catch (err) {
       if (refreshSeq.current !== seq) return;
       const message = err instanceof Error ? err.message : String(err);
@@ -132,12 +152,12 @@ export const useIntelligenceInbox = (opts: { includeTestMode?: boolean } = {}) =
     }
   }, [orgId, includeTest]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
     if (!orgId) return;
     return createSafeChannel(`intel-inbox-${orgId}`, (ch) =>
-      ch.on("postgres_changes", { event: "*", schema: "public", table: "aicis_intelligence_items", filter: `organization_id=eq.${orgId}` }, () => refresh())
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "aicis_intelligence_items", filter: `organization_id=eq.${orgId}` }, () => void refresh())
         .subscribe()
     );
   }, [orgId, refresh]);
@@ -148,30 +168,45 @@ export const useIntelligenceInbox = (opts: { includeTestMode?: boolean } = {}) =
     route_type: "decision" | "task" | "approval" | "alert" | "owner_assignment";
     reason?: string;
   }) => {
-    if (!orgId) return null;
+    if (!orgId) throw new Error("Organization context is required to route intelligence.");
     const auth = await getVerifiedAuth();
-    if (!auth) return null;
-    const { data, error } = await invokeWithRetry("intelligence-router", {
+    if (!auth) throw new Error("A verified authenticated session is required to route intelligence.");
+    const { data, error: routeError } = await invokeWithRetry("intelligence-router", {
       body: { organization_id: orgId, ...params },
       headers: authHeaders(auth),
     });
-    if (error) throw error;
+    if (routeError) throw routeError;
+    if (!data) throw new Error("Intelligence routing returned no confirmation.");
     await refresh();
     return data;
   }, [orgId, refresh]);
 
   const sendFeedback = useCallback(async (intelligence_item_id: string, feedback: string, reason?: string) => {
-    if (!orgId) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from("intelligence_feedback").insert({
+    if (!orgId) throw new Error("Organization context is required to submit intelligence feedback.");
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) throw new Error(authError?.message ?? "A verified authenticated session is required to submit feedback.");
+
+    const { error: insertError } = await supabase.from("intelligence_feedback").insert({
       organization_id: orgId,
       intelligence_item_id,
       user_id: user.id,
       feedback: feedback as never,
       feedback_reason: reason ?? null,
     });
+    if (insertError) throw new Error(`Intelligence feedback persistence failed: ${insertError.message}`);
   }, [orgId]);
 
-  return { items, briefs, observability, loading, timedOut, error, refresh, routeItem, sendFeedback, orgId };
+  return {
+    items,
+    briefs,
+    observability,
+    loading,
+    timedOut,
+    error,
+    observabilityError,
+    refresh,
+    routeItem,
+    sendFeedback,
+    orgId,
+  };
 };
