@@ -11,9 +11,7 @@ import {
   FileSpreadsheet,
   Globe,
   Hash,
-  Layers,
   Loader2,
-  RefreshCw,
   ShieldCheck,
   Tag,
   TrendingUp,
@@ -442,11 +440,11 @@ const DataUploadHardened = () => {
       deferredFailures.push({ stage, message });
     };
 
-    const runEdgeStage = async (stage: string, fn: () => Promise<{ data: unknown; error: { message?: string } | null }>) => {
+    const runEdgeStage = async (stage: string, fn: () => Promise<{ data?: unknown; error?: unknown }>) => {
       try {
         const result = await fn();
         if (result.error) {
-          addFailure(stage, result.error.message ?? `${stage} failed`);
+          addFailure(stage, result.error);
           return false;
         }
         return true;
@@ -763,6 +761,8 @@ const DataUploadHardened = () => {
         .eq("organization_id", currentOrgId);
       if (datasetCompleteError) throw new Error(`Dataset completion failed: ${datasetCompleteError.message}`);
       coreDataDurable = true;
+      setImportCount(verifiedCount);
+      setImportedDatasetId(dataset.id);
 
       try {
         let projectId = currentProject?.id;
@@ -797,7 +797,7 @@ const DataUploadHardened = () => {
         body: { organization_id: currentOrgId, dataset_id: dataset.id },
       }));
 
-      const lineageRows = [{
+      const { error: metricsLineageError } = await supabase.from("data_lineage").insert({
         organization_id: currentOrgId,
         source_type: "dataset",
         source_id: dataset.id,
@@ -807,9 +807,11 @@ const DataUploadHardened = () => {
         target_name: `${trimmedName} metrics`,
         transformation: "normalize_clean",
         transformation_details: { records_inserted: verifiedCount },
-      }];
+      });
+      if (metricsLineageError) addFailure("metric lineage finalization", metricsLineageError);
+
       if (aggregateOk) {
-        lineageRows.push({
+        const { error: aggregateLineageError } = await supabase.from("data_lineage").insert({
           organization_id: currentOrgId,
           source_type: "metrics",
           source_id: dataset.id,
@@ -820,9 +822,8 @@ const DataUploadHardened = () => {
           transformation: "refresh_aggregates",
           transformation_details: { period_types: ["monthly", "quarterly", "yearly"] },
         });
+        if (aggregateLineageError) addFailure("aggregate lineage finalization", aggregateLineageError);
       }
-      const { error: finalLineageError } = await supabase.from("data_lineage").insert(lineageRows);
-      if (finalLineageError) addFailure("lineage finalization", finalLineageError);
 
       const finalFailures = [...deferredFailures];
       const finalStatus = finalFailures.length > 0 ? "partial_success" : "completed";
@@ -854,8 +855,6 @@ const DataUploadHardened = () => {
 
       const visibleFailures = [...deferredFailures];
       setDegradedStages(visibleFailures);
-      setImportCount(verifiedCount);
-      setImportedDatasetId(dataset.id);
       setStep("done");
 
       if (visibleFailures.length === 0) {
@@ -866,7 +865,7 @@ const DataUploadHardened = () => {
       } else {
         toast({
           title: "Data imported · intelligence partially completed",
-          description: `${visibleFailures.length} downstream stage${visibleFailures.length === 1 ? "" : "s"} require attention. The durable data layer remains available.`,
+          description: `${visibleFailures.length} stage${visibleFailures.length === 1 ? "" : "s"} require attention. The durable data layer remains available.`,
         });
       }
     } catch (error) {
@@ -910,7 +909,6 @@ const DataUploadHardened = () => {
   }, [
     allRows,
     attachDataset,
-    classification,
     createProject,
     crossSheet,
     currentOrgId,
