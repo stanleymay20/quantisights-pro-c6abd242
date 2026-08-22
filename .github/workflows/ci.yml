@@ -85,6 +85,7 @@ jobs:
           deno check --config supabase/functions/deno.json supabase/functions/compute-trust-metrics/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/auto-create-decisions/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/aicis-auto-decisions/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/aicis-evaluate-outcomes/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/complete-onboarding/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/activate-pilot/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/decision-value-summary/index.ts
