@@ -5,31 +5,39 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
-describe("Pipeline Observability blind to AICIS Bridge outages (audit round 2)", () => {
-  // AICIS Bridge syncs are tracked in aicis_sync_surface_status, entirely
-  // separate from data_sync_jobs (the generic connector table this page
-  // queried). A real, ongoing AICIS /signals outage (221 consecutive
-  // failures, circuit breaker open, confirmed on Bridge Health / AICIS
-  // Sync / Data Vendors / Executive Intelligence) was invisible here --
-  // Success Rate showed 100% and Failures showed 0, because
-  // successRate's fallback defaults to 100 when there's no data_sync_jobs
-  // activity for an integration that doesn't use that table at all.
+describe("Pipeline Observability truth contract", () => {
   const source = read("src/pages/PipelineObservability.tsx");
 
-  it("fetches aicis_sync_surface_status alongside the generic sync job tables", () => {
+  it("reads pipeline runs and AICIS bridge state as first-class evidence", () => {
+    expect(source).toContain('from("pipeline_runs")');
     expect(source).toContain('from("aicis_sync_surface_status")');
+    expect(source).toContain("setPipelineRuns(pipelineRes.data || [])");
     expect(source).toContain("setAicisSurfaces(aicisRes.data || [])");
   });
 
-  it("folds AICIS surface breaker state into the health/success-rate/failure computation", () => {
-    expect(source).toContain("degradedAicisSurfaces");
-    expect(source).toContain("const totalFailures = failedJobs.length + degradedAicisSurfaces.length;");
-    expect(source).toContain("completedJobs.length + healthyAicisSurfaces");
-    expect(source).toContain("totalFailures === 0 ? \"healthy\"");
+  it("recognizes partial_success and never counts it as a verified success", () => {
+    expect(source).toContain('run.status === "partial_success"');
+    expect(source).toContain("const verifiedSuccesses = completedJobs.length + completedRuns.length;");
+    expect(source).toContain("partialRuns.length > 0");
+    expect(source).not.toContain("completedRuns.length + partialRuns.length");
   });
 
-  it("surfaces a visible, linked callout when an AICIS surface is degraded, not just a folded-in number", () => {
+  it("withholds success and health claims when evidence is missing or unreadable", () => {
+    expect(source).toContain("setEvidenceReady(false)");
+    expect(source).toContain("successRate = evidenceReady && totalAttempts > 0");
+    expect(source).toContain('healthStatus = !evidenceReady || totalAttempts === 0');
+    expect(source).toContain('No 24-hour execution evidence');
+    expect(source).not.toMatch(/:\s*100\s*;/);
+  });
+
+  it("folds failed pipeline runs and degraded AICIS surfaces into failure health", () => {
+    expect(source).toContain("failedJobs.length + failedRuns.length + degradedAicisSurfaces.length");
     expect(source).toContain("degradedAicisSurfaces.length > 0 && (");
     expect(source).toContain('to="/admin/bridge-health"');
+  });
+
+  it("uses the actual source distribution count field", () => {
+    expect(source).toContain('dataKey="count"');
+    expect(source).not.toContain('dataKey="value" nameKey="name"');
   });
 });
