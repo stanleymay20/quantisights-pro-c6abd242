@@ -31,6 +31,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/supplier-risk-runtime-ingest/index.ts",
       "supabase/functions/detect-executive-contradictions/index.ts",
       "supabase/functions/auto-create-decisions/index.ts",
+      "supabase/functions/aicis-auto-decisions/index.ts",
       "supabase/functions/decision-value-summary/index.ts",
     ]) {
       expect(ci).toContain(
