@@ -7,11 +7,15 @@ const srcRoot = resolve(root, "src");
 const homePath = resolve(srcRoot, "pages/Index.tsx");
 const homeSource = readFileSync(homePath, "utf8");
 
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 function walk(dir: string): string[] {
   const files: string[] = [];
   for (const name of readdirSync(dir)) {
     const full = resolve(dir, name);
-    const rel = relative(root, full).replaceAll("\\", "/");
+    const rel = normalizePath(relative(root, full));
     if (rel.startsWith("src/test/") || rel.startsWith("src/i18n/")) continue;
     const stat = statSync(full);
     if (stat.isDirectory()) files.push(...walk(full));
@@ -37,7 +41,7 @@ describe("homepage anchor integrity", () => {
   it("keeps cross-page homepage anchors backed by a real homepage section", () => {
     const broken: string[] = [];
     for (const file of walk(srcRoot)) {
-      const rel = relative(root, file).replaceAll("\\", "/");
+      const rel = normalizePath(relative(root, file));
       const source = readFileSync(file, "utf8");
       for (const anchor of crossPageHomepageAnchors(source)) {
         if (!homepageIds.has(anchor)) broken.push(`${rel}: /#${anchor}`);
