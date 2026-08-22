@@ -1,10 +1,18 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { verifyCronSecret, cronSecretUnauthorized } from "../_shared/cron-secret.ts";
 import { isValidUUID } from "../_shared/input-validation.ts";
 
 const MAX_METRICS_PER_CHUNK = 1000;
 const MAX_VALUE = 1e12;
+
+type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
 
 type QueueMessage = {
   chunk_id: string;
@@ -38,7 +46,75 @@ type ChunkOutcome = {
   error?: string;
 };
 
-type ServiceClient = ReturnType<typeof createClient>;
+type QueueStateRow = {
+  id: number;
+  paused: boolean;
+  drain_paused: boolean;
+  batch_size: number;
+  visibility_timeout_seconds: number;
+  max_retries: number;
+  worker_concurrency: number;
+  max_chunks_per_run: number;
+  max_runtime_ms: number;
+};
+
+type WorkerDatabase = {
+  __InternalSupabase: {
+    PostgrestVersion: "14.1";
+  };
+  public: {
+    Tables: {
+      metric_ingest_queue_state: {
+        Row: QueueStateRow;
+        Insert: Partial<QueueStateRow>;
+        Update: Partial<QueueStateRow>;
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: {
+      delete_metric_ingest: {
+        Args: { _message_id: number };
+        Returns: boolean;
+      };
+      move_metric_ingest_to_dlq: {
+        Args: { _message_id: number; _payload: Json };
+        Returns: boolean;
+      };
+      persist_metric_ingest_chunk: {
+        Args: {
+          _chunk_id: string;
+          _job_id: string;
+          _organization_id: string;
+          _dataset_id: string;
+          _data_source_id: string;
+          _metrics: Json;
+        };
+        Returns: PersistResult[];
+      };
+      record_metric_ingest_chunk_result: {
+        Args: {
+          _chunk_id: string;
+          _job_id: string;
+          _organization_id: string;
+          _dataset_id: string;
+          _inserted: number;
+          _failed: boolean;
+          _error_message: string;
+        };
+        Returns: string;
+      };
+      read_metric_ingest_batch: {
+        Args: { _batch_size: number; _vt: number };
+        Returns: QueueRow[];
+      };
+    };
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
+
+type ServiceClient = SupabaseClient<WorkerDatabase>;
 
 const toDateOnly = (value: unknown): string | null => {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -86,7 +162,7 @@ const deleteLiveMessage = async (svc: ServiceClient, messageId: number) => {
 const moveToDlq = async (svc: ServiceClient, raw: QueueRow, reason: string) => {
   const { error } = await svc.rpc("move_metric_ingest_to_dlq", {
     _message_id: raw.msg_id,
-    _payload: { ...raw.message, dlq_reason: reason, dlq_at: new Date().toISOString() },
+    _payload: { ...raw.message, dlq_reason: reason, dlq_at: new Date().toISOString() } as Json,
   });
   if (error) throw new Error(`DLQ move failed: ${error.message}`);
 };
@@ -137,11 +213,11 @@ const processMessage = async (
       _organization_id: envelope.organization_id,
       _dataset_id: envelope.dataset_id,
       _data_source_id: envelope.data_source_id,
-      _metrics: rows,
+      _metrics: rows as Json,
     });
     if (error) throw new Error(`Transactional metric chunk persistence failed: ${error.message}`);
 
-    const result = Array.isArray(data) ? data[0] as PersistResult | undefined : undefined;
+    const result = data?.[0];
     if (!result?.chunk_status) throw new Error("Transactional metric chunk persistence returned no result");
 
     // Redelivery after a terminal failed marker must never execute business
@@ -235,7 +311,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) return json({ error: "Queue worker configuration unavailable" }, 503);
-  const svc = createClient(supabaseUrl, serviceKey);
+  const svc = createClient<WorkerDatabase>(supabaseUrl, serviceKey);
 
   const { data: state, error: stateError } = await svc
     .from("metric_ingest_queue_state")
@@ -285,7 +361,7 @@ Deno.serve(async (req) => {
       break;
     }
 
-    const batch = messages as QueueRow[];
+    const batch = messages;
     claimedChunks += batch.length;
 
     for (let offset = 0; offset < batch.length; offset += state.worker_concurrency) {
