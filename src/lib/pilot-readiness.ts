@@ -1,6 +1,8 @@
 export type PilotConnectorStatus = "certified" | "file_intake" | "hardening";
 
-const CERTIFIED_CONNECTORS = new Set(["salesforce", "hubspot"]);
+// A connector is only certified when its current provisioning path matches the
+// credentials/token model required by the production puller end-to-end.
+const CERTIFIED_CONNECTORS = new Set(["hubspot"]);
 
 export function getPilotConnectorStatus(connectorType: string): PilotConnectorStatus {
   if (CERTIFIED_CONNECTORS.has(connectorType)) return "certified";
@@ -22,7 +24,9 @@ export function pilotConnectorBadge(connectorType: string): string {
 }
 
 export function pilotConnectorBlockReason(connectorType: string): string | null {
-  return canUseConnectorInPilot(connectorType)
-    ? null
-    : "This integration is still undergoing pilot hardening. Salesforce and HubSpot are currently certified for live connector use; CSV upload remains available for file-based pilots.";
+  if (canUseConnectorInPilot(connectorType)) return null;
+  if (connectorType === "salesforce") {
+    return "Salesforce OAuth linking is still undergoing pilot hardening. It will be re-enabled only after the provisioning flow is certified against the Vault-backed token lifecycle used by the production puller.";
+  }
+  return "This integration is still undergoing pilot hardening. HubSpot is currently certified for live connector use; CSV upload remains available for file-based pilots.";
 }

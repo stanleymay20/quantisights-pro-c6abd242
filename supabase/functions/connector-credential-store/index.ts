@@ -13,7 +13,10 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const PILOT_CONNECTOR_TYPES = new Set(["salesforce", "hubspot"]);
+// HubSpot's private-app credential model is fully wired through Vault today.
+// Salesforce remains blocked until its OAuth token-state provisioning path is
+// implemented and certified against the production puller.
+const PILOT_CONNECTOR_TYPES = new Set(["hubspot"]);
 type ScheduleKind = "manual" | "every_5_min" | "hourly" | "daily";
 
 interface CredentialStoreRequest {
