@@ -1,7 +1,8 @@
 // GA-1: Supplier Risk runtime ingestion path.
 // Supplier-risk-shaped advisories/insights are routed through the RTS-1 / Agent
 // Gateway / Runtime pipeline. Unknown monetary exposure or delivery delay is
-// represented as 0 — never fabricated from priority labels.
+// represented as 0 — never fabricated from priority labels. Source identity is
+// persisted so concurrent/replayed runs cannot create duplicate decisions.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -89,7 +90,7 @@ serve(async (req) => {
         status: pipelineResult.status,
         decision_id: pipelineResult.decision_id,
       });
-      if (pipelineResult.status === "DECISION_LEDGER_READY" && source.kind === "advisory") {
+      if ((pipelineResult.status === "DECISION_LEDGER_READY" || pipelineResult.status === "ALREADY_EXISTS") && source.kind === "advisory") {
         processedAdvisories.push(source);
       }
     }
@@ -105,6 +106,7 @@ serve(async (req) => {
     }
 
     const created = results.filter((result) => result.status === "DECISION_LEDGER_READY").length;
+    const existingCount = results.filter((result) => result.status === "ALREADY_EXISTS").length;
     const { error: auditError } = await service.from("audit_log").insert({
       organization_id: organizationId,
       actor_id: user.id,
@@ -113,6 +115,7 @@ serve(async (req) => {
       resource_type: "decision_ledger",
       payload: {
         count: created,
+        existing: existingCount,
         examined: newSources.length,
         results,
         source: "supplier_risk_runtime_ingest",
@@ -120,7 +123,7 @@ serve(async (req) => {
     });
     if (auditError) throw new Error(`Failed to persist supplier-risk run audit: ${auditError.message}`);
 
-    return json({ created, examined: newSources.length, results }, 200, corsHeaders);
+    return json({ created, existing: existingCount, examined: newSources.length, results }, 200, corsHeaders);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("supplier-risk-runtime-ingest error:", message);
@@ -137,8 +140,10 @@ async function runSupplierRiskPipelineForSource(
 ): Promise<{ status: string; decision_id: string | null }> {
   const impactAmount = deriveImpactAmount(source);
   const deliveryDelayHours = deriveDeliveryDelayHours(source);
-  const observedAt = normalizeObservedAt(source.created_at, now);
+  const observedAt = normalizeObservedAt(source.created_at);
+  const idempotencyKey = sourceKey(source);
   let persistedDecisionId: string | null = null;
+  let reusedExisting = false;
 
   const result = await runSupplierRiskRuntimePipeline(
     {
@@ -165,16 +170,18 @@ async function runSupplierRiskPipelineForSource(
           actor_type: "system",
           action_type: "agent_gateway.decision_recorded",
           resource_type: "decision_ledger",
-          resource_id: record.decision_id,
+          resource_id: persistedDecisionId ?? record.decision_id,
           payload: {
             decision_class: record.decision_class,
             approval_state: record.status,
             source_kind: source.kind,
             source_id: source.id,
+            source_idempotency_key: idempotencyKey,
+            reused_existing: reusedExisting,
           },
         });
         if (error) throw new Error(`decision record audit insert failed: ${error.message}`);
-        return { decision_id: record.decision_id };
+        return { decision_id: persistedDecisionId ?? record.decision_id };
       },
       writeAuditEvent: async (event: {
         organization_id: string;
@@ -193,7 +200,7 @@ async function runSupplierRiskPipelineForSource(
             action_type: event.action_type,
             resource_type: event.resource_type,
             resource_id: event.resource_id,
-            payload: event.payload,
+            payload: { ...event.payload, source_idempotency_key: idempotencyKey },
           })
           .select("id")
           .single();
@@ -203,6 +210,7 @@ async function runSupplierRiskPipelineForSource(
       persistDecisionLedgerRow: async (row: Record<string, unknown>) => {
         const insertRow = {
           ...row,
+          source_idempotency_key: idempotencyKey,
           advisory_instance_id: source.kind === "advisory" ? source.id : null,
         };
         const { data, error } = await service
@@ -210,6 +218,22 @@ async function runSupplierRiskPipelineForSource(
           .insert(insertRow)
           .select("id")
           .single();
+
+        if (error?.code === "23505") {
+          const { data: existing, error: existingError } = await service
+            .from("decision_ledger")
+            .select("id")
+            .eq("organization_id", organizationId)
+            .eq("source_idempotency_key", idempotencyKey)
+            .maybeSingle();
+          if (existingError || !existing?.id) {
+            throw new Error(`decision replay lookup failed: ${existingError?.message ?? "missing existing decision"}`);
+          }
+          persistedDecisionId = existing.id;
+          reusedExisting = true;
+          return { decision_id: existing.id };
+        }
+
         if (error || !data?.id) throw new Error(`decision_ledger insert failed: ${error?.message ?? "missing id"}`);
         persistedDecisionId = data.id;
         return { decision_id: data.id };
@@ -217,7 +241,10 @@ async function runSupplierRiskPipelineForSource(
     },
   );
 
-  return { status: result.status, decision_id: persistedDecisionId };
+  return {
+    status: reusedExisting ? "ALREADY_EXISTS" : result.status,
+    decision_id: persistedDecisionId,
+  };
 }
 
 async function fetchOpenAdvisories(client: ServiceClient, organizationId: string) {
@@ -248,18 +275,18 @@ async function fetchDecisionGradeInsights(client: ServiceClient, organizationId:
 async function fetchExistingDecisionSources(client: ServiceClient, organizationId: string) {
   const { data, error } = await client
     .from("decision_ledger")
-    .select("advisory_instance_id, explanation_metadata")
+    .select("advisory_instance_id, explanation_metadata, source_idempotency_key")
     .eq("organization_id", organizationId)
-    .limit(1000);
+    .limit(2000);
   if (error) throw new Error(`Failed to fetch existing decisions: ${error.message}`);
   return data ?? [];
 }
 
 function hasExistingDecision(existing: Array<Record<string, unknown>>, source: SupplierRiskSource) {
-  if (source.kind === "advisory") {
-    return existing.some((row) => row.advisory_instance_id === source.id);
-  }
+  const key = sourceKey(source);
   return existing.some((row) => {
+    if (row.source_idempotency_key === key) return true;
+    if (source.kind === "advisory" && row.advisory_instance_id === source.id) return true;
     const meta = isRecord(row.explanation_metadata) ? row.explanation_metadata : {};
     const sourceMeta = isRecord(meta.source) ? meta.source : {};
     return sourceMeta.kind === "insight" && sourceMeta.id === source.id;
@@ -308,6 +335,10 @@ export function isSupplierRiskSource(source: Pick<SupplierRiskSource, "category"
   return /supplier|vendor|delivery/.test(text);
 }
 
+function sourceKey(source: SupplierRiskSource): string {
+  return `${source.kind}:${source.id}`;
+}
+
 function deriveImpactAmount(source: SupplierRiskSource): number {
   const parsed = parseImpactEstimate(source.expected_impact);
   return typeof parsed === "number" && parsed > 0 ? parsed : 0;
@@ -322,10 +353,10 @@ function deriveDeliveryDelayHours(source: SupplierRiskSource): number {
   return 0;
 }
 
-function normalizeObservedAt(createdAt: string | null, fallback: string): string {
-  if (!createdAt) return fallback;
+function normalizeObservedAt(createdAt: string | null): string {
+  if (!createdAt) return "1970-01-01T00:00:00.000Z";
   const parsed = new Date(createdAt);
-  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+  return Number.isNaN(parsed.getTime()) ? "1970-01-01T00:00:00.000Z" : parsed.toISOString();
 }
 
 function parseImpactEstimate(value: unknown): number | null {
