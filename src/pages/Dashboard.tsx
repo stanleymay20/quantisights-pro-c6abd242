@@ -88,7 +88,7 @@ const Dashboard = () => {
       .from("decision_ledger")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", currentOrgId)
-      .eq("dataset_id", activeDatasetId)
+      .filter("dataset_id", "eq", activeDatasetId)
       .eq("execution_status", "not_started")
       .eq("is_suppressed", false);
 
