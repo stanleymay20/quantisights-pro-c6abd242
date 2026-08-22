@@ -8,7 +8,7 @@ const ci = readFileSync(
 );
 
 describe("privileged Edge CI coverage", () => {
-  it("Deno-checks security-sensitive data, database/connector, ingestion, orchestration, execution, forecasting, contradiction, advisory, trust, automatic-decision, and decision-value functions", () => {
+  it("Deno-checks security-sensitive data, database/connector, ingestion, aggregation, orchestration, execution, forecasting, contradiction, advisory, trust, automatic-decision, and decision-value functions", () => {
     for (const path of [
       "supabase/functions/delete-account/index.ts",
       "supabase/functions/api-ingest/index.ts",
@@ -16,6 +16,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/event-stream/index.ts",
       "supabase/functions/queued-metric-ingest/index.ts",
       "supabase/functions/process-metric-ingest-queue/index.ts",
+      "supabase/functions/refresh-aggregates/index.ts",
       "supabase/functions/ingest-csv-pipeline/index.ts",
       "supabase/functions/ingest-external-signals/index.ts",
       "supabase/functions/connector-rest-sync/index.ts",
