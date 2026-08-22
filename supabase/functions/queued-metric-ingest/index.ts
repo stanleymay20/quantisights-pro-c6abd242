@@ -83,6 +83,8 @@ Deno.serve(async (req) => {
         job_status: existing.status,
         records_synced: existing.records_synced ?? 0,
         error_message: existing.error_message,
+        governance_degraded: !!existing.governance_warning,
+        governance_warning: existing.governance_warning,
       }, existing.status === "failed" ? 409 : terminal ? 200 : 202);
     }
 
@@ -164,14 +166,18 @@ Deno.serve(async (req) => {
     if (!claim?.job_id) throw new Error("Idempotency claim returned no job");
 
     if (!claim.created) {
-      const terminal = ["completed", "partial", "failed"].includes(claim.job_status);
+      const replay = await findIdempotentJob(svc, requestId, source.organization_id, source.id);
+      if (!replay) throw new Error("Idempotent job disappeared after claim");
+      const terminal = ["completed", "partial", "failed"].includes(replay.status);
       return respond({
         idempotent_replay: true,
-        job_id: claim.job_id,
-        job_status: claim.job_status,
-        records_synced: claim.records_synced ?? 0,
-        error_message: claim.error_message,
-      }, claim.job_status === "failed" ? 409 : terminal ? 200 : 202);
+        job_id: replay.id,
+        job_status: replay.status,
+        records_synced: replay.records_synced ?? 0,
+        error_message: replay.error_message,
+        governance_degraded: !!replay.governance_warning,
+        governance_warning: replay.governance_warning,
+      }, replay.status === "failed" ? 409 : terminal ? 200 : 202);
     }
     jobId = claim.job_id;
 
@@ -235,6 +241,7 @@ Deno.serve(async (req) => {
       return respond({ error: "Queued ingestion could not be accepted", job_id: jobId }, 503);
     }
 
+    let governanceWarning: string | null = null;
     const { error: auditError } = await svc.from("audit_log").insert({
       organization_id: source.organization_id,
       actor_type: "system",
@@ -253,7 +260,25 @@ Deno.serve(async (req) => {
     });
     if (auditError) {
       // The batch is already durable and must not be falsely reported rejected.
-      logger.error("queued ingest acceptance audit failed", { job_id: jobId, error: auditError.message });
+      // Persist the governance degradation on the job and expose it to the
+      // caller/certification chain instead of silently logging it.
+      governanceWarning = `Acceptance audit failed: ${auditError.message}`.slice(0, 2000);
+      const { error: warningError } = await svc
+        .from("data_sync_jobs")
+        .update({ governance_warning: governanceWarning })
+        .eq("id", jobId)
+        .eq("organization_id", source.organization_id)
+        .eq("data_source_id", source.id);
+      if (warningError) {
+        governanceWarning = `${governanceWarning}; governance-warning persistence also failed: ${warningError.message}`.slice(0, 2000);
+        logger.error("queued ingest governance warning persistence failed", {
+          job_id: jobId,
+          audit_error: auditError.message,
+          warning_error: warningError.message,
+        });
+      } else {
+        logger.error("queued ingest acceptance audit failed", { job_id: jobId, error: auditError.message });
+      }
     }
 
     return respond({
@@ -265,6 +290,8 @@ Deno.serve(async (req) => {
       unique_records_queued: metrics.length,
       duplicate_identities_collapsed: records.length - metrics.length,
       chunks_queued: chunkCount,
+      governance_degraded: !!governanceWarning,
+      governance_warning: governanceWarning,
     }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
