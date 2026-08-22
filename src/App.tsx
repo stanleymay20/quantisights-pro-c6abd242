@@ -22,7 +22,6 @@ import { routes, RouteLayout, NotFound } from "@/routes";
 import RouteEntitlement from "@/components/auth/RouteEntitlement";
 import PublicPageNav from "@/components/layout/PublicPageNav";
 import PageMetadata from "@/components/PageMetadata";
-import LandingHeroMedia from "@/components/landing/LandingHeroMedia";
 import { metadataForPath } from "@/lib/page-metadata";
 import { PUBLIC_ROUTE_ALIASES } from "@/lib/public-route-aliases";
 
@@ -109,9 +108,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <RouteMetadata />
-            <LandingHeroMedia />
-            <AuthProvider>
+            <RouteMetadata />            <AuthProvider>
               <CookieConsent />
               <SessionTimeout />
               <UpgradeModalProvider />

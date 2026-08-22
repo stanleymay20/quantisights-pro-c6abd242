@@ -1,35 +1,15 @@
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
+import heroVideo from "@/assets/hero-video.mp4";
+import heroPoster from "@/assets/hero-dashboard.jpg";
 
-// Existing Lovable asset from src/assets/hero-video.mp4.asset.json.
-const HERO_VIDEO_URL = "/__l5e/assets-v1/650ac6ec-87f9-4c92-a456-2c8bd77e9d9a/hero-video.mp4";
-
+/**
+ * Hero background media. Rendered inline inside the landing hero section so the
+ * element can never end up attached to a detached/stale DOM node, and bundled by
+ * Vite so the published build always serves a same-origin, hashed asset URL.
+ */
 export default function LandingHeroMedia() {
-  const { pathname } = useLocation();
-  const [host, setHost] = useState<HTMLElement | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
-
-  useEffect(() => {
-    if (pathname !== "/") {
-      setHost(null);
-      return;
-    }
-
-    let frame = 0;
-    const findHero = () => {
-      const hero = document.querySelector<HTMLElement>(".qv-hero");
-      if (hero) {
-        setHost(hero);
-        return;
-      }
-      frame = window.requestAnimationFrame(findHero);
-    };
-    findHero();
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [pathname]);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -39,29 +19,36 @@ export default function LandingHeroMedia() {
     return () => query.removeEventListener?.("change", sync);
   }, []);
 
-  if (pathname !== "/" || !host) return null;
+  const showVideo = !reducedMotion && !videoFailed;
 
-  return createPortal(
+  return (
     <div
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
     >
-      {!reducedMotion && !videoFailed && (
+      {!showVideo && (
+        <img
+          src={heroPoster}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      )}
+      {showVideo && (
         <video
           className="absolute inset-0 h-full w-full object-cover"
-          src={HERO_VIDEO_URL}
+          src={heroVideo}
+          poster={heroPoster}
           autoPlay
           muted
           loop
           playsInline
-          preload="metadata"
+          preload="auto"
           tabIndex={-1}
           onError={() => setVideoFailed(true)}
         />
       )}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,16,31,0.60)_0%,rgba(8,16,31,0.76)_48%,rgba(8,16,31,0.94)_100%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_25%,rgba(51,112,255,0.18),transparent_42%)]" />
-    </div>,
-    host,
+    </div>
   );
 }
