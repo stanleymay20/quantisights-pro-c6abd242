@@ -2,38 +2,55 @@ import { ReactNode } from "react";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Database, Upload, Sparkles, Loader2 } from "lucide-react";
+import { Database, Upload, Sparkles, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 
 interface DatasetRequiredProps {
   children: ReactNode;
-  /** Feature name shown in the empty state headline (e.g. "Forecasting", "Reports") */
   moduleName?: string;
-  /** Short sentence describing the value this module delivers once data is present */
   moduleDescription?: string;
 }
 
 /**
- * Gates a module on active dataset availability.
- * Shows a clear, value-oriented empty state with Upload + demo CTAs when no dataset is active.
+ * Gates data-dependent modules on a verified active dataset.
+ * Query failure is rendered as unavailable evidence, never as onboarding/empty.
  */
 const DatasetRequired = ({
   children,
   moduleName = "This feature",
   moduleDescription,
 }: DatasetRequiredProps) => {
-  const { hasOrg, hasProject, hasDataset, contextLoading } = useActiveDataContext();
+  const {
+    hasOrg,
+    hasProject,
+    hasDataset,
+    contextLoading,
+    contextError,
+    datasetEvidenceReady,
+    refreshDatasets,
+  } = useActiveDataContext();
   const navigate = useNavigate();
 
-  // The org/workspace/project/dataset context resolves asynchronously after
-  // this component mounts. Without this guard, a user who genuinely has an
-  // active dataset would still see a false "needs data to work" empty state
-  // on every cold navigation, for as long as those queries are in flight —
-  // hasOrg/hasProject/hasDataset all default to false until they resolve.
   if (contextLoading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
       </div>
+    );
+  }
+
+  if (contextError || (hasOrg && hasProject && !datasetEvidenceReady)) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle className="w-8 h-8 text-destructive" />}
+        title="Dataset context unavailable"
+        description={contextError ?? "Quantivis could not verify the datasets linked to this project. No empty-data claim has been made."}
+        action={
+          <Button size="sm" variant="outline" onClick={() => void refreshDatasets()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Retry Dataset Verification
+          </Button>
+        }
+      />
     );
   }
 
@@ -43,7 +60,7 @@ const DatasetRequired = ({
       : "Connect your data to get started";
 
     const body = moduleDescription
-      ?? `Upload a CSV or connect a data source — ${moduleName.toLowerCase()} activates instantly once Quantivis has something to analyse.`;
+      ?? `Upload a CSV or connect a data source — ${moduleName.toLowerCase()} activates once Quantivis has a verified active dataset.`;
 
     return (
       <EmptyState
