@@ -1,18 +1,7 @@
-// @ts-nocheck
 // GA-1: Supplier Risk runtime ingestion path.
-//
-// This is the ONE existing Supplier Risk ingestion slice that now runs
-// through the production RTS-1 / Agent Gateway / Runtime pipeline instead of
-// the generic direct-insert path. It looks at the exact same sources
-// `auto-create-decisions` looks at (open advisory_instances + decision-grade
-// insights) but only claims the subset that is supplier-risk shaped
-// (supplier / vendor / delivery). Every other category is untouched and
-// continues to flow through `auto-create-decisions` exactly as before.
-//
-// Flow: Supplier Risk Signal -> Signal Quality -> Contradiction Detection ->
-// Verified Fact Promotion -> Decision Candidate Generation -> Decision
-// Candidate Handoff -> Agent Gateway -> Runtime Gateway -> Runtime Service ->
-// Runtime Queue -> Runtime Persistence -> decision_ledger.
+// Supplier-risk-shaped advisories/insights are routed through the RTS-1 / Agent
+// Gateway / Runtime pipeline. Unknown monetary exposure or delivery delay is
+// represented as 0 — never fabricated from priority labels.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -33,69 +22,67 @@ interface SupplierRiskSource {
   created_at: string | null;
 }
 
+type ServiceClient = ReturnType<typeof createClient>;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return json({ error: "Unauthorized" }, 401, corsHeaders);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceKey) {
+      return json({ error: "Supplier risk runtime unavailable" }, 503, corsHeaders);
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    ) as any;
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401, corsHeaders);
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) return json({ error: "Unauthorized" }, 401, corsHeaders);
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: userError } = await userClient.auth.getUser();
+    if (userError || !user?.id) return json({ error: "Unauthorized" }, 401, corsHeaders);
 
-    const body = await req.json().catch(() => ({}));
-    const { organization_id, now: nowOverride } = body;
-    if (!organization_id) return json({ error: "organization_id required" }, 400, corsHeaders);
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const organizationId = typeof body.organization_id === "string" ? body.organization_id : null;
+    if (!organizationId) return json({ error: "organization_id required" }, 400, corsHeaders);
 
-    const { data: membership } = await supabase
+    const { data: membership, error: membershipError } = await userClient
       .from("organization_members")
       .select("id")
       .eq("user_id", user.id)
-      .eq("organization_id", organization_id)
-      .single();
-
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (membershipError) throw new Error(`Failed to verify organization membership: ${membershipError.message}`);
     if (!membership) return json({ error: "Forbidden" }, 403, corsHeaders);
 
-    const serviceSupabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    ) as any;
+    const service = createClient(supabaseUrl, serviceKey);
+    const now = new Date().toISOString();
 
-    const now = typeof nowOverride === "string" ? nowOverride : new Date().toISOString();
-
-    const advisories = await fetchOpenAdvisories(serviceSupabase, organization_id);
-    const insights = await fetchDecisionGradeInsights(serviceSupabase, organization_id);
-
+    const advisories = await fetchOpenAdvisories(service, organizationId);
+    const insights = await fetchDecisionGradeInsights(service, organizationId);
     const allSources: SupplierRiskSource[] = [
       ...advisories.map(normalizeAdvisory),
       ...insights.map(normalizeInsight),
     ].filter(isSupplierRiskSource);
 
     if (allSources.length === 0) {
-      return json({ message: "No supplier-risk-shaped advisories or insights to run through the runtime pipeline", created: 0 }, 200, corsHeaders);
+      return json({ message: "No supplier-risk-shaped advisories or insights to process", created: 0 }, 200, corsHeaders);
     }
 
-    const existing = await fetchExistingDecisionSources(serviceSupabase, organization_id);
+    const existing = await fetchExistingDecisionSources(service, organizationId);
     const newSources = allSources.filter((source) => !hasExistingDecision(existing, source));
-
     if (newSources.length === 0) {
-      return json({ message: "All supplier-risk advisories and insights already have decisions", created: 0 }, 200, corsHeaders);
+      return json({ message: "All supplier-risk sources already have decisions", created: 0 }, 200, corsHeaders);
     }
 
     const results: Array<{ source_id: string; source_kind: SourceKind; status: string; decision_id: string | null }> = [];
-    const processedAdvisorySources: SupplierRiskSource[] = [];
+    const processedAdvisories: SupplierRiskSource[] = [];
 
     for (const source of newSources) {
-      const pipelineResult = await runSupplierRiskPipelineForSource(serviceSupabase, organization_id, source, now, user.id);
+      const pipelineResult = await runSupplierRiskPipelineForSource(service, organizationId, source, now, user.id);
       results.push({
         source_id: source.id,
         source_kind: source.kind,
@@ -103,22 +90,23 @@ serve(async (req) => {
         decision_id: pipelineResult.decision_id,
       });
       if (pipelineResult.status === "DECISION_LEDGER_READY" && source.kind === "advisory") {
-        processedAdvisorySources.push(source);
+        processedAdvisories.push(source);
       }
     }
 
-    if (processedAdvisorySources.length > 0) {
-      await serviceSupabase
+    if (processedAdvisories.length > 0) {
+      const { error } = await service
         .from("advisory_instances")
         .update({ status: "in_progress" })
-        .in("id", processedAdvisorySources.map((s) => s.id))
+        .in("id", processedAdvisories.map((source) => source.id))
+        .eq("organization_id", organizationId)
         .eq("status", "open");
+      if (error) throw new Error(`Failed to mark supplier-risk advisories in progress: ${error.message}`);
     }
 
-    const created = results.filter((r) => r.status === "DECISION_LEDGER_READY").length;
-
-    await serviceSupabase.from("audit_log").insert({
-      organization_id,
+    const created = results.filter((result) => result.status === "DECISION_LEDGER_READY").length;
+    const { error: auditError } = await service.from("audit_log").insert({
+      organization_id: organizationId,
       actor_id: user.id,
       actor_type: "system",
       action_type: "supplier_risk_runtime_decisions_created",
@@ -130,6 +118,7 @@ serve(async (req) => {
         source: "supplier_risk_runtime_ingest",
       },
     });
+    if (auditError) throw new Error(`Failed to persist supplier-risk run audit: ${auditError.message}`);
 
     return json({ created, examined: newSources.length, results }, 200, corsHeaders);
   } catch (err) {
@@ -140,7 +129,7 @@ serve(async (req) => {
 });
 
 async function runSupplierRiskPipelineForSource(
-  serviceSupabase: any,
+  service: ServiceClient,
   organizationId: string,
   source: SupplierRiskSource,
   now: string,
@@ -148,6 +137,7 @@ async function runSupplierRiskPipelineForSource(
 ): Promise<{ status: string; decision_id: string | null }> {
   const impactAmount = deriveImpactAmount(source);
   const deliveryDelayHours = deriveDeliveryDelayHours(source);
+  const observedAt = normalizeObservedAt(source.created_at, now);
   let persistedDecisionId: string | null = null;
 
   const result = await runSupplierRiskRuntimePipeline(
@@ -164,16 +154,12 @@ async function runSupplierRiskPipelineForSource(
         delivery_delay_hours: deliveryDelayHours,
         impact_amount: impactAmount,
         description: source.rationale ?? source.title,
-        // Freshness is evaluated at the moment this business condition is
-        // re-observed by the runtime pipeline, not the advisory/insight's
-        // original creation time (which can be hours or days old and would
-        // otherwise fail the Signal Quality freshness gate).
-        observed_at: now,
+        observed_at: observedAt,
       },
     },
     {
-      persistDecisionRecord: async (record) => {
-        await serviceSupabase.from("audit_log").insert({
+      persistDecisionRecord: async (record: { decision_id: string; decision_class: string; status: string }) => {
+        const { error } = await service.from("audit_log").insert({
           organization_id: organizationId,
           actor_id: userId,
           actor_type: "system",
@@ -187,10 +173,18 @@ async function runSupplierRiskPipelineForSource(
             source_id: source.id,
           },
         });
+        if (error) throw new Error(`decision record audit insert failed: ${error.message}`);
         return { decision_id: record.decision_id };
       },
-      writeAuditEvent: async (event) => {
-        const { data, error } = await serviceSupabase
+      writeAuditEvent: async (event: {
+        organization_id: string;
+        actor_id?: string | null;
+        action_type: string;
+        resource_type: string;
+        resource_id?: string | null;
+        payload: Record<string, unknown>;
+      }) => {
+        const { data, error } = await service
           .from("audit_log")
           .insert({
             organization_id: event.organization_id,
@@ -203,20 +197,20 @@ async function runSupplierRiskPipelineForSource(
           })
           .select("id")
           .single();
-        if (error) throw new Error(`audit_log insert failed: ${error.message}`);
+        if (error || !data?.id) throw new Error(`audit_log insert failed: ${error?.message ?? "missing id"}`);
         return { audit_id: data.id };
       },
-      persistDecisionLedgerRow: async (row: any) => {
+      persistDecisionLedgerRow: async (row: Record<string, unknown>) => {
         const insertRow = {
           ...row,
           advisory_instance_id: source.kind === "advisory" ? source.id : null,
         };
-        const { data, error } = await serviceSupabase
+        const { data, error } = await service
           .from("decision_ledger")
           .insert(insertRow)
           .select("id")
           .single();
-        if (error) throw new Error(`decision_ledger insert failed: ${error.message}`);
+        if (error || !data?.id) throw new Error(`decision_ledger insert failed: ${error?.message ?? "missing id"}`);
         persistedDecisionId = data.id;
         return { decision_id: data.id };
       },
@@ -226,7 +220,7 @@ async function runSupplierRiskPipelineForSource(
   return { status: result.status, decision_id: persistedDecisionId };
 }
 
-async function fetchOpenAdvisories(client: any, organizationId: string) {
+async function fetchOpenAdvisories(client: ServiceClient, organizationId: string) {
   const { data, error } = await client
     .from("advisory_instances")
     .select("id, title, action, category, priority, rationale, kpi_affected, expected_impact, dataset_id, created_at")
@@ -235,12 +229,11 @@ async function fetchOpenAdvisories(client: any, organizationId: string) {
     .in("priority", ["critical", "high", "medium"])
     .order("created_at", { ascending: false })
     .limit(25);
-
   if (error) throw new Error(`Failed to fetch advisories: ${error.message}`);
   return data ?? [];
 }
 
-async function fetchDecisionGradeInsights(client: any, organizationId: string) {
+async function fetchDecisionGradeInsights(client: ServiceClient, organizationId: string) {
   const { data, error } = await client
     .from("insights")
     .select("id, message, severity, category, dataset_id, created_at")
@@ -248,69 +241,68 @@ async function fetchDecisionGradeInsights(client: any, organizationId: string) {
     .in("severity", ["critical", "high"])
     .order("created_at", { ascending: false })
     .limit(25);
-
   if (error) throw new Error(`Failed to fetch decision-grade insights: ${error.message}`);
   return data ?? [];
 }
 
-async function fetchExistingDecisionSources(client: any, organizationId: string) {
+async function fetchExistingDecisionSources(client: ServiceClient, organizationId: string) {
   const { data, error } = await client
     .from("decision_ledger")
     .select("advisory_instance_id, explanation_metadata")
     .eq("organization_id", organizationId)
     .limit(1000);
-
   if (error) throw new Error(`Failed to fetch existing decisions: ${error.message}`);
   return data ?? [];
 }
 
-function hasExistingDecision(existing: any[], source: SupplierRiskSource) {
+function hasExistingDecision(existing: Array<Record<string, unknown>>, source: SupplierRiskSource) {
   if (source.kind === "advisory") {
     return existing.some((row) => row.advisory_instance_id === source.id);
   }
   return existing.some((row) => {
-    const meta = row.explanation_metadata ?? {};
-    return meta?.source?.kind === "insight" && meta?.source?.id === source.id;
+    const meta = isRecord(row.explanation_metadata) ? row.explanation_metadata : {};
+    const sourceMeta = isRecord(meta.source) ? meta.source : {};
+    return sourceMeta.kind === "insight" && sourceMeta.id === source.id;
   });
 }
 
-function normalizeAdvisory(a: any): SupplierRiskSource {
+function normalizeAdvisory(advisory: Record<string, unknown>): SupplierRiskSource {
   return {
     kind: "advisory",
-    id: a.id,
-    title: a.title ?? "Advisory requires decision",
-    action: a.action ?? a.rationale ?? "Review advisory and choose an executive response.",
-    category: a.category ?? a.kpi_affected ?? null,
-    priority: normalizePriority(a.priority),
-    rationale: a.rationale ?? null,
-    expected_impact: a.expected_impact ?? null,
-    dataset_id: a.dataset_id ?? null,
-    created_at: a.created_at ?? null,
+    id: String(advisory.id),
+    title: typeof advisory.title === "string" ? advisory.title : "Advisory requires decision",
+    action: typeof advisory.action === "string"
+      ? advisory.action
+      : typeof advisory.rationale === "string"
+        ? advisory.rationale
+        : "Review advisory and choose an executive response.",
+    category: typeof advisory.category === "string"
+      ? advisory.category
+      : typeof advisory.kpi_affected === "string" ? advisory.kpi_affected : null,
+    priority: normalizePriority(advisory.priority),
+    rationale: typeof advisory.rationale === "string" ? advisory.rationale : null,
+    expected_impact: typeof advisory.expected_impact === "string" || typeof advisory.expected_impact === "number" ? advisory.expected_impact : null,
+    dataset_id: typeof advisory.dataset_id === "string" ? advisory.dataset_id : null,
+    created_at: typeof advisory.created_at === "string" ? advisory.created_at : null,
   };
 }
 
-function normalizeInsight(i: any): SupplierRiskSource {
+function normalizeInsight(insight: Record<string, unknown>): SupplierRiskSource {
+  const message = typeof insight.message === "string" ? insight.message : null;
   return {
     kind: "insight",
-    id: i.id,
-    title: i.message ? String(i.message).slice(0, 96) : "Supplier risk insight requires executive decision",
+    id: String(insight.id),
+    title: message ? message.slice(0, 96) : "Supplier risk insight requires executive decision",
     action: "Review supplier risk insight and choose an executive response.",
-    category: i.category ?? null,
-    priority: normalizePriority(i.severity),
-    rationale: i.message ?? null,
+    category: typeof insight.category === "string" ? insight.category : null,
+    priority: normalizePriority(insight.severity),
+    rationale: message,
     expected_impact: null,
-    dataset_id: i.dataset_id ?? null,
-    created_at: i.created_at ?? null,
+    dataset_id: typeof insight.dataset_id === "string" ? insight.dataset_id : null,
+    created_at: typeof insight.created_at === "string" ? insight.created_at : null,
   };
 }
 
-/**
- * The single existing Supplier Risk ingestion classifier. This is the exact
- * text family used by `deriveDecisionType` in
- * `src/lib/decision-candidate-generation.ts` (supplier/delivery/vendor) so a
- * source claimed here always lands on the `supplier_risk_mitigation`
- * decision type once it reaches Decision Candidate Generation.
- */
 export function isSupplierRiskSource(source: Pick<SupplierRiskSource, "category" | "title" | "rationale">): boolean {
   const text = `${source.category ?? ""} ${source.title} ${source.rationale ?? ""}`.toLowerCase();
   return /supplier|vendor|delivery/.test(text);
@@ -318,50 +310,45 @@ export function isSupplierRiskSource(source: Pick<SupplierRiskSource, "category"
 
 function deriveImpactAmount(source: SupplierRiskSource): number {
   const parsed = parseImpactEstimate(source.expected_impact);
-  if (typeof parsed === "number" && parsed > 0) return parsed;
-  switch (source.priority) {
-    case "critical":
-      return 2_500_000;
-    case "high":
-      return 750_000;
-    case "medium":
-      return 250_000;
-    default:
-      return 100_000;
-  }
+  return typeof parsed === "number" && parsed > 0 ? parsed : 0;
 }
 
 function deriveDeliveryDelayHours(source: SupplierRiskSource): number {
-  switch (source.priority) {
-    case "critical":
-      return 72;
-    case "high":
-      return 48;
-    case "medium":
-      return 24;
-    default:
-      return 12;
-  }
+  const text = `${source.title} ${source.rationale ?? ""}`;
+  const hours = text.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i);
+  if (hours) return Math.max(0, Number(hours[1]));
+  const days = text.match(/(\d+(?:\.\d+)?)\s*days?\b/i);
+  if (days) return Math.max(0, Number(days[1]) * 24);
+  return 0;
+}
+
+function normalizeObservedAt(createdAt: string | null, fallback: string): string {
+  if (!createdAt) return fallback;
+  const parsed = new Date(createdAt);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
 }
 
 function parseImpactEstimate(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
-
   const text = String(value);
   const matches = text.match(/-?\d+(?:[,.]\d+)?/g);
   if (!matches?.length) return null;
-  const nums = matches.map((m) => Number(m.replace(/,/g, ""))).filter(Number.isFinite);
+  const nums = matches.map((match) => Number(match.replace(/,/g, ""))).filter(Number.isFinite);
   if (!nums.length) return null;
-  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+  return nums.reduce((sum, number) => sum + number, 0) / nums.length;
 }
 
 function normalizePriority(value: unknown) {
-  const v = String(value ?? "medium").toLowerCase();
-  if (v === "critical") return "critical";
-  if (v === "high") return "high";
-  if (v === "low") return "low";
+  const normalized = String(value ?? "medium").toLowerCase();
+  if (normalized === "critical") return "critical";
+  if (normalized === "high") return "high";
+  if (normalized === "low") return "low";
   return "medium";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function json(payload: unknown, status: number, corsHeaders: HeadersInit) {
