@@ -49,19 +49,28 @@ export default function LandingHeroMedia() {
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
     >
+      {(reducedMotion || videoFailed) && (
+        <img
+          src={heroPoster}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      )}
       {!reducedMotion && !videoFailed && (
         <video
           className="absolute inset-0 h-full w-full object-cover"
           src={HERO_VIDEO_URL}
+          poster={heroPoster}
           autoPlay
           muted
           loop
           playsInline
-          preload="metadata"
+          preload="auto"
           tabIndex={-1}
           onError={() => setVideoFailed(true)}
         />
       )}
+
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,16,31,0.60)_0%,rgba(8,16,31,0.76)_48%,rgba(8,16,31,0.94)_100%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_25%,rgba(51,112,255,0.18),transparent_42%)]" />
     </div>,
