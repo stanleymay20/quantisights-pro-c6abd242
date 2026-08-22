@@ -99,6 +99,8 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = true
   [functions.process-metric-ingest-queue]
     verify_jwt = false
+  [functions.queued-metric-ingest]
+    verify_jwt = false
   [functions.refresh-aggregates]
     verify_jwt = false
   [functions.rollback-dataset-version]
