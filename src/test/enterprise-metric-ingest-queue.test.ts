@@ -10,6 +10,9 @@ const enqueueMigration = readFileSync(resolve(process.cwd(), "supabase/migration
 const backpressureMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822065000_metric_ingest_backpressure.sql"), "utf8");
 const scopedIdempotencyMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822065500_scope_sync_request_id_by_source.sql"), "utf8");
 const claimMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822070000_claim_metric_ingest_job.sql"), "utf8");
+const capacityMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822071000_metric_ingest_worker_capacity.sql"), "utf8");
+const freshnessMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822071500_atomic_metric_job_freshness.sql"), "utf8");
+const persistenceMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822072000_atomic_metric_chunk_persistence.sql"), "utf8");
 
 describe("enterprise metric ingest queue contract", () => {
   it("uses durable queue + DLQ with bounded worker settings", () => {
@@ -17,31 +20,39 @@ describe("enterprise metric ingest queue contract", () => {
     expect(queueMigration).toContain("pgmq.create('metric_ingest_dlq')");
     expect(queueMigration).toContain("visibility_timeout_seconds");
     expect(queueMigration).toContain("max_retries");
+    expect(capacityMigration).toContain("worker_concurrency");
+    expect(capacityMigration).toContain("max_chunks_per_run");
+    expect(capacityMigration).toContain("max_runtime_ms");
     expect(worker).toContain("MAX_METRICS_PER_CHUNK = 1000");
   });
 
-  it("revalidates tenant resources at the privileged worker boundary", () => {
-    expect(worker).toContain('.eq("organization_id", envelope.organization_id)');
-    expect(worker).toContain('.eq("data_source_id", envelope.data_source_id)');
-    expect(worker).toContain("Dataset does not belong to queue organization");
+  it("revalidates tenant resources transactionally at the privileged persistence boundary", () => {
+    expect(persistenceMigration).toContain("dataset does not belong to organization");
+    expect(persistenceMigration).toContain("data source does not belong to organization");
+    expect(persistenceMigration).toContain("sync job does not belong to organization/source");
+    expect(worker).toContain("persist_metric_ingest_chunk");
   });
 
   it("makes queue progress idempotent under at-least-once delivery", () => {
     expect(chunkMigration).toContain("metric_ingest_chunk_results");
     expect(chunkMigration).toContain("ON CONFLICT (chunk_id) DO NOTHING");
-    expect(worker).toContain("record_metric_ingest_chunk_result");
-    expect(worker).toContain("Never execute business writes again once that durable terminal marker exists");
-    expect(worker).toContain('terminalChunk?.status === "completed"');
-    expect(worker).toContain('terminalChunk?.status === "failed"');
+    expect(persistenceMigration).toContain("metric_ingest_chunk_results");
+    expect(persistenceMigration).toContain("IF FOUND THEN");
+    expect(worker).toContain('result.chunk_status === "failed"');
+  });
+
+  it("persists business rows and durable chunk progress in one transaction", () => {
+    expect(persistenceMigration).toContain("INSERT INTO public.metrics");
+    expect(persistenceMigration).toContain("record_metric_ingest_chunk_result");
+    expect(persistenceMigration).toContain("validated chunk row count mismatch");
+    expect(worker).not.toContain('svc.from("metrics").upsert');
   });
 
   it("persists terminal failure progress before removing a poison message", () => {
-    const marker = worker.indexOf("Persist terminal job progress BEFORE removing the poison message");
-    const progress = worker.indexOf('svc.rpc("record_metric_ingest_chunk_result"', marker);
-    const dlq = worker.indexOf('svc.rpc("move_metric_ingest_to_dlq"', marker);
-    expect(marker).toBeGreaterThan(-1);
-    expect(progress).toBeGreaterThan(marker);
-    expect(dlq).toBeGreaterThan(progress);
+    const progress = worker.indexOf('svc.rpc("record_metric_ingest_chunk_result"');
+    const dlqAfterProgress = worker.indexOf("await moveToDlq(svc, raw, message)", progress);
+    expect(progress).toBeGreaterThan(-1);
+    expect(dlqAfterProgress).toBeGreaterThan(progress);
   });
 
   it("atomically enqueues the complete chunk set", () => {
@@ -71,12 +82,18 @@ describe("enterprise metric ingest queue contract", () => {
     expect(producer).toContain("}, 202)");
   });
 
-  it("advances freshness only after the whole job reaches a persisted terminal state", () => {
-    expect(worker).toContain('jobStatus === "completed" || jobStatus === "partial"');
-    const freshness = worker.indexOf("last_refreshed_at: new Date().toISOString()");
-    const terminalGuard = worker.lastIndexOf('jobStatus === "completed" || jobStatus === "partial"', freshness);
-    expect(freshness).toBeGreaterThan(-1);
-    expect(terminalGuard).toBeGreaterThan(-1);
-    expect(terminalGuard).toBeLessThan(freshness);
+  it("atomically advances freshness only when all chunks reach a persisted terminal state", () => {
+    expect(freshnessMigration).toContain("_job.chunks_completed + _job.chunks_failed");
+    expect(freshnessMigration).toContain("IF _status IN ('completed', 'partial')");
+    expect(freshnessMigration).toContain("UPDATE public.datasets");
+    expect(worker).not.toContain("last_refreshed_at");
+  });
+
+  it("drains multiple batches with bounded concurrency and runtime", () => {
+    expect(worker).toContain("while (");
+    expect(worker).toContain("state.max_chunks_per_run");
+    expect(worker).toContain("state.max_runtime_ms");
+    expect(worker).toContain("Promise.all(group.map");
+    expect(worker).toContain("state.worker_concurrency");
   });
 });
