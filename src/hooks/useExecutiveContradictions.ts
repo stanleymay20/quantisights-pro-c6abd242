@@ -58,10 +58,17 @@ export function useExecutiveContradictions(orgId: string | null) {
   const fetchAll = useCallback(async () => {
     if (!orgId) {
       setContradictions([]);
+      setError(null);
       setLoading(false);
       return;
     }
+
+    // Do not show a prior organization's contradiction state while the new
+    // tenant scope is resolving.
+    setContradictions([]);
+    setError(null);
     setLoading(true);
+
     const { data, error: qErr } = await supabase
       .from("executive_contradictions")
       .select("*")
@@ -69,8 +76,10 @@ export function useExecutiveContradictions(orgId: string | null) {
       .order("last_seen_at", { ascending: false })
       .limit(300);
 
-    if (qErr) setError(qErr.message);
-    else {
+    if (qErr) {
+      setError(qErr.message);
+      setContradictions([]);
+    } else {
       setError(null);
       setContradictions((data ?? []) as unknown as ExecutiveContradiction[]);
     }
@@ -78,7 +87,7 @@ export function useExecutiveContradictions(orgId: string | null) {
   }, [orgId]);
 
   useEffect(() => {
-    fetchAll();
+    void fetchAll();
   }, [fetchAll]);
 
   useEffect(() => {
@@ -88,7 +97,7 @@ export function useExecutiveContradictions(orgId: string | null) {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "executive_contradictions", filter: `organization_id=eq.${orgId}` },
-          () => fetchAll(),
+          () => void fetchAll(),
         )
         .subscribe(),
     );
@@ -103,6 +112,7 @@ export function useExecutiveContradictions(orgId: string | null) {
         body: { organization_id: orgId },
       });
       if (fnErr) throw fnErr;
+      if (!data) throw new Error("Contradiction detection returned no result");
       await fetchAll();
       return data as { status: string; detected: number; inserted: number; refreshed: number };
     } catch (e) {
@@ -115,26 +125,44 @@ export function useExecutiveContradictions(orgId: string | null) {
 
   const updateStatus = useCallback(
     async (id: string, status: ContradictionStatus, resolutionNote?: string) => {
-      const { data: authData } = await supabase.auth.getUser();
+      if (!orgId) {
+        setError("Organization context is required to update a contradiction.");
+        return false;
+      }
+
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData?.user?.id) {
+        setError(authError?.message ?? "Authentication could not be verified.");
+        return false;
+      }
+
       const finalised = status === "resolved" || status === "accepted";
       const patch = {
         status,
         ...(resolutionNote !== undefined ? { resolution_note: resolutionNote } : {}),
         resolved_at: finalised ? new Date().toISOString() : null,
-        resolved_by: finalised ? authData?.user?.id ?? null : null,
+        resolved_by: finalised ? authData.user.id : null,
       };
-      const { error: upErr } = await supabase
+      const { data: updated, error: upErr } = await supabase
         .from("executive_contradictions")
         .update(patch)
-        .eq("id", id);
+        .eq("id", id)
+        .eq("organization_id", orgId)
+        .select("id")
+        .maybeSingle();
       if (upErr) {
         setError(upErr.message);
         return false;
       }
+      if (!updated) {
+        setError("Contradiction was not found in the active organization.");
+        return false;
+      }
+      setError(null);
       await fetchAll();
       return true;
     },
-    [fetchAll],
+    [fetchAll, orgId],
   );
 
   const summary = useMemo(() => {
