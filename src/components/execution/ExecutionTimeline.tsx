@@ -152,7 +152,7 @@ const PlanCard = ({ plan, onStatusChange, onWebhook, onSlack, canTriggerActions 
 
 const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: ExecutionTimelineProps) => {
   const {
-    plans, events, loading, createPlan, updatePlanStatus,
+    plans, events, loading, error, evidenceReady, createPlan, updatePlanStatus,
     triggerWebhook, notifySlack, completionRate,
   } = useExecutionPlans(organizationId, decisionId);
 
@@ -178,24 +178,26 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
   const [slackSending, setSlackSending] = useState(false);
 
   const handleCreate = async () => {
-    if (!newTitle.trim()) return;
+    if (!newTitle.trim() || !evidenceReady) return;
     setCreating(true);
-    await createPlan({
+    const created = await createPlan({
       action_title: newTitle,
       action_description: newDesc || undefined,
       priority: newPriority,
       deadline: newDeadline || undefined,
     });
+    setCreating(false);
+    if (!created) return;
+
     setNewTitle("");
     setNewDesc("");
     setNewPriority("medium");
     setNewDeadline("");
     setShowCreate(false);
-    setCreating(false);
   };
 
   const handleWebhookSubmit = async () => {
-    if (!webhookModal || !webhookUrl.trim()) return;
+    if (!webhookModal || !webhookUrl.trim() || !evidenceReady) return;
     try {
       new URL(webhookUrl); // validate
     } catch {
@@ -209,7 +211,7 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
   };
 
   const handleSlackSubmit = async () => {
-    if (!slackModal || !slackChannel.trim()) return;
+    if (!slackModal || !slackChannel.trim() || !evidenceReady) return;
     setSlackSending(true);
     const plan = plans.find(p => p.id === slackModal.planId);
     await notifySlack(
@@ -240,11 +242,17 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
               <ArrowRight className="w-4 h-4 text-primary" />
               Execution Plan
             </CardTitle>
-            <Button size="sm" variant="outline" onClick={() => setShowCreate(!showCreate)} className="gap-1.5 text-xs">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowCreate(!showCreate)}
+              disabled={loading || !evidenceReady || !!error}
+              className="gap-1.5 text-xs"
+            >
               <Plus className="w-3 h-3" /> Add Action
             </Button>
           </div>
-          {plans.length > 0 && (
+          {evidenceReady && plans.length > 0 && (
             <div className="flex items-center gap-3 mt-2">
               <Progress value={completionRate * 100} className="flex-1 h-2" />
               <span className="text-xs text-muted-foreground font-medium">{Math.round(completionRate * 100)}%</span>
@@ -252,8 +260,22 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
           )}
         </CardHeader>
         <CardContent className="space-y-3">
+          {error && !loading && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/[0.04] p-4" role="alert">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold">Execution evidence is unavailable</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Quantivis could not verify the action timeline, execution receipts, or compensation state. It is withholding completion and empty-plan claims until the evidence service recovers.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <AnimatePresence>
-            {showCreate && (
+            {showCreate && evidenceReady && !error && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
@@ -299,7 +321,7 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
                         <Input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)} />
                       </div>
                     </div>
-                    <Button onClick={handleCreate} disabled={!newTitle.trim() || creating} size="sm" className="w-full gap-2">
+                    <Button onClick={handleCreate} disabled={!newTitle.trim() || creating || !evidenceReady} size="sm" className="w-full gap-2">
                       {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
                       Create Action
                     </Button>
@@ -315,27 +337,29 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
             </div>
           )}
 
-          {!loading && plans.length === 0 && (
+          {evidenceReady && plans.length === 0 && (
             <div className="text-center py-6 text-muted-foreground text-sm">
               <ArrowRight className="w-8 h-8 mx-auto mb-2 opacity-30" />
               No execution actions yet. Add actions to drive this decision forward.
             </div>
           )}
 
-          <div className="space-y-3">
-            {plans.map(plan => (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                onStatusChange={updatePlanStatus}
-                onWebhook={(id) => requireStepUp("webhook_trigger", "Trigger Webhook", () => setWebhookModal({ planId: id }))}
-                onSlack={(id) => requireStepUp("slack_send", "Send Slack Notification", () => setSlackModal({ planId: id }))}
-                canTriggerActions={canTriggerActions}
-              />
-            ))}
-          </div>
+          {evidenceReady && (
+            <div className="space-y-3">
+              {plans.map(plan => (
+                <PlanCard
+                  key={plan.id}
+                  plan={plan}
+                  onStatusChange={updatePlanStatus}
+                  onWebhook={(id) => requireStepUp("webhook_trigger", "Trigger Webhook", () => setWebhookModal({ planId: id }))}
+                  onSlack={(id) => requireStepUp("slack_send", "Send Slack Notification", () => setSlackModal({ planId: id }))}
+                  canTriggerActions={canTriggerActions}
+                />
+              ))}
+            </div>
+          )}
 
-          {events.length > 0 && (
+          {evidenceReady && events.length > 0 && (
             <div className="mt-4 pt-3 border-t border-border/40">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Activity Log</p>
               <div className="space-y-1 max-h-32 overflow-y-auto">
@@ -384,7 +408,7 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
             <Button variant="outline" onClick={() => { setWebhookModal(null); setWebhookUrl(""); }}>Cancel</Button>
             <Button
               onClick={handleWebhookSubmit}
-              disabled={!isValidUrl(webhookUrl) || webhookSending}
+              disabled={!isValidUrl(webhookUrl) || webhookSending || !evidenceReady}
               className="gap-2"
             >
               {webhookSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Webhook className="w-3 h-3" />}
@@ -425,7 +449,7 @@ const ExecutionTimeline = ({ organizationId, decisionId, decisionTitle }: Execut
             <Button variant="outline" onClick={() => { setSlackModal(null); setSlackChannel(""); }}>Cancel</Button>
             <Button
               onClick={handleSlackSubmit}
-              disabled={!slackChannel.trim() || slackSending}
+              disabled={!slackChannel.trim() || slackSending || !evidenceReady}
               className="gap-2"
             >
               {slackSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
