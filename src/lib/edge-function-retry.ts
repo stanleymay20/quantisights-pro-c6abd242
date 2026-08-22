@@ -1,6 +1,6 @@
 /**
  * Client-side retry wrapper for supabase.functions.invoke()
- * Retries only on network/5xx errors with exponential backoff.
+ * Retries only on transient network/timeout/5xx errors with exponential backoff.
  *
  * Special handling:
  * - 402 Payment Required → does NOT retry; parses JSON body and dispatches
@@ -29,10 +29,12 @@ export interface UpgradeRequiredDetail {
   functionName: string;
 }
 
-function isRetryable(error: unknown): boolean {
+function isRetryable(error: unknown, httpStatus?: number): boolean {
+  if (typeof httpStatus === "number" && httpStatus >= 500 && httpStatus <= 599) return true;
   if (!error) return false;
   const msg = String(error);
   if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("fetch failed")) return true;
+  if (msg.includes("timed out after")) return true;
   if (/\b5\d{2}\b/.test(msg)) return true;
   return false;
 }
@@ -50,7 +52,9 @@ async function extractErrorBody(error: unknown): Promise<{ status: number; body:
     const body = (await cloned.json()) as Record<string, unknown>;
     return { status: ctx.status, body };
   } catch {
-    return null;
+    // Preserve the HTTP status even when the body is empty/non-JSON so 5xx
+    // classification does not depend on a provider-specific error message.
+    return { status: ctx.status, body: {} };
   }
 }
 
@@ -63,18 +67,28 @@ export async function invokeWithRetry<T = unknown>(
   const { maxAttempts = 3, baseDelayMs = 300, timeoutMs = 25_000 } = retryConfig ?? {};
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       // Wrap each attempt with a hard timeout so the UI never hangs indefinitely.
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Edge function "${functionName}" timed out after ${timeoutMs}ms`)), timeoutMs)
-      );
+      // Clear the timer as soon as invoke settles so successful calls do not
+      // leave thousands of dormant timeout callbacks behind under heavy use.
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Edge function "${functionName}" timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      });
 
       const invokePromise = supabase.functions.invoke(functionName, options);
-
       const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
 
       if (error) {
-        // Parse the error body — if it's a 402, surface upgrade event and stop.
+        // Parse the response when available. Status is authoritative for retry
+        // classification; provider error-message wording is not.
         const parsed = await extractErrorBody(error);
         if (parsed?.status === 402) {
           const detail: UpgradeRequiredDetail = {
@@ -89,7 +103,7 @@ export async function invokeWithRetry<T = unknown>(
           return { data: null, error: new Error(detail.message) };
         }
 
-        if (!isRetryable(error.message)) {
+        if (!isRetryable(error.message, parsed?.status)) {
           return { data: null, error: new Error(error.message) };
         }
         if (attempt < maxAttempts - 1) {
@@ -102,6 +116,10 @@ export async function invokeWithRetry<T = unknown>(
 
       return { data: data as T, error: null };
     } catch (err) {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       const errorObj = err instanceof Error ? err : new Error(String(err));
 
       if (!isRetryable(errorObj.message) || attempt >= maxAttempts - 1) {
