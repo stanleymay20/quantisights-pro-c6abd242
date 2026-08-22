@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   RotateCcw, TrendingUp, TrendingDown, Minus, Loader2,
-  AlertTriangle, CheckCircle2, Clock,
+  AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import { useDecisionReplay, type DecisionReplay } from "@/hooks/useDecisionReplay";
 import { formatDistanceToNow } from "date-fns";
@@ -16,16 +16,25 @@ interface DecisionReplayPanelProps {
   decisionTitle: string;
 }
 
-const DriftIndicator = ({ drift }: { drift: number }) => {
+const DriftIndicator = ({ drift }: { drift: number | null }) => {
+  if (drift == null) return <AlertTriangle className="w-4 h-4 text-warning" />;
   if (Math.abs(drift) < 3) return <Minus className="w-4 h-4 text-muted-foreground" />;
   if (drift > 0) return <TrendingUp className="w-4 h-4 text-success" />;
   return <TrendingDown className="w-4 h-4 text-destructive" />;
 };
 
+const confidenceLabel = (value: number | null) => value == null ? "Unknown" : `${value.toFixed(0)}%`;
+
 const ReplayCard = ({ replay }: { replay: DecisionReplay }) => {
-  const drift = replay.confidence_drift || 0;
-  const driftAbs = Math.abs(drift);
-  const driftColor = driftAbs < 5 ? "text-muted-foreground" : drift > 0 ? "text-success" : "text-destructive";
+  const drift = replay.confidence_drift;
+  const driftAbs = drift == null ? null : Math.abs(drift);
+  const driftColor = drift == null
+    ? "text-warning"
+    : driftAbs! < 5
+      ? "text-muted-foreground"
+      : drift > 0
+        ? "text-success"
+        : "text-destructive";
 
   return (
     <motion.div
@@ -40,15 +49,15 @@ const ReplayCard = ({ replay }: { replay: DecisionReplay }) => {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">
-                    {(replay.original_confidence || 0).toFixed(0)}%
+                    {confidenceLabel(replay.original_confidence)}
                     <span className="text-muted-foreground mx-1">→</span>
-                    {(replay.replayed_confidence || 0).toFixed(0)}%
+                    {confidenceLabel(replay.replayed_confidence)}
                   </span>
                   <Badge
                     variant="outline"
                     className={`text-[10px] ${driftColor}`}
                   >
-                    {drift > 0 ? "+" : ""}{drift.toFixed(1)}pp
+                    {drift == null ? "Drift unknown" : `${drift > 0 ? "+" : ""}${drift.toFixed(1)}pp`}
                   </Badge>
                 </div>
                 <p className="text-[10px] text-muted-foreground">
@@ -67,6 +76,12 @@ const ReplayCard = ({ replay }: { replay: DecisionReplay }) => {
             )}
           </div>
 
+          {(replay.original_confidence == null || replay.replayed_confidence == null || replay.confidence_drift == null) && (
+            <p className="text-[11px] text-warning">
+              Confidence comparison is incomplete; Quantivis is not substituting missing confidence with zero.
+            </p>
+          )}
+
           {replay.replay_narrative && (
             <p className="text-xs text-muted-foreground leading-relaxed">{replay.replay_narrative}</p>
           )}
@@ -84,11 +99,11 @@ const ReplayCard = ({ replay }: { replay: DecisionReplay }) => {
 };
 
 const DecisionReplayPanel = ({ organizationId, decisionId, decisionTitle }: DecisionReplayPanelProps) => {
-  const { runReplay, replaying, replays, fetchReplays } = useDecisionReplay(organizationId);
+  const { runReplay, replaying, replays, fetchReplays, error } = useDecisionReplay(organizationId);
   const [localReplays, setLocalReplays] = useState<DecisionReplay[]>([]);
 
   useEffect(() => {
-    fetchReplays(decisionId);
+    void fetchReplays(decisionId);
   }, [decisionId, fetchReplays]);
 
   useEffect(() => {
@@ -126,7 +141,19 @@ const DecisionReplayPanel = ({ organizationId, decisionId, decisionTitle }: Deci
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {localReplays.length === 0 && !replaying && (
+        {error && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/[0.04] p-3" role="alert">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 w-4 h-4 text-destructive" />
+              <div>
+                <p className="text-xs font-semibold">Replay evidence is unavailable</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{error}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {localReplays.length === 0 && !replaying && !error && (
           <div className="text-center py-6 text-muted-foreground text-sm">
             <RotateCcw className="w-8 h-8 mx-auto mb-2 opacity-30" />
             No replays yet. Run a replay to see how this decision holds up with today's data.
