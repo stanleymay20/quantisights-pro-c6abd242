@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ import { invokeWithRetry } from "@/lib/edge-function-retry";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { toast } from "sonner";
 import {
-  Search, Database, RefreshCw, BarChart3, Clock,
-  Layers, Activity, Eye,
+  Search, Database, RefreshCw, BarChart3,
+  Layers, Activity, Eye, AlertTriangle,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -69,58 +69,83 @@ export default function DataCatalog() {
   const [qualityChecks, setQualityChecks] = useState<Record<string, QualityCheck>>({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<DatasetProfile | null>(null);
 
-  useEffect(() => {
-    if (!organizationId) return;
-    loadCatalog();
-  }, [organizationId]);
+  const loadCatalog = useCallback(async () => {
+    if (!organizationId) {
+      setDatasets([]);
+      setQualityChecks({});
+      setCatalogError(null);
+      setLoading(false);
+      return;
+    }
 
-  const loadCatalog = async () => {
-    if (!organizationId) return;
+    // Clear prior-tenant evidence before resolving the new organization.
+    setDatasets([]);
+    setQualityChecks({});
+    setCatalogError(null);
     setLoading(true);
 
-    const [dsRes, qcRes] = await Promise.all([
-      supabase.from("datasets")
-        .select("*")
-        .eq("organization_id", organizationId)
-        .order("created_at", { ascending: false }),
-      supabase.from("data_quality_checks")
-        .select("id, dataset_id, score, details")
-        .eq("organization_id", organizationId)
-        .eq("check_type", "statistical_profile")
-        .order("created_at", { ascending: false }),
-    ]);
+    try {
+      const [dsRes, qcRes] = await Promise.all([
+        supabase.from("datasets")
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false }),
+        supabase.from("data_quality_checks")
+          .select("id, dataset_id, score, details")
+          .eq("organization_id", organizationId)
+          .eq("check_type", "statistical_profile")
+          .order("created_at", { ascending: false }),
+      ]);
 
-    setDatasets(dsRes.data || []);
+      if (dsRes.error) throw new Error(`Dataset catalog query failed: ${dsRes.error.message}`);
+      if (qcRes.error) throw new Error(`Data-quality catalog query failed: ${qcRes.error.message}`);
 
-    const qcMap: Record<string, QualityCheck> = {};
-    for (const qc of (qcRes.data || []) as QualityCheck[]) {
-      if (qc.dataset_id && !qcMap[qc.dataset_id]) {
-        qcMap[qc.dataset_id] = qc;
+      setDatasets((dsRes.data ?? []) as DatasetEntry[]);
+
+      const qcMap: Record<string, QualityCheck> = {};
+      for (const qc of (qcRes.data ?? []) as QualityCheck[]) {
+        if (qc.dataset_id && !qcMap[qc.dataset_id]) qcMap[qc.dataset_id] = qc;
       }
+      setQualityChecks(qcMap);
+      setCatalogError(null);
+    } catch (error) {
+      setDatasets([]);
+      setQualityChecks({});
+      setCatalogError(error instanceof Error ? error.message : "Data catalog could not be verified.");
+    } finally {
+      setLoading(false);
     }
-    setQualityChecks(qcMap);
-    setLoading(false);
-  };
+  }, [organizationId]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   const runProfile = async (datasetId: string) => {
-    if (!organizationId) return;
+    if (!organizationId) {
+      toast.error("Organization context is required to profile a dataset.");
+      return;
+    }
     setProfileLoading(datasetId);
     try {
       const auth = await getVerifiedAuth();
       if (!auth) throw new Error("Not authenticated");
 
-      const { data: result, error } = await invokeWithRetry<{ profile: DatasetProfile }>("data-profiler", {
+      const { data: result, error } = await invokeWithRetry<{ profile?: DatasetProfile }>("data-profiler", {
         body: { dataset_id: datasetId, organization_id: organizationId },
         headers: authHeaders(auth),
       });
 
       if (error) throw error;
-      toast.success("Profile generated successfully");
-      setSelectedProfile(result?.profile ?? null);
+      if (!result?.profile) throw new Error("Data profiler returned no profile evidence.");
+
+      setSelectedProfile(result.profile);
       await loadCatalog();
+      toast.success("Profile generated successfully");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to profile dataset");
     } finally {
@@ -137,63 +162,79 @@ export default function DataCatalog() {
     );
   }, [datasets, search]);
 
-  // Ingestion never sets status to "active" — the pipeline only ever
-  // transitions pending -> processing -> completed/failed (see
-  // DataUpload.tsx). Filtering on "active" always matched zero rows.
   const activeCount = datasets.filter(d => d.status === "completed").length;
-  const totalRows = datasets.reduce((s, d) => s + (d.row_count || 0), 0);
-  const staleCount = datasets.filter(d => d.is_stale).length;
+  const totalRows = datasets.reduce((s, d) => s + (d.row_count ?? 0), 0);
+  const staleCount = datasets.filter(d => d.is_stale === true).length;
+  const unknownFreshnessCount = datasets.filter(d => d.is_stale == null).length;
   const profiledCount = Object.keys(qualityChecks).length;
+  const catalogVerified = !loading && !catalogError;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[18px] font-semibold tracking-tight tracking-tight">Data Catalog</h1>
+          <h1 className="text-[18px] font-semibold tracking-tight">Data Catalog</h1>
           <p className="text-muted-foreground">Searchable registry of all datasets with profiling, metadata, and lineage.</p>
         </div>
-        <Button onClick={loadCatalog} variant="outline" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+        <Button onClick={() => void loadCatalog()} variant="outline" size="sm" disabled={loading}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
         </Button>
       </div>
 
-      {/* Summary cards */}
+      {catalogError && (
+        <section className="rounded-xl border border-destructive/30 bg-destructive/[0.04] p-4" role="alert">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+            <div>
+              <p className="text-sm font-semibold">Data catalog evidence is unavailable</p>
+              <p className="mt-1 text-xs text-muted-foreground">{catalogError}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Quantivis is not converting this failure into zero datasets, zero stale datasets, or an “all fresh” state.</p>
+            </div>
+          </div>
+        </section>
+      )}
+
       <SectionErrorBoundary sectionName="Catalog Summary">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-6 text-center">
               <Database className="h-6 w-6 mx-auto text-primary mb-2" />
-              <p className="text-2xl font-bold">{activeCount}</p>
+              <p className="text-2xl font-bold">{catalogVerified ? activeCount : "—"}</p>
               <p className="text-xs text-muted-foreground">Active Datasets</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6 text-center">
               <Layers className="h-6 w-6 mx-auto text-primary mb-2" />
-              <p className="text-2xl font-bold">{totalRows.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{catalogVerified ? totalRows.toLocaleString() : "—"}</p>
               <p className="text-xs text-muted-foreground">Total Rows</p>
             </CardContent>
           </Card>
-          <Card title={staleCount > 0 ? "Datasets that have not been refreshed within their freshness policy window. This does not indicate data loss." : undefined}>
+          <Card title={catalogVerified && staleCount > 0 ? "Datasets that have not been refreshed within their freshness policy window. This does not indicate data loss." : undefined}>
             <CardContent className="pt-6 text-center">
-              <Activity className="h-6 w-6 mx-auto mb-2" style={{ color: staleCount > 0 ? "hsl(var(--warning))" : "hsl(var(--primary))" }} />
-              <p className="text-2xl font-bold">{staleCount}</p>
+              <Activity className="h-6 w-6 mx-auto mb-2" style={{ color: catalogVerified && staleCount > 0 ? "hsl(var(--warning))" : "hsl(var(--primary))" }} />
+              <p className="text-2xl font-bold">{catalogVerified ? staleCount : "—"}</p>
               <p className="text-xs text-muted-foreground">
-                {staleCount > 0 ? "Need refresh" : "All fresh"}
+                {!catalogVerified
+                  ? "Freshness unverified"
+                  : unknownFreshnessCount > 0
+                    ? `${unknownFreshnessCount} freshness unknown`
+                    : staleCount > 0
+                      ? "Need refresh"
+                      : "All fresh"}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6 text-center">
               <BarChart3 className="h-6 w-6 mx-auto text-primary mb-2" />
-              <p className="text-2xl font-bold">{profiledCount}</p>
+              <p className="text-2xl font-bold">{catalogVerified ? profiledCount : "—"}</p>
               <p className="text-xs text-muted-foreground">Profiled</p>
             </CardContent>
           </Card>
         </div>
       </SectionErrorBoundary>
 
-      {/* Search */}
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
@@ -201,15 +242,15 @@ export default function DataCatalog() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="pl-10"
+          disabled={!catalogVerified}
         />
       </div>
 
-      {/* Dataset table */}
       <SectionErrorBoundary sectionName="Dataset Table">
         <Card>
           <CardHeader>
             <CardTitle>All Datasets</CardTitle>
-            <CardDescription>{filtered.length} datasets found</CardDescription>
+            <CardDescription>{catalogVerified ? `${filtered.length} datasets found` : "Dataset count unavailable"}</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -226,7 +267,7 @@ export default function DataCatalog() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map(ds => {
+                {catalogVerified && filtered.map(ds => {
                   const qc = qualityChecks[ds.id];
                   return (
                     <TableRow key={ds.id}>
@@ -236,10 +277,12 @@ export default function DataCatalog() {
                           {ds.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>{ds.row_count?.toLocaleString() || "—"}</TableCell>
-                      <TableCell>v{ds.current_version || 1}</TableCell>
+                      <TableCell>{ds.row_count == null ? "—" : ds.row_count.toLocaleString()}</TableCell>
+                      <TableCell>{ds.current_version == null ? "—" : `v${ds.current_version}`}</TableCell>
                       <TableCell>
-                        {ds.is_stale ? (
+                        {ds.is_stale == null ? (
+                          <Badge variant="outline" className="text-muted-foreground">Unknown</Badge>
+                        ) : ds.is_stale ? (
                           <span title="Dataset has not been refreshed within its freshness policy window. This does not indicate data loss — upload a new version or adjust the freshness policy in settings.">
                             <Badge variant="outline" className="text-amber-600 border-amber-500/40 cursor-help">Needs refresh</Badge>
                           </span>
@@ -250,8 +293,8 @@ export default function DataCatalog() {
                       <TableCell>
                         {qc ? (
                           <div className="flex items-center gap-2">
-                            <Progress value={qc.score || 0} className="w-12 h-2" />
-                            <span className="text-xs">{qc.score}%</span>
+                            <Progress value={qc.score ?? 0} className="w-12 h-2" />
+                            <span className="text-xs">{qc.score == null ? "Unknown" : `${qc.score}%`}</span>
                           </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">Not profiled</span>
@@ -267,7 +310,7 @@ export default function DataCatalog() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => runProfile(ds.id)}
+                            onClick={() => void runProfile(ds.id)}
                             disabled={profileLoading === ds.id}
                           >
                             {profileLoading === ds.id ? (
@@ -290,20 +333,20 @@ export default function DataCatalog() {
                                 <DialogHeader>
                                   <DialogTitle>Dataset Profile: {ds.name}</DialogTitle>
                                 </DialogHeader>
-                                {selectedProfile && (
+                                {selectedProfile ? (
                                   <div className="space-y-4 text-sm">
                                     <div className="grid grid-cols-3 gap-4">
                                       <div className="p-3 rounded-md bg-muted">
                                         <p className="text-xs text-muted-foreground">Total Records</p>
-                                        <p className="font-bold">{selectedProfile.total_records?.toLocaleString()}</p>
+                                        <p className="font-bold">{selectedProfile.total_records == null ? "Unknown" : selectedProfile.total_records.toLocaleString()}</p>
                                       </div>
                                       <div className="p-3 rounded-md bg-muted">
                                         <p className="text-xs text-muted-foreground">Metric Types</p>
-                                        <p className="font-bold">{selectedProfile.metric_types}</p>
+                                        <p className="font-bold">{selectedProfile.metric_types ?? "Unknown"}</p>
                                       </div>
                                       <div className="p-3 rounded-md bg-muted">
                                         <p className="text-xs text-muted-foreground">Quality Score</p>
-                                        <p className="font-bold">{Math.round(selectedProfile.quality_score)}%</p>
+                                        <p className="font-bold">{selectedProfile.quality_score == null ? "Unknown" : `${Math.round(selectedProfile.quality_score)}%`}</p>
                                       </div>
                                     </div>
 
@@ -338,15 +381,15 @@ export default function DataCatalog() {
                                           {Object.entries(selectedProfile.correlations).map(([pair, corr]) => (
                                             <div key={pair} className="flex justify-between">
                                               <span>{pair}</span>
-                                              <Badge variant={Math.abs(corr) > 0.7 ? "default" : "outline"}>
-                                                {corr}
-                                              </Badge>
+                                              <Badge variant={Math.abs(corr) > 0.7 ? "default" : "outline"}>{corr}</Badge>
                                             </div>
                                           ))}
                                         </CardContent>
                                       </Card>
                                     )}
                                   </div>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground">Profile evidence is unavailable.</p>
                                 )}
                               </DialogContent>
                             </Dialog>
@@ -356,10 +399,17 @@ export default function DataCatalog() {
                     </TableRow>
                   );
                 })}
-                {filtered.length === 0 && (
+                {!loading && catalogVerified && filtered.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                      {loading ? "Loading..." : "No datasets found. Upload data to create your first dataset."}
+                      No datasets found. Upload data to create your first dataset.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loading && !catalogVerified && (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                      Dataset inventory cannot currently be verified.
                     </TableCell>
                   </TableRow>
                 )}
