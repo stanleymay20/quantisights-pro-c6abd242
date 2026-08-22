@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
@@ -11,7 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ComposedChart } from "recharts";
-import { TrendingUp, TrendingDown, Minus, Loader2, Sparkles, BarChart3, Activity, Database, Upload } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Loader2, Sparkles, BarChart3, Activity, Database, Upload, AlertTriangle } from "lucide-react";
 import { AnnotatedChart, buildAnnotationElements, type ChartAnnotation, type AnnotationTone } from "@/components/charts/AnnotatedChart";
 
 const HORIZONS = [3, 6, 12];
@@ -26,50 +25,120 @@ interface ForecastData {
   mape_estimate: number;
 }
 
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const isForecastData = (value: unknown): value is ForecastData => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  if (!Array.isArray(candidate.predictions) || !Array.isArray(candidate.historical)) return false;
+  if (typeof candidate.trend_direction !== "string") return false;
+  if (typeof candidate.seasonality_detected !== "boolean") return false;
+  if (!isFiniteNumber(candidate.growth_rate_pct) || !isFiniteNumber(candidate.mape_estimate)) return false;
+  if (typeof candidate.confidence_narrative !== "string") return false;
+
+  const validHistorical = candidate.historical.every((row) => {
+    if (!row || typeof row !== "object") return false;
+    const record = row as Record<string, unknown>;
+    return typeof record.date === "string" && isFiniteNumber(record.value);
+  });
+  const validPredictions = candidate.predictions.every((row) => {
+    if (!row || typeof row !== "object") return false;
+    const record = row as Record<string, unknown>;
+    return typeof record.date === "string"
+      && isFiniteNumber(record.value)
+      && isFiniteNumber(record.lower_bound)
+      && isFiniteNumber(record.upper_bound);
+  });
+
+  return validHistorical && validPredictions;
+};
+
 const Forecasting = () => {
   const { orgId, datasetId } = useActiveDataContext();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [metricLoading, setMetricLoading] = useState(false);
+  const [metricError, setMetricError] = useState<string | null>(null);
   const [metricType, setMetricType] = useState("");
   const [horizon, setHorizon] = useState(6);
   const [data, setData] = useState<ForecastData | null>(null);
   const [availableMetrics, setAvailableMetrics] = useState<string[]>([]);
 
-  // Dynamically discover metric types from the active dataset
+  // Dynamically discover metric types from the verified active dataset. A
+  // failed discovery is explicitly unavailable, never interpreted as an empty
+  // dataset or as proof that no forecastable metrics exist.
   useEffect(() => {
-    if (!orgId || !datasetId) return;
+    let cancelled = false;
+    setData(null);
+    setAvailableMetrics([]);
+    setMetricType("");
+    setMetricError(null);
+
+    if (!orgId || !datasetId) {
+      setMetricLoading(false);
+      return () => { cancelled = true; };
+    }
+
     const fetchMetricTypes = async () => {
-      const { data: rows } = await supabase
+      setMetricLoading(true);
+      const { data: rows, error } = await supabase
         .from("metrics")
         .select("metric_type")
         .eq("organization_id", orgId)
         .eq("dataset_id", datasetId)
         .limit(1000);
-      if (rows) {
-        const types = [...new Set(rows.map(r => r.metric_type))];
-        setAvailableMetrics(types);
-        if (types.length > 0 && !metricType) setMetricType(types[0]);
+
+      if (cancelled) return;
+      if (error) {
+        console.warn("[Forecasting] metric discovery failed:", error.message);
+        setMetricError(error.message);
+        setAvailableMetrics([]);
+        setMetricType("");
+        setMetricLoading(false);
+        return;
       }
+
+      const types = [...new Set((rows ?? []).map((row) => row.metric_type).filter(Boolean))];
+      setAvailableMetrics(types);
+      setMetricType(types[0] ?? "");
+      setMetricError(null);
+      setMetricLoading(false);
     };
-    fetchMetricTypes();
+
+    void fetchMetricTypes();
+    return () => { cancelled = true; };
   }, [orgId, datasetId]);
 
   const runForecast = async () => {
     if (!orgId || !datasetId || !metricType) {
-      toast({ title: "Missing context", description: "Please select a metric type first.", variant: "destructive" });
+      toast({ title: "Missing context", description: "Please select a verified metric type first.", variant: "destructive" });
       return;
     }
+    if (metricError) {
+      toast({ title: "Metric evidence unavailable", description: "Refresh metric discovery before generating a forecast.", variant: "destructive" });
+      return;
+    }
+
     setLoading(true);
+    setData(null);
     try {
       const { data: result, error } = await invokeWithRetry<ForecastData & { error?: string }>("predictive-forecast", {
         body: { organization_id: orgId, dataset_id: datasetId, metric_type: metricType, horizon_months: horizon },
       });
       if (error) throw error;
       if (result?.error) throw new Error(result.error);
-      if (result) setData(result);
+      if (!isForecastData(result)) {
+        throw new Error("Forecast service returned no complete, verifiable forecast payload.");
+      }
+      if (result.historical.length === 0 || result.predictions.length === 0) {
+        throw new Error("Forecast service returned insufficient historical or projected evidence.");
+      }
+
+      setData(result);
       toast({ title: "Forecast generated" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Forecast failed";
+      setData(null);
       toast({ title: "Forecast failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
@@ -106,25 +175,55 @@ const Forecasting = () => {
           <Card>
             <CardContent className="p-6">
               <div className="flex flex-col md:flex-row gap-4">
-                <Select value={metricType} onValueChange={setMetricType} disabled={noContext || availableMetrics.length === 0}>
-                  <SelectTrigger className="w-48"><SelectValue placeholder="Select metric" /></SelectTrigger>
+                <Select
+                  value={metricType}
+                  onValueChange={(value) => { setMetricType(value); setData(null); }}
+                  disabled={noContext || metricLoading || !!metricError || availableMetrics.length === 0}
+                >
+                  <SelectTrigger className="w-48"><SelectValue placeholder={metricLoading ? "Loading metrics…" : "Select metric"} /></SelectTrigger>
                   <SelectContent>
                     {availableMetrics.map(m => <SelectItem key={m} value={m} className="capitalize">{m.replace(/_/g, " ")}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Select value={String(horizon)} onValueChange={v => setHorizon(Number(v))}>
+                <Select
+                  value={String(horizon)}
+                  onValueChange={(value) => { setHorizon(Number(value)); setData(null); }}
+                >
                   <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {HORIZONS.map(h => <SelectItem key={h} value={String(h)}>{h} months</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button onClick={runForecast} disabled={loading || noContext || !metricType} className="gap-2">
+                <Button onClick={runForecast} disabled={loading || metricLoading || !!metricError || noContext || !metricType} className="gap-2">
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                   Generate Forecast
                 </Button>
               </div>
             </CardContent>
           </Card>
+
+          {metricError && !noContext && (
+            <Card className="border-destructive/30 bg-destructive/[0.03]">
+              <CardContent className="p-5 flex items-start gap-3" role="alert">
+                <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <h2 className="text-sm font-semibold">Forecast metric evidence is unavailable</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Quantivis could not verify the metric inventory for this dataset. No empty-metric or neutral-forecast interpretation is being made.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {!noContext && !metricLoading && !metricError && availableMetrics.length === 0 && (
+            <Card className="border-dashed">
+              <CardContent className="p-8 text-center">
+                <h2 className="text-sm font-semibold">No forecastable metrics found</h2>
+                <p className="mt-1 text-xs text-muted-foreground">The metric inventory loaded successfully, but this dataset currently contains no metric types to forecast.</p>
+              </CardContent>
+            </Card>
+          )}
 
           {noContext && (
             <Card className="border-dashed">
@@ -168,7 +267,7 @@ const Forecasting = () => {
                     <BarChart3 className="w-8 h-8 text-primary" />
                     <div>
                       <p className="text-xs text-muted-foreground">Growth Rate</p>
-                      <p className="text-lg font-semibold">{data.growth_rate_pct?.toFixed(1)}%</p>
+                      <p className="text-lg font-semibold">{data.growth_rate_pct.toFixed(1)}%</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -186,7 +285,7 @@ const Forecasting = () => {
                     <Sparkles className="w-8 h-8 text-primary" />
                     <div>
                       <p className="text-xs text-muted-foreground">MAPE</p>
-                      <p className="text-lg font-semibold">{data.mape_estimate?.toFixed(1)}%</p>
+                      <p className="text-lg font-semibold">{data.mape_estimate.toFixed(1)}%</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -196,7 +295,7 @@ const Forecasting = () => {
                 const lastHist = data.historical[data.historical.length - 1];
                 const firstForecast = data.predictions[0];
                 const finalForecast = data.predictions[data.predictions.length - 1];
-                const growth = Number(data.growth_rate_pct ?? 0);
+                const growth = data.growth_rate_pct;
                 const tone: AnnotationTone =
                   data.trend_direction === "growing" ? "success"
                   : data.trend_direction === "declining" ? "danger"
@@ -217,7 +316,7 @@ const Forecasting = () => {
                   });
                 }
                 const takeaway = lastHist && finalForecast
-                  ? `${data.trend_direction === "growing" ? "Growth" : data.trend_direction === "declining" ? "Decline" : "Flat"} of ${growth.toFixed(1)}% projected over ${horizon} months (MAPE ${data.mape_estimate?.toFixed(1)}%).`
+                  ? `${data.trend_direction === "growing" ? "Growth" : data.trend_direction === "declining" ? "Decline" : "Flat"} of ${growth.toFixed(1)}% projected over ${horizon} months (MAPE ${data.mape_estimate.toFixed(1)}%).`
                   : undefined;
                 return (
                   <AnnotatedChart
