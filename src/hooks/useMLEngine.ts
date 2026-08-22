@@ -3,7 +3,7 @@
  * Provides typed wrappers for all ML algorithms.
  * Cache is org-scoped and clears on org switch.
  */
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import type {
   KMeansResult,
@@ -67,19 +67,24 @@ function useMLCall<T>() {
   const call = useCallback(async (algorithm: string, params: Record<string, unknown>): Promise<T | null> => {
     const cacheKey = buildCacheKey(algorithm, params);
     const cached = getCached<T>(cacheKey);
-    if (cached) {
+    if (cached !== null) {
       setState({ data: cached, loading: false, error: null });
       return cached;
     }
 
     setState({ data: null, loading: true, error: null });
     try {
-      const { data, error } = await invokeWithRetry<{ error?: string; result: T }>("ml-engine", {
+      const { data, error } = await invokeWithRetry<{ error?: string; result?: T }>("ml-engine", {
         body: { algorithm, params },
       });
       if (error) throw new Error(error.message || "ML engine error");
-      if (data?.error) throw new Error(data.error);
-      const result = data?.result as T;
+      if (!data) throw new Error("ML engine returned no response payload");
+      if (data.error) throw new Error(data.error);
+      if (data.result === undefined || data.result === null) {
+        throw new Error(`ML engine returned no result for ${algorithm}`);
+      }
+
+      const result = data.result;
       setCache(cacheKey, result);
       setState({ data: result, loading: false, error: null });
       return result;
