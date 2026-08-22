@@ -4,12 +4,21 @@ import { useProject } from "@/contexts/ProjectContext";
 import { useDataset } from "@/contexts/DatasetContext";
 
 /**
- * Central hook that resolves the full data context for any module.
- * Every data-dependent module should use this instead of manually
- * calling useOrganization + useProject + useDataset individually.
+ * Central hook that resolves the complete data scope:
+ * Organization → Workspace → Project → Dataset.
+ *
+ * Every layer exposes verified-empty separately from unavailable evidence so
+ * downstream modules cannot convert a scope-query failure into onboarding.
  */
 export const useActiveDataContext = () => {
-  const { currentOrgId, currentOrg, loading: orgLoading } = useOrganization();
+  const {
+    currentOrgId,
+    currentOrg,
+    loading: orgLoading,
+    error: orgError,
+    evidenceReady: orgEvidenceReady,
+    refreshOrganizations,
+  } = useOrganization();
   const {
     currentWorkspaceId,
     currentWorkspace,
@@ -36,15 +45,22 @@ export const useActiveDataContext = () => {
   } = useDataset();
 
   const contextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
-  const hasOrg = !!currentOrgId;
+  const hasOrg = !!currentOrgId && !!currentOrg;
   const hasWorkspace = !!currentWorkspaceId && !!currentWorkspace;
   const hasProject = !!currentProjectId && !!currentProject;
   const hasDataset = !!activeDatasetId && !!activeDataset;
 
-  const contextError = workspaceError ?? projectError ?? datasetError;
-  const hierarchyEvidenceReady = workspaceEvidenceReady && projectEvidenceReady && datasetEvidenceReady;
+  const contextError = orgError ?? workspaceError ?? projectError ?? datasetError;
+  const hierarchyEvidenceReady = orgEvidenceReady
+    && workspaceEvidenceReady
+    && projectEvidenceReady
+    && datasetEvidenceReady;
 
   const retryContext = async () => {
+    if (orgError || !orgEvidenceReady) {
+      await refreshOrganizations();
+      return;
+    }
     if (workspaceError || !workspaceEvidenceReady) {
       await refreshWorkspaces();
       return;
@@ -82,11 +98,13 @@ export const useActiveDataContext = () => {
 
     contextLoading,
     contextError,
+    orgEvidenceReady,
     workspaceEvidenceReady,
     projectEvidenceReady,
     datasetEvidenceReady,
     hierarchyEvidenceReady,
     retryContext,
+    refreshOrganizations,
     refreshWorkspaces,
     refreshProjects,
     refreshDatasets,
