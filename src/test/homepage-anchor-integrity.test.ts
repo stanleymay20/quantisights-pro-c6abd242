@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const srcRoot = resolve(root, "src");
-const homeSource = readFileSync(resolve(srcRoot, "pages/Index.tsx"), "utf8");
+const homePath = resolve(srcRoot, "pages/Index.tsx");
+const homeSource = readFileSync(homePath, "utf8");
 
 function walk(dir: string): string[] {
   const files: string[] = [];
@@ -24,15 +25,12 @@ const homepageIds = new Set([
   ...homeSource.matchAll(/\bid\s*=\s*\{\s*["']([^"']+)["']\s*\}/g),
 ].map((match) => match[1]));
 
-function homepageAnchors(source: string): string[] {
-  const anchors: string[] = [];
-  for (const pattern of [
-    /["']\/#([A-Za-z][A-Za-z0-9_-]*)["']/g,
-    /["']#([A-Za-z][A-Za-z0-9_-]*)["']/g,
-  ]) {
-    for (const match of source.matchAll(pattern)) anchors.push(match[1]);
-  }
-  return anchors;
+function crossPageHomepageAnchors(source: string): string[] {
+  return [...source.matchAll(/["']\/#([A-Za-z][A-Za-z0-9_-]*)["']/g)].map((match) => match[1]);
+}
+
+function localHomepageAnchors(): string[] {
+  return [...homeSource.matchAll(/["']#([A-Za-z][A-Za-z0-9_-]*)["']/g)].map((match) => match[1]);
 }
 
 describe("homepage anchor integrity", () => {
@@ -41,10 +39,15 @@ describe("homepage anchor integrity", () => {
     for (const file of walk(srcRoot)) {
       const rel = relative(root, file).replaceAll("\\", "/");
       const source = readFileSync(file, "utf8");
-      for (const anchor of homepageAnchors(source)) {
-        if (!homepageIds.has(anchor)) broken.push(`${rel}: #${anchor}`);
+      for (const anchor of crossPageHomepageAnchors(source)) {
+        if (!homepageIds.has(anchor)) broken.push(`${rel}: /#${anchor}`);
       }
     }
     expect(broken, `Homepage links target missing section IDs:\n${broken.join("\n")}`).toEqual([]);
+  });
+
+  it("keeps homepage-local hash links backed by a real homepage section", () => {
+    const broken = localHomepageAnchors().filter((anchor) => !homepageIds.has(anchor));
+    expect(broken, `Homepage local links target missing section IDs: ${broken.join(", ")}`).toEqual([]);
   });
 });
