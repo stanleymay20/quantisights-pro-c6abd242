@@ -16,6 +16,7 @@ if (!Number.isFinite(RATE) || RATE < 1 || RATE > 200) {
 }
 
 const acceptedRecords = new Counter("queued_ingest_records_accepted");
+const governanceDegraded = new Counter("queued_ingest_governance_degraded");
 const acceptanceLatency = new Trend("queued_ingest_acceptance_ms", true);
 
 export const options = {
@@ -34,6 +35,7 @@ export const options = {
     http_req_duration: ["p(95)<2000", "p(99)<5000"],
     checks: ["rate>0.99"],
     queued_ingest_acceptance_ms: ["p(95)<2000"],
+    queued_ingest_governance_degraded: ["count==0"],
   },
 };
 
@@ -84,12 +86,14 @@ export default function (state) {
 
   let body = null;
   try { body = response.json(); } catch { /* check below reports malformed response */ }
+  if (body?.governance_degraded === true) governanceDegraded.add(1);
 
   const ok = check(response, {
     "queued ingest returns 202": (r) => r.status === 202,
     "queued ingest confirms durability": () => body?.accepted === true && body?.durable === true,
     "queued ingest returns job id": () => typeof body?.job_id === "string" && body.job_id.length > 0,
     "queued ingest reports chunks": () => Number(body?.chunks_queued) > 0,
+    "queued ingest governance audit is healthy": () => body?.governance_degraded !== true,
   });
 
   if (ok) acceptedRecords.add(Number(body?.unique_records_queued || 0));
