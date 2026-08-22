@@ -185,12 +185,12 @@ Deno.serve(async (req) => {
       if ((raw.read_ct ?? 0) >= state.max_retries) {
         try {
           const fallback = envelope ?? (raw.message as QueueMessage);
-          const { error: dlqError } = await svc.rpc("move_metric_ingest_to_dlq", {
-            _message_id: raw.msg_id,
-            _payload: { ...raw.message, dlq_reason: message, dlq_at: new Date().toISOString() },
-          });
-          if (dlqError) throw new Error(`DLQ move failed: ${dlqError.message}`);
 
+          // Persist terminal job progress BEFORE removing the poison message
+          // from the live queue. If the DLQ move fails afterward, the message
+          // can be redelivered and this progress call is idempotent by chunk_id.
+          // The reverse order could permanently orphan a job if the live message
+          // disappeared and progress persistence then failed.
           if (fallback?.chunk_id && fallback?.job_id && fallback?.organization_id && fallback?.dataset_id) {
             const { error: progressError } = await svc.rpc("record_metric_ingest_chunk_result", {
               _chunk_id: fallback.chunk_id,
@@ -203,6 +203,13 @@ Deno.serve(async (req) => {
             });
             if (progressError) throw new Error(`DLQ progress persistence failed: ${progressError.message}`);
           }
+
+          const { error: dlqError } = await svc.rpc("move_metric_ingest_to_dlq", {
+            _message_id: raw.msg_id,
+            _payload: { ...raw.message, dlq_reason: message, dlq_at: new Date().toISOString() },
+          });
+          if (dlqError) throw new Error(`DLQ move failed: ${dlqError.message}`);
+
           failedChunks += 1;
         } catch (dlqFailure) {
           errors.push(`msg ${raw.msg_id} DLQ: ${dlqFailure instanceof Error ? dlqFailure.message : String(dlqFailure)}`);
