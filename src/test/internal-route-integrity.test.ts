@@ -38,11 +38,15 @@ function isRegistered(target: string): boolean {
   return matchers.some((matcher) => matcher.test(target));
 }
 
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 function walk(dir: string): string[] {
   const files: string[] = [];
   for (const name of readdirSync(dir)) {
     const full = resolve(dir, name);
-    const rel = relative(root, full).replaceAll("\\", "/");
+    const rel = normalizePath(relative(root, full));
     if (
       rel.startsWith("src/test/") ||
       rel.startsWith("src/i18n/") ||
@@ -106,7 +110,7 @@ describe("internal route integrity", () => {
     const broken: string[] = [];
 
     for (const file of walk(srcRoot)) {
-      const rel = relative(root, file).replaceAll("\\", "/");
+      const rel = normalizePath(relative(root, file));
       const source = readFileSync(file, "utf8");
       for (const rawTarget of literalTargets(source, rel)) {
         const target = normalizeTarget(rawTarget);
