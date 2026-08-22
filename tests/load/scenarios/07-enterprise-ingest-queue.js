@@ -94,3 +94,10 @@ export default function (state) {
 
   if (ok) acceptedRecords.add(Number(body?.unique_records_queued || 0));
 }
+
+export function handleSummary(data) {
+  return {
+    "tests/load/reports/summary-enterprise-ingest-queue.json": JSON.stringify(data, null, 2),
+    stdout: `Enterprise ingest summary written for ${RUN_ID}\n`,
+  };
+}
