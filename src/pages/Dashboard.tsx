@@ -39,7 +39,11 @@ const Dashboard = () => {
     cachedAt: metricsCachedAt,
   } = useMetricsSummary(currentOrgId, activeDatasetId);
 
-  const { insights, loading: insightsLoading } = useInsights(currentOrgId, activeDatasetId);
+  const {
+    insights,
+    loading: insightsLoading,
+    error: insightsError,
+  } = useInsights(currentOrgId, activeDatasetId);
   const navigate = useNavigate();
 
   const rawEmailPrefix = user?.email?.split("@")[0] ?? "";
@@ -132,7 +136,10 @@ const Dashboard = () => {
   const criticalInsights = useMemo(() => filterCriticalInsights(insights), [insights]);
 
   useEffect(() => {
-    if (!currentOrgId || !activeDatasetId || insightsLoading) return;
+    // Never generate an executive all-clear/decision state from an insight set
+    // that failed to load. An empty verified set and an unavailable set have
+    // different meanings.
+    if (!currentOrgId || !activeDatasetId || insightsLoading || insightsError) return;
     if (criticalInsights.length === 0) return;
 
     const syncKey = `${currentOrgId}:${activeDatasetId}:${criticalInsights.map((i) => i.id).sort().join("|")}`;
@@ -154,19 +161,21 @@ const Dashboard = () => {
         console.warn("[Dashboard] auto-create-decisions sync threw", error);
         decisionSyncRef.current.delete(syncKey);
       });
-  }, [activeDatasetId, criticalInsights, currentOrgId, insightsLoading, refreshDecisionStats]);
+  }, [activeDatasetId, criticalInsights, currentOrgId, insightsError, insightsLoading, refreshDecisionStats]);
 
   const isContextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
   const isLoading = isContextLoading || metricsLoading || insightsLoading;
   const isDemoHydrating = isDemoUser && (!currentWorkspaceId || !activeDatasetId);
   const showWelcomeFlow = !isDemoUser && !isContextLoading;
-  // An unavailable metrics source is not the same as an empty dataset.
-  const showEmptyState = !metricsError && !hasData && !isLoading && !isDemoHydrating;
+  // An unavailable evidence source is not the same as an empty dataset.
+  const showEmptyState = !metricsError && !insightsError && !hasData && !isLoading && !isDemoHydrating;
 
   useEffect(() => {
     if (isDemoUser && hasData) sessionStorage.removeItem("quantivis_demo_mode");
     if (!isDemoUser) sessionStorage.removeItem("quantivis_demo_mode");
   }, [isDemoUser, hasData]);
+
+  const executiveEvidenceUnavailable = Boolean((metricsError && !hasData) || insightsError);
 
   return (
     <>
@@ -202,6 +211,15 @@ const Dashboard = () => {
             </section>
           )}
 
+          {insightsError && (
+            <section className="rounded-xl border border-destructive/30 bg-destructive/[0.04] px-4 py-3" role="alert">
+              <p className="text-sm font-semibold text-foreground">Insight evidence cannot currently be verified</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Quantivis will not interpret an unavailable insight query as “no critical insights” or use it to generate an executive all-clear.
+              </p>
+            </section>
+          )}
+
           {onboardingVerificationError && (
             <section className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3" role="status" aria-live="polite">
               <p className="text-sm font-semibold text-foreground">Onboarding status is unverified</p>
@@ -222,11 +240,11 @@ const Dashboard = () => {
 
           {(isLoading || isDemoHydrating) && !hasData ? (
             <DashboardSkeleton />
-          ) : metricsError && !hasData ? (
+          ) : executiveEvidenceUnavailable ? (
             <section className="rounded-2xl border border-destructive/30 bg-card p-8 text-center">
               <h2 className="text-base font-semibold">Executive evidence is temporarily unavailable</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                The active dataset could not be verified. Quantivis is withholding an empty-state or all-clear interpretation until live evidence is available.
+                One or more required evidence surfaces could not be verified. Quantivis is withholding an empty-state or all-clear interpretation until live evidence is available.
               </p>
             </section>
           ) : showEmptyState ? (
