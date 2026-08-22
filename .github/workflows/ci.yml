@@ -58,6 +58,7 @@ jobs:
           deno check --config supabase/functions/deno.json supabase/functions/event-stream/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/queued-metric-ingest/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/process-metric-ingest-queue/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/refresh-aggregates/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/ingest-csv-pipeline/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/ingest-external-signals/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
