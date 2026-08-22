@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -6,6 +5,7 @@ import { getGovernanceProfile } from "../_shared/governance-profile.ts";
 import { recordGovernanceUse } from "../_shared/governance-audit.ts";
 
 type SourceKind = "advisory" | "insight";
+type ServiceClient = ReturnType<typeof createClient>;
 
 interface DecisionSource {
   kind: SourceKind;
@@ -27,160 +27,203 @@ interface DecisionSource {
   created_at?: string | null;
 }
 
+const LOW_IMPACT_FLOOR_EUR = 1000;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceKey) return json({ error: "Decision creation service unavailable" }, 503, corsHeaders);
+
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return json({ error: "Unauthorized" }, 401, corsHeaders);
-    }
+    if (!authHeader?.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401, corsHeaders);
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    ) as any;
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: userError } = await userClient.auth.getUser();
+    if (userError || !user?.id) return json({ error: "Unauthorized" }, 401, corsHeaders);
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) return json({ error: "Unauthorized" }, 401, corsHeaders);
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const organizationId = typeof body.organization_id === "string" ? body.organization_id : null;
+    const datasetId = typeof body.dataset_id === "string" ? body.dataset_id : null;
+    if (!organizationId) return json({ error: "organization_id required" }, 400, corsHeaders);
 
-    const body = await req.json().catch(() => ({}));
-    const { organization_id, dataset_id } = body;
-    if (!organization_id) return json({ error: "organization_id required" }, 400, corsHeaders);
-
-    const { data: membership } = await supabase
+    const { data: membership, error: membershipError } = await userClient
       .from("organization_members")
       .select("id")
       .eq("user_id", user.id)
-      .eq("organization_id", organization_id)
-      .single();
-
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (membershipError) throw new Error(`Failed to verify organization membership: ${membershipError.message}`);
     if (!membership) return json({ error: "Forbidden" }, 403, corsHeaders);
 
-    const serviceSupabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    ) as any;
+    const service = createClient(supabaseUrl, serviceKey);
+    if (datasetId) {
+      const { data: dataset, error: datasetError } = await service
+        .from("datasets")
+        .select("id")
+        .eq("id", datasetId)
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      if (datasetError) throw new Error(`Failed to verify dataset: ${datasetError.message}`);
+      if (!dataset) return json({ error: "dataset_id does not belong to this organization" }, 403, corsHeaders);
+    }
 
-    const advisories = await fetchOpenAdvisories(serviceSupabase, organization_id, dataset_id);
-    const insights = await fetchDecisionGradeInsights(serviceSupabase, organization_id, dataset_id);
-
-    const advisorySources = advisories.map(normalizeAdvisory);
-    const insightSources = insights.map(normalizeInsight);
-    // GA-1: supplier-risk-shaped sources are claimed by the dedicated
-    // `supplier-risk-runtime-ingest` function, which runs them through the
-    // RTS-1 / Agent Gateway / Runtime pipeline instead of this generic
-    // direct-insert path. Every other category is unaffected.
-    // Phase 5 stopgap: hide low-signal recommendations. Medium/low-priority
-    // sources with a quantified impact below €1,000 are suppressed to avoid
-    // "€30 critical decision" clutter in the ledger. Critical/high always pass,
-    // and rows with no numeric impact estimate are still shown so we don't
-    // silently drop qualitative insights.
-    const LOW_IMPACT_FLOOR_EUR = 1000;
-    const isMateriallyRelevant = (source: DecisionSource) => {
-      if (source.priority === "critical" || source.priority === "high") return true;
-      const impact = parseImpactEstimate(source.expected_impact);
-      if (impact === null) return true;
-      return Math.abs(impact) >= LOW_IMPACT_FLOOR_EUR;
+    // Resolve governance before creating decisions so we never create a batch
+    // that cannot even be attributed to the active governance profile.
+    const governanceProfile = await getGovernanceProfile(supabaseUrl, serviceKey, organizationId);
+    const governanceThresholds = {
+      advisory_threshold: governanceProfile.advisory_threshold,
+      escalation_threshold: governanceProfile.escalation_threshold,
+      intervention_threshold: governanceProfile.intervention_threshold,
+      low_impact_floor_eur: LOW_IMPACT_FLOOR_EUR,
     };
-    const allSources = [...advisorySources, ...insightSources]
-      .filter((source) => !isSupplierRiskSource(source))
-      .filter(isMateriallyRelevant);
+    const approvalRules = { governance_model: governanceProfile.governance_model };
+
+    const advisories = await fetchOpenAdvisories(service, organizationId, datasetId);
+    const insights = await fetchDecisionGradeInsights(service, organizationId, datasetId);
+    const allSources = [
+      ...advisories.map(normalizeAdvisory),
+      ...insights.map(normalizeInsight),
+    ].filter((source) => !isSupplierRiskSource(source)).filter(isMateriallyRelevant);
 
     if (allSources.length === 0) {
-      return json({ message: "No advisories or decision-grade insights to convert", created: 0, advisory_created: 0, insight_created: 0 }, 200, corsHeaders);
+      return json({ status: "completed", message: "No advisories or decision-grade insights to convert", created: 0, advisory_created: 0, insight_created: 0 }, 200, corsHeaders);
     }
 
-    const existing = await fetchExistingDecisionSources(serviceSupabase, organization_id);
-    const newSources = allSources.filter((source) => !hasExistingDecision(existing, source));
-
-    if (newSources.length === 0) {
-      return json({ message: "All advisories and decision-grade insights already have decisions", created: 0, advisory_created: 0, insight_created: 0 }, 200, corsHeaders);
+    const existing = await fetchExistingDecisionSources(service, organizationId);
+    const candidateSources = allSources.filter((source) => !hasExistingDecision(existing, source));
+    if (candidateSources.length === 0) {
+      return json({ status: "completed", message: "All advisories and decision-grade insights already have decisions", created: 0, advisory_created: 0, insight_created: 0 }, 200, corsHeaders);
     }
 
-    const datasetMap = await fetchDatasetMap(serviceSupabase, newSources);
-    const decisionRows = newSources.map((source) => buildDecisionRow(source, organization_id, datasetMap));
+    const datasetMap = await fetchDatasetMap(service, organizationId, candidateSources);
+    const createdDecisions: Array<Record<string, unknown>> = [];
+    const createdSources: DecisionSource[] = [];
+    let concurrentSkips = 0;
 
-    const { data: createdDecisions, error: insertError } = await serviceSupabase
-      .from("decision_ledger")
-      .insert(decisionRows)
-      .select("id, advisory_instance_id, decision_origin, source_insight_summary, capped_confidence, predicted_net_impact");
+    // Insert per source. The DB unique key on organization_id +
+    // source_idempotency_key is the race-safe authority; the pre-read above is
+    // only an optimization.
+    for (const source of candidateSources) {
+      const row = buildDecisionRow(source, organizationId, datasetMap);
+      const { data, error } = await service
+        .from("decision_ledger")
+        .insert(row)
+        .select("id, advisory_instance_id, decision_origin, source_insight_summary, capped_confidence, predicted_net_impact")
+        .single();
 
-    if (insertError) throw new Error(`Failed to create decisions: ${insertError.message}`);
+      if (error) {
+        if (error.code === "23505") {
+          concurrentSkips++;
+          continue;
+        }
+        throw new Error(`Failed to create decision for ${source.kind}:${source.id}: ${error.message}`);
+      }
+      if (!data?.id) throw new Error(`Decision insert returned no id for ${source.kind}:${source.id}`);
+      createdDecisions.push(data as Record<string, unknown>);
+      createdSources.push(source);
+    }
 
-    await markConvertedAdvisories(serviceSupabase, newSources);
-    await createDecisionNotifications(serviceSupabase, organization_id, createdDecisions ?? [], newSources);
+    if (createdDecisions.length === 0) {
+      return json({
+        status: "completed",
+        message: "Concurrent or prior run already created all candidate decisions",
+        created: 0,
+        skipped_existing: concurrentSkips,
+        advisory_created: 0,
+        insight_created: 0,
+      }, 200, corsHeaders);
+    }
 
-    // Phase 9: record governance audit trail for each auto-created decision
-    try {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-      const profile = await getGovernanceProfile(supabaseUrl, serviceKey, organization_id);
-      const thresholds = {
-        advisory_threshold: profile.advisory_threshold,
-        escalation_threshold: profile.escalation_threshold,
-        intervention_threshold: profile.intervention_threshold,
-        low_impact_floor_eur: LOW_IMPACT_FLOOR_EUR,
-      };
-      const approvalRules = { governance_model: profile.governance_model };
-      await Promise.all((createdDecisions ?? []).map((d: any, idx: number) => {
-        const src = newSources[idx];
-        return recordGovernanceUse(supabaseUrl, serviceKey, {
-          organization_id,
+    await markConvertedAdvisories(service, organizationId, createdSources);
+    const warnings = await createDecisionNotifications(service, organizationId, createdDecisions, createdSources);
+
+    for (let index = 0; index < createdDecisions.length; index++) {
+      const decision = createdDecisions[index];
+      const source = createdSources[index];
+      try {
+        await recordGovernanceUse(supabaseUrl, serviceKey, {
+          organization_id: organizationId,
           subject_type: "decision",
-          subject_id: d.id,
-          profile,
-          thresholds_applied: thresholds,
+          subject_id: String(decision.id),
+          profile: governanceProfile,
+          thresholds_applied: governanceThresholds,
           approval_rules_applied: approvalRules,
           decision_path: {
-            source_kind: src?.kind,
-            source_id: src?.id,
-            priority: src?.priority,
-            capped_confidence: d.capped_confidence,
-            predicted_net_impact: d.predicted_net_impact,
+            source_kind: source.kind,
+            source_id: source.id,
+            priority: source.priority,
+            capped_confidence: decision.capped_confidence,
+            predicted_net_impact: decision.predicted_net_impact,
             gate: "auto_create_decisions",
           },
-          engine_version: "auto-create-decisions-v3",
+          engine_version: "auto-create-decisions-v4",
         });
-      }));
-    } catch (auditErr) {
-      console.warn("governance audit write failed:", (auditErr as Error).message);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Governance audit missing for decision ${decision.id}: ${message}`);
+        const { error: pendingAuditError } = await service.from("audit_log").insert({
+          organization_id: organizationId,
+          actor_id: user.id,
+          actor_type: "system",
+          action_type: "governance_audit_write_failed",
+          resource_type: "decision_ledger",
+          resource_id: decision.id,
+          payload: { source_kind: source.kind, source_id: source.id, error: message },
+        });
+        if (pendingAuditError) warnings.push(`Failed to record governance-audit gap for ${decision.id}: ${pendingAuditError.message}`);
+      }
     }
 
-    const advisoryCreated = newSources.filter((s) => s.kind === "advisory").length;
-    const insightCreated = newSources.filter((s) => s.kind === "insight").length;
-
-    await serviceSupabase.from("audit_log").insert({
-      organization_id,
+    const advisoryCreated = createdSources.filter((source) => source.kind === "advisory").length;
+    const insightCreated = createdSources.filter((source) => source.kind === "insight").length;
+    const { error: auditError } = await service.from("audit_log").insert({
+      organization_id: organizationId,
       actor_id: user.id,
       actor_type: "system",
       action_type: "auto_decisions_created",
       resource_type: "decision_ledger",
       payload: {
-        count: createdDecisions?.length ?? 0,
+        count: createdDecisions.length,
         advisory_created: advisoryCreated,
         insight_created: insightCreated,
-        dataset_id: dataset_id ?? null,
-        source: "auto_create_decisions_unified_v3",
+        dataset_id: datasetId,
+        skipped_concurrent: concurrentSkips,
+        warnings,
+        source: "auto_create_decisions_unified_v4",
       },
     });
+    if (auditError) warnings.push(`Decision batch audit failed: ${auditError.message}`);
 
     return json({
-      created: createdDecisions?.length ?? 0,
+      status: warnings.length ? "partial" : "completed",
+      created: createdDecisions.length,
+      skipped_existing: concurrentSkips,
       advisory_created: advisoryCreated,
       insight_created: insightCreated,
-      decisions: createdDecisions ?? [],
+      warnings,
+      decisions: createdDecisions,
     }, 200, corsHeaders);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
     console.error("auto-create-decisions error:", message);
     return json({ error: message }, 500, getCorsHeaders(req));
   }
 });
 
-async function fetchOpenAdvisories(client: any, organizationId: string, datasetId?: string | null) {
+function isMateriallyRelevant(source: DecisionSource): boolean {
+  if (source.priority === "critical" || source.priority === "high") return true;
+  const impact = parseImpactEstimate(source.expected_impact);
+  return impact === null || Math.abs(impact) >= LOW_IMPACT_FLOOR_EUR;
+}
+
+async function fetchOpenAdvisories(client: ServiceClient, organizationId: string, datasetId?: string | null) {
   let query = client
     .from("advisory_instances")
     .select("id, title, action, category, priority, confidence, capped_confidence, raw_confidence, confidence_cap_reason, expected_impact, rationale, kpi_affected, dataset_id, advisory_type, source_evidence, data_quality_index, data_snapshot_date, variance_score, created_at")
@@ -189,14 +232,13 @@ async function fetchOpenAdvisories(client: any, organizationId: string, datasetI
     .in("priority", ["critical", "high", "medium"])
     .order("created_at", { ascending: false })
     .limit(25);
-
   if (datasetId) query = query.eq("dataset_id", datasetId);
   const { data, error } = await query;
   if (error) throw new Error(`Failed to fetch advisories: ${error.message}`);
   return data ?? [];
 }
 
-async function fetchDecisionGradeInsights(client: any, organizationId: string, datasetId?: string | null) {
+async function fetchDecisionGradeInsights(client: ServiceClient, organizationId: string, datasetId?: string | null) {
   let query = client
     .from("insights")
     .select("id, message, severity, category, confidence_score, raw_confidence, capped_confidence, confidence_cap_reason, sample_size, variance_score, data_quality_index, dataset_id, created_at")
@@ -204,100 +246,98 @@ async function fetchDecisionGradeInsights(client: any, organizationId: string, d
     .in("severity", ["critical", "high"])
     .order("created_at", { ascending: false })
     .limit(25);
-
   if (datasetId) query = query.eq("dataset_id", datasetId);
   const { data, error } = await query;
   if (error) throw new Error(`Failed to fetch decision-grade insights: ${error.message}`);
   return data ?? [];
 }
 
-async function fetchExistingDecisionSources(client: any, organizationId: string) {
+async function fetchExistingDecisionSources(client: ServiceClient, organizationId: string) {
   const { data, error } = await client
     .from("decision_ledger")
-    .select("advisory_instance_id, explanation_metadata, source_insight_summary")
+    .select("advisory_instance_id, explanation_metadata, source_idempotency_key")
     .eq("organization_id", organizationId)
-    .limit(1000);
-
+    .limit(2000);
   if (error) throw new Error(`Failed to fetch existing decisions: ${error.message}`);
   return data ?? [];
 }
 
-function hasExistingDecision(existing: any[], source: DecisionSource) {
-  if (source.kind === "advisory") {
-    return existing.some((row) => row.advisory_instance_id === source.id);
-  }
-
+function hasExistingDecision(existing: Array<Record<string, unknown>>, source: DecisionSource) {
+  const key = sourceKey(source);
   return existing.some((row) => {
-    const meta = row.explanation_metadata ?? {};
-    return meta?.source?.kind === "insight" && meta?.source?.id === source.id;
+    if (row.source_idempotency_key === key) return true;
+    if (source.kind === "advisory" && row.advisory_instance_id === source.id) return true;
+    const metadata = isRecord(row.explanation_metadata) ? row.explanation_metadata : {};
+    const sourceMeta = isRecord(metadata.source) ? metadata.source : {};
+    return sourceMeta.kind === source.kind && sourceMeta.id === source.id;
   });
 }
 
-async function fetchDatasetMap(client: any, sources: DecisionSource[]) {
-  const datasetIds = [...new Set(sources.map((s) => s.dataset_id).filter(Boolean))];
+async function fetchDatasetMap(client: ServiceClient, organizationId: string, sources: DecisionSource[]) {
+  const datasetIds = [...new Set(sources.map((source) => source.dataset_id).filter((id): id is string => Boolean(id)))];
   if (datasetIds.length === 0) return {};
-
-  const { data } = await client
+  const { data, error } = await client
     .from("datasets")
     .select("id, name, row_count")
+    .eq("organization_id", organizationId)
     .in("id", datasetIds);
-
-  return Object.fromEntries((data ?? []).map((d: any) => [d.id, { name: d.name, row_count: d.row_count }]));
+  if (error) throw new Error(`Failed to load decision source datasets: ${error.message}`);
+  return Object.fromEntries((data ?? []).map((dataset) => [dataset.id, { name: dataset.name, row_count: dataset.row_count }]));
 }
 
-function normalizeAdvisory(a: any): DecisionSource {
+function normalizeAdvisory(advisory: Record<string, unknown>): DecisionSource {
   return {
     kind: "advisory",
-    id: a.id,
-    title: a.title ?? "Advisory requires decision",
-    action: a.action ?? a.rationale ?? "Review advisory and choose an executive response.",
-    category: a.category ?? a.kpi_affected ?? null,
-    priority: normalizePriority(a.priority),
-    confidence: toNumber(a.capped_confidence ?? a.confidence),
-    raw_confidence: toNumber(a.raw_confidence ?? a.confidence),
-    capped_confidence: toNumber(a.capped_confidence),
-    confidence_cap_reason: a.confidence_cap_reason ?? null,
-    expected_impact: a.expected_impact ?? null,
-    rationale: a.rationale ?? null,
-    dataset_id: a.dataset_id ?? null,
-    variance_score: toNumber(a.variance_score),
-    data_quality_index: toNumber(a.data_quality_index),
-    created_at: a.created_at ?? null,
+    id: String(advisory.id),
+    title: typeof advisory.title === "string" ? advisory.title : "Advisory requires decision",
+    action: typeof advisory.action === "string" ? advisory.action : typeof advisory.rationale === "string" ? advisory.rationale : "Review advisory and choose an executive response.",
+    category: typeof advisory.category === "string" ? advisory.category : typeof advisory.kpi_affected === "string" ? advisory.kpi_affected : null,
+    priority: normalizePriority(advisory.priority),
+    confidence: toNumber(advisory.capped_confidence ?? advisory.confidence),
+    raw_confidence: toNumber(advisory.raw_confidence ?? advisory.confidence),
+    capped_confidence: toNumber(advisory.capped_confidence),
+    confidence_cap_reason: typeof advisory.confidence_cap_reason === "string" ? advisory.confidence_cap_reason : null,
+    expected_impact: typeof advisory.expected_impact === "string" || typeof advisory.expected_impact === "number" ? advisory.expected_impact : null,
+    rationale: typeof advisory.rationale === "string" ? advisory.rationale : null,
+    dataset_id: typeof advisory.dataset_id === "string" ? advisory.dataset_id : null,
+    variance_score: toNumber(advisory.variance_score),
+    data_quality_index: toNumber(advisory.data_quality_index),
+    created_at: typeof advisory.created_at === "string" ? advisory.created_at : null,
   };
 }
 
-function normalizeInsight(i: any): DecisionSource {
-  const title = titleFromInsight(i);
+function normalizeInsight(insight: Record<string, unknown>): DecisionSource {
   return {
     kind: "insight",
-    id: i.id,
-    title,
-    action: recommendationFromInsight(i),
-    category: i.category ?? null,
-    priority: normalizePriority(i.severity),
-    confidence: toNumber(i.capped_confidence ?? i.confidence_score),
-    raw_confidence: toNumber(i.raw_confidence ?? i.confidence_score),
-    capped_confidence: toNumber(i.capped_confidence),
-    confidence_cap_reason: i.confidence_cap_reason ?? null,
+    id: String(insight.id),
+    title: titleFromInsight(insight),
+    action: recommendationFromInsight(insight),
+    category: typeof insight.category === "string" ? insight.category : null,
+    priority: normalizePriority(insight.severity),
+    confidence: toNumber(insight.capped_confidence ?? insight.confidence_score),
+    raw_confidence: toNumber(insight.raw_confidence ?? insight.confidence_score),
+    capped_confidence: toNumber(insight.capped_confidence),
+    confidence_cap_reason: typeof insight.confidence_cap_reason === "string" ? insight.confidence_cap_reason : null,
     expected_impact: null,
-    rationale: i.message ?? null,
-    dataset_id: i.dataset_id ?? null,
-    sample_size: toNumber(i.sample_size),
-    variance_score: toNumber(i.variance_score),
-    data_quality_index: toNumber(i.data_quality_index),
-    created_at: i.created_at ?? null,
+    rationale: typeof insight.message === "string" ? insight.message : null,
+    dataset_id: typeof insight.dataset_id === "string" ? insight.dataset_id : null,
+    sample_size: toNumber(insight.sample_size),
+    variance_score: toNumber(insight.variance_score),
+    data_quality_index: toNumber(insight.data_quality_index),
+    created_at: typeof insight.created_at === "string" ? insight.created_at : null,
   };
 }
 
-function buildDecisionRow(source: DecisionSource, organizationId: string, datasetMap: Record<string, any>) {
-  const dsInfo = source.dataset_id ? datasetMap[source.dataset_id] : null;
+function buildDecisionRow(source: DecisionSource, organizationId: string, datasetMap: Record<string, { name?: string; row_count?: number | null }>) {
+  const dataset = source.dataset_id ? datasetMap[source.dataset_id] : null;
   const expectedImpact = parseImpactEstimate(source.expected_impact);
-  const recencyDays = source.created_at
-    ? Math.max(0, Math.floor((Date.now() - new Date(source.created_at).getTime()) / 86400000))
-    : 0;
+  const recencyDays = source.created_at && Number.isFinite(new Date(source.created_at).getTime())
+    ? Math.max(0, Math.floor((Date.now() - new Date(source.created_at).getTime()) / 86_400_000))
+    : null;
 
   return {
     organization_id: organizationId,
+    source_idempotency_key: sourceKey(source),
     advisory_instance_id: source.kind === "advisory" ? source.id : null,
     decision_type: source.category ?? "strategic",
     recommended_action: `${source.title}: ${source.action}`,
@@ -312,32 +352,20 @@ function buildDecisionRow(source: DecisionSource, organizationId: string, datase
     decision_origin: source.kind === "advisory" ? "ai_generated" : "insight_generated",
     source_insight_summary: source.title,
     recommendation_logic_type: source.kind === "advisory" ? "advisory_conversion" : "insight_severity_bridge",
-    // Every decision this pipeline creates already has real supporting
-    // evidence (the source advisory/insight, backed by dsInfo/source_data
-    // below) — this must never be an empty array. An empty evidence_sources
-    // array makes trust-adapter.ts's evidenceStatus() report "missing"
-    // (it short-circuits before ever looking at explanation_metadata.source_data),
-    // which permanently disables the executive Approve action with no UI
-    // path to recover, since evidence is populated at creation time, not
-    // edited by a human.
     evidence_sources: [{
-      source_type: source.kind === "advisory" ? "advisory" : "insight",
-      source_name: dsInfo?.name ?? (source.kind === "advisory" ? "Advisory engine" : "Insight engine"),
+      source_type: source.kind,
+      source_name: dataset?.name ?? (source.kind === "advisory" ? "Advisory engine" : "Insight engine"),
       source_id: source.id,
-      contribution_weight: 1.0,
-      confidence: source.capped_confidence ?? source.confidence ?? source.raw_confidence ?? 60,
+      contribution_weight: 1,
+      confidence: source.capped_confidence ?? source.confidence ?? source.raw_confidence,
       recency_days: recencyDays,
     }],
     explanation_metadata: {
-      source: {
-        kind: source.kind,
-        id: source.id,
-        created_at: source.created_at,
-      },
+      source: { kind: source.kind, id: source.id, created_at: source.created_at },
       source_data: {
-        dataset_name: dsInfo?.name ?? "Unknown dataset",
+        dataset_name: dataset?.name ?? null,
         dataset_id: source.dataset_id,
-        rows_analyzed: dsInfo?.row_count ?? source.sample_size ?? null,
+        rows_analyzed: dataset?.row_count ?? source.sample_size ?? null,
         key_metrics: source.category ? [source.category] : [],
       },
       triggering_insight: {
@@ -362,128 +390,114 @@ function buildDecisionRow(source: DecisionSource, organizationId: string, datase
         cap_reason: source.confidence_cap_reason,
       },
       evidence_classification: source.kind === "insight" ? "OBSERVED_SIGNAL_TO_DECISION" : "ADVISORY_TO_DECISION",
-      limitations: [
-        source.kind === "insight"
-          ? "Created directly from a high-severity insight because no advisory decision existed yet. Requires executive review before execution."
-          : "Created from an advisory instance. Requires executive review before execution.",
-      ],
+      limitations: [source.kind === "insight"
+        ? "Created from a high-severity insight. Requires executive review before execution."
+        : "Created from an advisory instance. Requires executive review before execution."],
     },
   };
 }
 
-async function markConvertedAdvisories(client: any, sources: DecisionSource[]) {
-  const advisoryIds = sources.filter((s) => s.kind === "advisory").map((s) => s.id);
-  if (advisoryIds.length === 0) return;
-
-  await client
+async function markConvertedAdvisories(client: ServiceClient, organizationId: string, sources: DecisionSource[]) {
+  const ids = sources.filter((source) => source.kind === "advisory").map((source) => source.id);
+  if (!ids.length) return;
+  const { error } = await client
     .from("advisory_instances")
     .update({ status: "in_progress" })
-    .in("id", advisoryIds)
+    .eq("organization_id", organizationId)
+    .in("id", ids)
     .eq("status", "open");
+  if (error) throw new Error(`Failed to mark converted advisories in progress: ${error.message}`);
 }
 
-async function createDecisionNotifications(client: any, organizationId: string, decisions: any[], sources: DecisionSource[]) {
-  if (!decisions.length) return;
+async function createDecisionNotifications(client: ServiceClient, organizationId: string, decisions: Array<Record<string, unknown>>, sources: DecisionSource[]) {
+  if (!decisions.length) return [] as string[];
+  const rows = decisions.map((decision, index) => ({
+    organization_id: organizationId,
+    event_type: "decision_created",
+    entity_type: "decision_ledger",
+    entity_id: decision.id,
+    severity: sources[index]?.priority ?? "high",
+    title: "New executive decision required",
+    message: sources[index]?.title ?? "A new decision requires review.",
+    metadata: { source_kind: sources[index]?.kind, source_id: sources[index]?.id, decision_id: decision.id },
+  }));
 
-  const sourceByIndex = sources;
-  const rows = decisions.map((decision, index) => {
-    const source = sourceByIndex[index];
-    return {
-      organization_id: organizationId,
-      event_type: "decision_created",
-      entity_type: "decision_ledger",
-      entity_id: decision.id,
-      severity: source?.priority ?? "high",
-      title: "New executive decision required",
-      message: source?.title ?? "A new decision requires review.",
-      metadata: {
-        source_kind: source?.kind,
-        source_id: source?.id,
-        decision_id: decision.id,
-      },
-    };
-  });
-
-  // Notification/event tables vary between environments. Try best-effort writes only.
-  try {
-    await client.from("notification_events").insert(rows);
-  } catch (_) {
-    try {
-      await client.from("auth_events").insert(rows.map((r) => ({
-        organization_id: r.organization_id,
-        event_type: r.event_type,
-        metadata: r.metadata,
-      })));
-    } catch (_) {
-      // Ignore: decision creation is the system of record.
-    }
-  }
+  const { error } = await client.from("notification_events").insert(rows);
+  if (!error) return [];
+  const { error: fallbackError } = await client.from("auth_events").insert(rows.map((row) => ({
+    organization_id: row.organization_id,
+    event_type: row.event_type,
+    metadata: row.metadata,
+  })));
+  return fallbackError
+    ? [`Decision notifications failed: ${error.message}; fallback failed: ${fallbackError.message}`]
+    : [`Primary notification event write failed; fallback auth event was persisted: ${error.message}`];
 }
 
-function titleFromInsight(i: any) {
-  if (i.category) return `${humanize(i.category)} requires executive decision`;
-  if (i.message) return String(i.message).slice(0, 96);
+function sourceKey(source: DecisionSource) {
+  return `${source.kind}:${source.id}`;
+}
+
+function titleFromInsight(insight: Record<string, unknown>) {
+  if (typeof insight.category === "string" && insight.category) return `${humanize(insight.category)} requires executive decision`;
+  if (typeof insight.message === "string" && insight.message) return insight.message.slice(0, 96);
   return "Critical insight requires executive decision";
 }
 
-function recommendationFromInsight(i: any) {
-  const category = String(i.category ?? "").toLowerCase();
-  const message = String(i.message ?? "").toLowerCase();
-
+function recommendationFromInsight(insight: Record<string, unknown>) {
+  const category = String(insight.category ?? "").toLowerCase();
+  const message = String(insight.message ?? "").toLowerCase();
   if (category.includes("inventory")) return "Review replenishment, slow-moving stock, and supplier timing before the next procurement cycle.";
   if (category.includes("marketing")) return "Review campaign-level ROI and enforce spend controls before approving additional marketing budget.";
   if (category.includes("margin") || message.includes("margin")) return "Run a product-line margin review and protect the highest-gross-profit channels.";
   if (category.includes("revenue") || message.includes("revenue")) return "Review revenue drivers against cost movement and prioritize profitable growth actions.";
   if (category.includes("cost") || message.includes("cost")) return "Run a cost-driver review and negotiate priority supplier or operating-cost actions.";
   if (category.includes("cash") || category.includes("receivable") || category.includes("payable")) return "Review working-capital timing and align purchasing, collections, and supplier payments.";
-
   return "Assign an owner to investigate root cause, confirm expected impact, and approve or reject the recommended response.";
 }
 
 function buildWhyItMatters(source: DecisionSource) {
   const impact = parseImpactEstimate(source.expected_impact);
-  const impactPhrase = impact ? `Estimated financial exposure is about €${Math.round(impact).toLocaleString("en-GB")}.` : "The issue may affect operating performance if ignored.";
+  const impactPhrase = impact !== null
+    ? `Evidence/modelled financial exposure is about €${Math.round(impact).toLocaleString("en-GB")}.`
+    : "No evidence-backed monetary exposure has been established.";
   return `${source.priority.toUpperCase()} ${source.kind} signal. ${impactPhrase} Executive review is required to move from intelligence to action.`;
 }
 
-/**
- * GA-1: matches the classifier in `supplier-risk-runtime-ingest/index.ts`.
- * Sources matching this are claimed by the runtime pipeline function and
- * must not be double-processed here.
- */
 function isSupplierRiskSource(source: Pick<DecisionSource, "category" | "title" | "rationale">): boolean {
-  const text = `${source.category ?? ""} ${source.title} ${source.rationale ?? ""}`.toLowerCase();
-  return /supplier|vendor|delivery/.test(text);
+  return /supplier|vendor|delivery/.test(`${source.category ?? ""} ${source.title} ${source.rationale ?? ""}`.toLowerCase());
 }
 
 function normalizePriority(value: unknown) {
-  const v = String(value ?? "medium").toLowerCase();
-  if (v === "critical") return "critical";
-  if (v === "high") return "high";
-  if (v === "low") return "low";
+  const normalized = String(value ?? "medium").toLowerCase();
+  if (normalized === "critical") return "critical";
+  if (normalized === "high") return "high";
+  if (normalized === "low") return "low";
   return "medium";
 }
 
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function parseImpactEstimate(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
-
-  const text = String(value);
-  const matches = text.match(/-?\d+(?:[,.]\d+)?/g);
+  const matches = String(value).match(/-?\d+(?:[,.]\d+)?/g);
   if (!matches?.length) return null;
-  const nums = matches.map((m) => Number(m.replace(/,/g, ""))).filter(Number.isFinite);
-  if (!nums.length) return null;
-  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+  const numbers = matches.map((match) => Number(match.replace(/,/g, ""))).filter(Number.isFinite);
+  if (!numbers.length) return null;
+  return numbers.reduce((sum, number) => sum + number, 0) / numbers.length;
 }
 
 function humanize(value: string) {
-  return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  return value.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function json(payload: unknown, status: number, corsHeaders: HeadersInit) {
