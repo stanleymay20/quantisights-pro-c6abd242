@@ -167,7 +167,9 @@ const LedgerTicker = () => {
 
 const Hero = () => (
   <section className="qv-hero" style={{ background: DEEP }}>
+    <LandingHeroMedia />
     <div className="qv-hero-content">
+
       <Eyebrow tone="light">Enterprise decision intelligence</Eyebrow>
       <h1>Turn consequential decisions into governed, reviewable records.</h1>
       <p className="qv-hero-copy">Quantivis brings evidence, recommendations, human approval, execution context and outcomes into one decision record — so teams can understand what was decided, why, and what happened next.</p>
