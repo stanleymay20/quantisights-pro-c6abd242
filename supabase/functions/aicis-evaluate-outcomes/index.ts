@@ -97,11 +97,12 @@ Deno.serve(async (req) => {
   let userId: string | null = null;
 
   if (isCronMode) {
-    const { data: orgs } = await service
+    const { data: orgs, error: orgDiscoveryError } = await service
       .from("decision_ledger")
       .select("organization_id")
       .or("linked_aicis_prediction_id.not.is.null,linked_aicis_recommendation_id.not.is.null")
       .eq("execution_status", "completed");
+    if (orgDiscoveryError) return json({ error: `organization discovery failed: ${orgDiscoveryError.message}` }, 500);
     orgsToProcess = Array.from(new Set((orgs ?? []).map(r => r.organization_id as string)));
   } else {
     const authHeader = req.headers.get("Authorization");
@@ -117,12 +118,20 @@ Deno.serve(async (req) => {
     userId = user.id;
 
     if (!body.organization_id) return json({ error: "organization_id required" }, 400);
-    const { data: member } = await service
+    if (body.decision_id && !body.actual_outcome) {
+      return json({ error: "actual_outcome is required for a single-decision evaluation" }, 400);
+    }
+    if (body.actual_value !== undefined && !Number.isFinite(body.actual_value)) {
+      return json({ error: "actual_value must be a finite number" }, 400);
+    }
+
+    const { data: member, error: memberError } = await service
       .from("organization_members")
       .select("role")
       .eq("user_id", user.id)
       .eq("organization_id", body.organization_id)
       .maybeSingle();
+    if (memberError) return json({ error: `membership verification failed: ${memberError.message}` }, 500);
     if (!member || !["owner", "admin"].includes(member.role)) {
       return json({ error: "Forbidden" }, 403);
     }
@@ -154,12 +163,13 @@ Deno.serve(async (req) => {
 
         const { data: decisions, error: dErr } = await q.limit(500);
         if (dErr) throw new Error(`decisions query: ${dErr.message}`);
+        if (body.decision_id && (decisions ?? []).length !== 1) {
+          return json({ error: "Decision not found, not completed, or outside the requested organization", correlation_id: correlationId }, 404);
+        }
 
-        // Resolve expected metric direction once per batch. Direction belongs to
-        // the decision outcome contract; never infer success from delta sign alone.
         const decisionIds = (decisions ?? []).map(d => d.id);
         const directionByDecision = new Map<string, Direction>();
-        if (decisionIds.length > 0) {
+        if (decisionIds.length > 0 && !body.decision_id) {
           const { data: outcomeDefs, error: directionErr } = await service
             .from("decision_outcomes")
             .select("decision_id, expected_direction")
@@ -167,13 +177,10 @@ Deno.serve(async (req) => {
             .in("decision_id", decisionIds)
             .limit(1000);
 
-          if (directionErr) {
-            log("warn", "outcome_direction_lookup_failed", { org_id: orgId, err: directionErr.message });
-          } else {
-            for (const def of outcomeDefs ?? []) {
-              if (!directionByDecision.has(def.decision_id) && ["increase", "decrease", "stable"].includes(def.expected_direction)) {
-                directionByDecision.set(def.decision_id, def.expected_direction as Direction);
-              }
+          if (directionErr) throw new Error(`outcome direction query: ${directionErr.message}`);
+          for (const def of outcomeDefs ?? []) {
+            if (!directionByDecision.has(def.decision_id) && ["increase", "decrease", "stable"].includes(def.expected_direction)) {
+              directionByDecision.set(def.decision_id, def.expected_direction as Direction);
             }
           }
         }
@@ -194,18 +201,22 @@ Deno.serve(async (req) => {
           } | null = null;
 
           if (d.linked_aicis_prediction_id) {
-            const { data: p } = await service
+            const { data: p, error: predictionError } = await service
               .from("aicis_predictions")
               .select("id, external_id, country_iso3, domain, risk_probability")
               .eq("id", d.linked_aicis_prediction_id)
+              .eq("organization_id", orgId)
               .maybeSingle();
+            if (predictionError) throw new Error(`prediction query: ${predictionError.message}`);
             pred = p;
           } else if (d.linked_aicis_recommendation_id) {
-            const { data: r } = await service
+            const { data: r, error: recommendationError } = await service
               .from("aicis_recommendations")
               .select("id, external_id, country_iso3, domain")
               .eq("id", d.linked_aicis_recommendation_id)
+              .eq("organization_id", orgId)
               .maybeSingle();
+            if (recommendationError) throw new Error(`recommendation query: ${recommendationError.message}`);
             if (r) {
               pred = {
                 id: r.id,
@@ -223,8 +234,6 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // Determine whether the business decision succeeded. Manual feedback
-          // is explicit. Automated evaluation requires a known expected direction.
           const isExplicitManual = body.decision_id === d.id && Boolean(body.actual_outcome);
           const businessSuccess: boolean | null = isExplicitManual
             ? body.actual_outcome === "positive"
@@ -242,40 +251,38 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // risk_probability is the probability of an adverse event. A successful
-          // business outcome therefore means the risk event did not materialize.
           const riskEventActual = businessSuccess ? 0 : 1;
           const predicted = normalizedProbability(pred.risk_probability);
           const brier = predicted != null ? Math.pow(predicted - riskEventActual, 2) : null;
           const error_margin = predicted != null ? Math.abs(predicted - riskEventActual) : null;
-          const externalId = `decision:${d.id}`;
           const evaluatedAt = new Date().toISOString();
 
-          // Preserve optional business impact on the decision record, but never
-          // write a fabricated prediction-accuracy score from a yes/no verdict.
           if (isExplicitManual) {
-            const ledgerUpdate: Record<string, unknown> = {
-              outcome_measured_at: evaluatedAt,
-            };
-            if (typeof body.actual_value === "number" && Number.isFinite(body.actual_value)) {
-              ledgerUpdate.actual_value = body.actual_value;
+            const { data: outcomeId, error: atomicError } = await service.rpc("record_manual_aicis_outcome", {
+              _organization_id: orgId,
+              _decision_id: d.id,
+              _prediction_external_id: pred.external_id,
+              _country_iso3: pred.country_iso3,
+              _domain: pred.domain,
+              _predicted_value: predicted,
+              _risk_event_actual: riskEventActual,
+              _error_margin: error_margin,
+              _brier_score: brier,
+              _business_actual_value: typeof body.actual_value === "number" ? body.actual_value : null,
+              _evaluated_at: evaluatedAt,
+              _actor_id: userId,
+            });
+            if (atomicError || !outcomeId) {
+              throw new Error(`atomic manual outcome persistence failed: ${atomicError?.message ?? "no outcome id returned"}`);
             }
-            const { error: ledgerErr } = await service
-              .from("decision_ledger")
-              .update(ledgerUpdate)
-              .eq("id", d.id)
-              .eq("organization_id", orgId);
-            if (ledgerErr) {
-              stat.errors++;
-              total_errors++;
-              log("error", "manual_outcome_ledger_update_failed", { err: ledgerErr.message, decision_id: d.id });
-              continue;
-            }
+            stat.evaluated++;
+            total_evaluated++;
+            continue;
           }
 
           const row = {
             organization_id: orgId,
-            external_id: externalId,
+            external_id: `decision:${d.id}`,
             prediction_external_id: pred.external_id,
             country_iso3: pred.country_iso3,
             domain: pred.domain,
@@ -289,32 +296,32 @@ Deno.serve(async (req) => {
           const { error: upErr } = await service
             .from("aicis_outcomes")
             .upsert(row, { onConflict: "organization_id,external_id" });
-          if (upErr) {
-            stat.errors++;
-            total_errors++;
-            log("error", "upsert_failed", { err: upErr.message, decision_id: d.id });
-            continue;
-          }
+          if (upErr) throw new Error(`outcome upsert failed for decision ${d.id}: ${upErr.message}`);
 
           stat.evaluated++;
           total_evaluated++;
         }
 
-        await service.from("audit_log").insert({
-          organization_id: orgId,
-          actor_id: userId,
-          actor_type: isCronMode ? "system" : "user",
-          action_type: "aicis_outcomes_evaluated",
-          resource_type: "aicis_outcomes",
-          resource_id: correlationId,
-          payload: {
-            evaluated: stat.evaluated,
-            skipped: stat.skipped,
-            errors: stat.errors,
-            cron: isCronMode,
-            calibration_target: "risk_event_binary",
-          },
-        });
+        // Single/manual writes already persist their audit record atomically in
+        // record_manual_aicis_outcome. Bulk/cron processing gets one checked run audit.
+        if (!body.decision_id) {
+          const { error: auditError } = await service.from("audit_log").insert({
+            organization_id: orgId,
+            actor_id: userId,
+            actor_type: isCronMode ? "system" : "user",
+            action_type: "aicis_outcomes_evaluated",
+            resource_type: "aicis_outcomes",
+            resource_id: correlationId,
+            payload: {
+              evaluated: stat.evaluated,
+              skipped: stat.skipped,
+              errors: stat.errors,
+              cron: isCronMode,
+              calibration_target: "risk_event_binary",
+            },
+          });
+          if (auditError) throw new Error(`outcome evaluation audit failed: ${auditError.message}`);
+        }
 
         per_org.push(stat);
       } catch (orgErr) {
@@ -323,6 +330,9 @@ Deno.serve(async (req) => {
         stat.errors++;
         total_errors++;
         per_org.push(stat);
+        if (body.decision_id) {
+          return json({ error: msg, total_evaluated, total_errors, correlation_id: correlationId }, 500);
+        }
       }
     }
 
@@ -339,7 +349,43 @@ Deno.serve(async (req) => {
       correlation_id: correlationId,
     });
 
+    if (body.decision_id) {
+      if (total_evaluated !== 1 || total_errors !== 0) {
+        return json({
+          error: "The requested decision outcome was not durably recorded.",
+          total_evaluated,
+          total_skipped,
+          total_errors,
+          correlation_id: correlationId,
+        }, 422);
+      }
+      return json({
+        success: true,
+        recorded: true,
+        decision_id: body.decision_id,
+        total_evaluated,
+        correlation_id: correlationId,
+        duration_ms,
+      });
+    }
+
+    if (total_errors > 0) {
+      return json({
+        error: "One or more outcome evaluations failed; the idempotent batch may be retried safely.",
+        total_evaluated,
+        total_skipped,
+        total_errors,
+        per_org,
+        correlation_id: correlationId,
+        duration_ms,
+        orgs_processed: orgsProcessed,
+        orgs_total: rotatedOrgs.length,
+        truncated,
+      }, 500);
+    }
+
     return json({
+      success: true,
       total_evaluated,
       total_skipped,
       total_errors,
