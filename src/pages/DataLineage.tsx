@@ -68,7 +68,7 @@ const DataLineage = () => {
     setLoadError(null);
     setEvidenceReady(false);
 
-    let metricsQuery = supabase
+    const metricsQuery = supabase
       .from("metrics")
       .select("metric_type")
       .eq("organization_id", currentOrgId)
