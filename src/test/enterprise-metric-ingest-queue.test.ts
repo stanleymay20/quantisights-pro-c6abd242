@@ -13,6 +13,7 @@ const claimMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/
 const capacityMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822071000_metric_ingest_worker_capacity.sql"), "utf8");
 const freshnessMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822071500_atomic_metric_job_freshness.sql"), "utf8");
 const persistenceMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822072000_atomic_metric_chunk_persistence.sql"), "utf8");
+const governanceMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822103500_metric_ingest_governance_warning.sql"), "utf8");
 
 describe("enterprise metric ingest queue contract", () => {
   it("uses durable queue + DLQ with bounded worker settings", () => {
@@ -80,6 +81,13 @@ describe("enterprise metric ingest queue contract", () => {
     expect(producer).toContain("Queued batch rejected because one or more records are invalid");
     expect(producer).toContain("durable: true");
     expect(producer).toContain("}, 202)");
+  });
+
+  it("surfaces audit degradation instead of silently presenting full governance health", () => {
+    expect(governanceMigration).toContain("governance_warning");
+    expect(producer).toContain("governance_degraded");
+    expect(producer).toContain("Acceptance audit failed");
+    expect(producer).toContain('update({ governance_warning: governanceWarning })');
   });
 
   it("atomically advances freshness only when all chunks reach a persisted terminal state", () => {
