@@ -57,6 +57,7 @@ jobs:
           deno check --config supabase/functions/deno.json supabase/functions/webhook-ingest/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/event-stream/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/ingest-csv-pipeline/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/ingest-external-signals/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-sheets-pull/index.ts
