@@ -5,35 +5,50 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
 
-describe("Data Pipeline funnel (audit: 'Raw 1,465 rows -> Clean 7,317 rows', 'Analytical: 0' next to 'Complete')", () => {
-  // In multi-metric import mode, one raw row maps to N metric rows (one per
-  // mapped value column). pipeline_runs.transformed_count was set from
-  // `inserted`, the count of upserted METRIC rows, so a 5-value-column
-  // import inflated "Clean" to ~5x "Raw" -- backwards for a funnel stage
-  // that should only ever hold steady or shrink. Fixed by counting raw rows
-  // that produced at least one metric instead.
-  const source = read("src/pages/DataUpload.tsx");
+describe("Hardened data-import pipeline truth contract", () => {
+  const source = read("src/pages/DataUploadHardened.tsx");
 
-  it("transformed_count is derived from a raw-row counter, not the metrics upsert count", () => {
-    expect(source).toContain("let rawRowsCleaned = 0;");
-    expect(source).toContain("if (rowProducedMetric) rawRowsCleaned++;");
-    expect(source).toContain('pipeline_runs").update({ transformed_count: rawRowsCleaned, stage: "transform_complete" }');
+  it("tracks clean-stage count from raw rows that produced metrics, not fan-out metric rows", () => {
+    expect(source).toContain("let transformedRows = 0;");
+    expect(source).toContain("if (produced) transformedRows += 1;");
+    expect(source).toContain('update({ transformed_count: transformedRows, stage: "transform_complete" })');
     expect(source).not.toContain("transformed_count: inserted");
   });
 
-  // invokeWithRetry() always resolves { data, error }, even after
-  // exhausting retries -- it never rejects. Promise.allSettled therefore
-  // always reports "fulfilled" for the refresh-aggregates call, so checking
-  // only `aggResult.status === "rejected"` never caught a real failure, and
-  // the pipeline was unconditionally finalized as stage "complete" /
-  // status "completed" regardless -- showing an Analytical count stuck at
-  // 0 (refresh-aggregates never got to write it) next to a "Complete" badge.
-  it("checks aggResult.value.error, not just Promise rejection, to detect aggregation failure", () => {
-    expect(source).toContain("aggResult.status === \"rejected\" ? true : !!aggResult.value.error");
+  it("fails closed on the exact persisted metric count", () => {
+    expect(source).toContain('.eq("organization_id", currentOrgId)');
+    expect(source).toContain('.eq("dataset_id", dataset.id)');
+    expect(source).toContain("verifiedCount !== inserted");
+    expect(source).toContain("Metric verification mismatch:");
   });
 
-  it("only finalizes the pipeline run as complete when aggregation actually succeeded", () => {
-    expect(source).toMatch(/aggFailed\s*\n\s*\? \{\s*\n\s*status: "failed",\s*\n\s*stage: "aggregating",/);
-    expect(source).toContain('status: "completed",\n                stage: "complete",');
+  it("checks every analytical and decision-stage Edge result instead of only aggregate rejection", () => {
+    expect(source).toContain('runEdgeStage("aggregates"');
+    expect(source).toContain('runEdgeStage("insights"');
+    expect(source).toContain('runEdgeStage("data profile"');
+    expect(source).toContain('runEdgeStage("prescriptive advisory"');
+    expect(source).toContain('runEdgeStage("automatic decisions"');
+    expect(source).toContain("if (result.error)");
+  });
+
+  it("persists downstream degradation as partial_success rather than a false completed run", () => {
+    expect(source).toContain('finalFailures.length > 0 ? "partial_success" : "completed"');
+    expect(source).toContain('finalFailures.length > 0 ? "intelligence_partial" : "complete"');
+    expect(source).toContain("degraded_stages: finalFailures.map");
+    expect(source).toContain("core_data_durable: true");
+  });
+
+  it("does not manufacture synthetic dates", () => {
+    expect(source).toContain("One real date column is required");
+    expect(source).toContain("Quantivis will not fabricate synthetic dates.");
+    expect(source).not.toContain("syntheticYear");
+    expect(source).not.toContain("syntheticMonth");
+    expect(source).not.toContain("syntheticDay");
+  });
+
+  it("never renders a full-intelligence success message when degraded stages exist", () => {
+    expect(source).toContain("Data imported · intelligence partially completed");
+    expect(source).toContain("The data layer is available, but no full-intelligence claim is being made.");
+    expect(source).toContain("Stages requiring attention");
   });
 });
