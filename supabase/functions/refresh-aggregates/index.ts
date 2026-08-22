@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { isValidUUID } from "../_shared/input-validation.ts";
 import { isRecord, parseJsonBody } from "../_shared/ingest-utils.ts";
@@ -7,10 +7,106 @@ import { isRecord, parseJsonBody } from "../_shared/ingest-utils.ts";
 const MAX_BODY_BYTES = 64 * 1024;
 const ALLOWED_PERIODS = new Set(["monthly", "quarterly", "yearly"]);
 
+type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
 type AggregateResult = {
   aggregated_count: number | string | null;
   metric_count: number | string | null;
 };
+
+type OrganizationMemberRow = {
+  id: string;
+  user_id: string;
+  organization_id: string;
+};
+
+type DatasetRow = {
+  id: string;
+  organization_id: string;
+};
+
+type PipelineRunRow = {
+  id: string;
+  organization_id: string;
+  dataset_id: string;
+  stage: string;
+  status: string;
+  aggregated_count: number | null;
+  error_message: string | null;
+  completed_at: string | null;
+};
+
+type AuditLogRow = {
+  organization_id: string;
+  actor_type: string;
+  actor_id: string | null;
+  action_type: string;
+  resource_type: string;
+  resource_id: string;
+  payload: Json;
+};
+
+type AggregateDatabase = {
+  __InternalSupabase: {
+    PostgrestVersion: "14.1";
+  };
+  public: {
+    Tables: {
+      organization_members: {
+        Row: OrganizationMemberRow;
+        Insert: OrganizationMemberRow;
+        Update: Partial<OrganizationMemberRow>;
+        Relationships: [];
+      };
+      datasets: {
+        Row: DatasetRow;
+        Insert: DatasetRow;
+        Update: Partial<DatasetRow>;
+        Relationships: [];
+      };
+      pipeline_runs: {
+        Row: PipelineRunRow;
+        Insert: PipelineRunRow;
+        Update: Partial<PipelineRunRow>;
+        Relationships: [];
+      };
+      audit_log: {
+        Row: AuditLogRow;
+        Insert: AuditLogRow;
+        Update: Partial<AuditLogRow>;
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: {
+      refresh_metric_aggregates_scoped: {
+        Args: {
+          _org_id: string;
+          _dataset_id: string | null;
+          _period_types: string[];
+        };
+        Returns: AggregateResult[];
+      };
+      refresh_metric_summaries: {
+        Args: {
+          _org_id: string;
+          _dataset_id: string;
+        };
+        Returns: number;
+      };
+    };
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
+
+type ServiceClient = SupabaseClient<AggregateDatabase>;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
@@ -22,7 +118,7 @@ serve(async (req) => {
 
   let pipelineRunId: string | null = null;
   let pipelineRunScoped = false;
-  let serviceClient: ReturnType<typeof createClient> | null = null;
+  let serviceClient: ServiceClient | null = null;
 
   try {
     const parsed = await parseJsonBody(req, MAX_BODY_BYTES);
@@ -57,7 +153,7 @@ serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     if (!supabaseUrl || !serviceKey || !anonKey) return respond({ error: "Aggregate service unavailable" }, 503);
 
-    serviceClient = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    serviceClient = createClient<AggregateDatabase>(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
     const authHeader = req.headers.get("Authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
@@ -129,9 +225,7 @@ serve(async (req) => {
     );
     if (aggregateError) throw new Error(`Server-side aggregate refresh failed: ${aggregateError.message}`);
 
-    const aggregateResult = Array.isArray(aggregateRows)
-      ? aggregateRows[0] as AggregateResult | undefined
-      : undefined;
+    const aggregateResult = aggregateRows?.[0];
     if (!aggregateResult) throw new Error("Server-side aggregate refresh returned no result");
 
     const aggregated = Math.max(0, Number(aggregateResult.aggregated_count) || 0);
