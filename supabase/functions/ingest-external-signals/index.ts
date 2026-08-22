@@ -1,32 +1,10 @@
-// @ts-nocheck
 /**
- * Ingest External Signals — pulls macro/industry data from configured vendors
- * (AICIS, IMF, World Bank, etc.) into internal_reference_data for Layer B
- * blending in advisory generation.
+ * Pull licensed external signals into internal_reference_data.
  *
- * Auth (any one of these is accepted):
- *  - Bearer SUPABASE_SERVICE_ROLE_KEY  (service-to-service, e.g. internal admin)
- *  - x-cron-secret header == INGEST_CRON_SECRET  (pg_cron path)
- *  - Bearer <user JWT> + org-admin role  (manual refresh from /admin/data-vendors)
- *
- * Modes:
- *  - { mode: "scheduled" } → cron call: refresh all sources whose next_refresh_at < now()
- *  - { mode: "manual", source_id } → admin-triggered single-source refresh
- *  - { mode: "test", vendor_key } → dry-run single vendor without writing
- *
- * Strict Real Data Only — no fabricated fallbacks. Adapter failures surface as
- * `last_error` on the source row AND a structured row in external_sync_runs.
- *
- * Tier policy (AICIS only):
- *  - Free:       sync rejected (returns 403 in manual mode; skipped in scheduled)
- *  - Pro:        shared platform key from Vault (AICIS_TEST_*)
- *  - Enterprise: optional BYO key via config.endpoint_url + config.api_key
- *
- * Pagination:
- *  - page_size capped at 500 (config.page_size, default 500)
- *  - max_pages capped at 10 (config.max_pages, default 4)
- *  - Cursor follows AICIS bridge `next_cursor` if provided, else stops.
- *  - Idempotent upsert by deterministic metric_key per (org, metric, source, period_start).
+ * System/cron callers may run scheduled, backfill and test modes.
+ * Human callers may run only manual mode and must be an owner/admin of the
+ * source organization. Strict real-data-only: fetched-but-not-persisted data
+ * is a failed run and never advances source freshness.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -57,11 +35,13 @@ interface VendorAdapter {
   fetch: (ctx: FetchContext) => Promise<FetchResult>;
 }
 
-// ── AICIS bridge config (shared platform license, read from Vault) ────────
+type ServiceClient = ReturnType<typeof createClient>;
+type SourceRow = Record<string, unknown>;
+
 const AICIS_PLATFORM_ENDPOINT = Deno.env.get("AICIS_TEST_ENDPOINT_URL") ?? "";
 const AICIS_PLATFORM_API_KEY = Deno.env.get("AICIS_TEST_API_KEY") ?? "";
-
 const AICIS_PRO_TIERS = new Set(["growth", "enterprise", "pro", "business", "enterprise_plus"]);
+const SYSTEM_MODES = new Set(["scheduled", "backfill", "test"]);
 
 interface AicisSignal {
   signal_id: string;
@@ -82,175 +62,145 @@ interface AicisSignal {
   sovereignty_status?: string | null;
 }
 
-// ── Adapters ──────────────────────────────────────────────────────────────
 const adapters: Record<string, VendorAdapter> = {
   aicis: {
     vendor_key: "aicis",
     async fetch({ config, log }): Promise<FetchResult> {
-      const endpoint =
-        (config.endpoint_url as string | undefined) || AICIS_PLATFORM_ENDPOINT;
-      const apiKey =
-        (config.api_key as string | undefined) || AICIS_PLATFORM_API_KEY;
-
+      const endpoint = (config.endpoint_url as string | undefined) || AICIS_PLATFORM_ENDPOINT;
+      const apiKey = (config.api_key as string | undefined) || AICIS_PLATFORM_API_KEY;
       if (!endpoint || !apiKey) {
-        throw new Error(
-          "AICIS adapter requires AICIS_TEST_ENDPOINT_URL + AICIS_TEST_API_KEY " +
-            "in Vault (platform license), or per-tenant config.endpoint_url + " +
-            "config.api_key. Strict Real Data Only — no fabricated fallback.",
-        );
+        throw new Error("AICIS adapter configuration is unavailable; refusing fabricated fallback data.");
       }
 
       const base = endpoint.replace(/\/$/, "");
       const headers = { "x-api-key": apiKey, Accept: "application/json" };
-      const perCountryLimit = Math.min(
-        Math.max(1, Number((config.per_country_limit as number | undefined) ?? 50)),
-        500,
-      );
-      // max_countries = 0 → all countries (only safe in backfill mode)
-      const maxCountries = Math.max(
-        0,
-        Number((config.max_countries as number | undefined) ?? 50),
-      );
-      const isoFilter = (config.iso3 as string | undefined) ?? "";
-      const domainFilter = (config.domain as string | undefined) ?? "";
-
+      const perCountryLimit = Math.min(Math.max(1, Number(config.per_country_limit ?? 50)), 500);
+      const maxCountries = Math.max(0, Number(config.max_countries ?? 50));
+      const isoFilter = typeof config.iso3 === "string" ? config.iso3 : "";
+      const domainFilter = typeof config.domain === "string" ? config.domain : "";
       const warnings: string[] = [];
       const out: VendorRow[] = [];
 
-      // ── Step 1: discover the country universe ─────────────────────────
       let countries: string[] = [];
       if (isoFilter) {
         countries = [isoFilter.toUpperCase()];
       } else {
-        const r = await fetch(`${base}/countries`, { headers });
-        if (!r.ok) {
-          throw new Error(`AICIS /countries HTTP ${r.status}`);
-        }
-        const j = (await r.json()) as { data?: Array<{ iso3?: string; total_metrics?: number }> };
-        const list = Array.isArray(j.data) ? j.data : [];
-        // Sort by total_metrics desc so we always get richest countries first
+        const response = await fetch(`${base}/countries`, { headers, signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`AICIS /countries HTTP ${response.status}`);
+        const payload = await response.json() as { data?: Array<{ iso3?: string; total_metrics?: number }> };
+        const list = Array.isArray(payload.data) ? payload.data : [];
         list.sort((a, b) => (b.total_metrics ?? 0) - (a.total_metrics ?? 0));
         countries = list
-          .map((c) => (c.iso3 ?? "").toUpperCase())
-          .filter((s) => s.length === 3);
+          .map((country) => (country.iso3 ?? "").toUpperCase())
+          .filter((iso3) => iso3.length === 3);
         if (maxCountries > 0) countries = countries.slice(0, maxCountries);
       }
 
-      log.info("aicis country sweep", {
-        total_countries: countries.length,
-        per_country_limit: perCountryLimit,
-      });
+      log.info("aicis country sweep", { total_countries: countries.length, per_country_limit: perCountryLimit });
 
-      // ── Step 2: per-country signal pull (small batches, throttle-aware) ──
-      // AICIS bridge rate-limits aggressive parallelism; keep batch tiny.
-      // On rate-limit: parse Retry-After (header or error message), sleep up to cap,
-      // and resume the sweep. Only abort if we would exceed the total rate-limit budget.
       const BATCH_SIZE = 3;
       const INTER_BATCH_DELAY_MS = 250;
-      const MAX_RATE_LIMIT_WAIT_MS = 60_000; // single backoff cap
-      const MAX_TOTAL_THROTTLE_MS = 180_000; // give up if cumulative wait exceeds 3 min
+      const MAX_RATE_LIMIT_WAIT_MS = 60_000;
+      const MAX_TOTAL_THROTTLE_MS = 180_000;
       let pages = 0;
       let throttled = false;
       let totalThrottleWaitMs = 0;
       let throttledCountries = 0;
 
-      const parseRetryAfterMs = (msg: string, header?: string | null): number => {
+      const retryAfterMs = (message: string, header?: string | null): number => {
         if (header) {
-          const sec = Number(header);
-          if (Number.isFinite(sec)) return Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(1000, sec * 1000));
+          const seconds = Number(header);
+          if (Number.isFinite(seconds)) return Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(1000, seconds * 1000));
         }
-        const m = msg.match(/Retry after\s*(\d+)\s*ms/i);
-        if (m) return Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(1000, Number(m[1])));
-        return 5000;
+        const match = message.match(/Retry after\s*(\d+)\s*ms/i);
+        return match ? Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(1000, Number(match[1]))) : 5000;
       };
 
-      const fetchOneWithBackoff = async (iso3: string): Promise<{ iso3: string; ok: boolean; status: number; signals: AicisSignal[]; error?: string }> => {
-        const qs = new URLSearchParams({ iso3, limit: String(perCountryLimit) });
-        if (domainFilter) qs.set("domain", domainFilter);
+      const fetchCountry = async (iso3: string): Promise<{ iso3: string; ok: boolean; status: number; signals: AicisSignal[]; error?: string }> => {
+        const params = new URLSearchParams({ iso3, limit: String(perCountryLimit) });
+        if (domainFilter) params.set("domain", domainFilter);
+
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            const r = await fetch(`${base}/signals?${qs.toString()}`, { headers });
-            if (r.status === 429 || r.status === 503) {
-              const waitMs = parseRetryAfterMs("", r.headers.get("retry-after"));
+            const response = await fetch(`${base}/signals?${params}`, { headers, signal: AbortSignal.timeout(30_000) });
+            if (response.status === 429 || response.status === 503) {
+              const waitMs = retryAfterMs("", response.headers.get("retry-after"));
               if (totalThrottleWaitMs + waitMs > MAX_TOTAL_THROTTLE_MS || attempt === 1) {
-                return { iso3, ok: false, status: r.status, signals: [], error: `HTTP ${r.status} (rate-limited; budget exhausted)` };
+                return { iso3, ok: false, status: response.status, signals: [], error: `HTTP ${response.status} (rate-limit budget exhausted)` };
               }
               totalThrottleWaitMs += waitMs;
-              await new Promise((res) => setTimeout(res, waitMs));
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
               continue;
             }
-            if (!r.ok) return { iso3, ok: false, status: r.status, signals: [], error: `HTTP ${r.status}` };
-            const j = (await r.json()) as { data?: AicisSignal[] };
-            return { iso3, ok: true, status: r.status, signals: Array.isArray(j.data) ? j.data : [] };
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (/RateLimit|Rate limit|429|Retry after/i.test(msg)) {
-              const waitMs = parseRetryAfterMs(msg);
+            if (!response.ok) return { iso3, ok: false, status: response.status, signals: [], error: `HTTP ${response.status}` };
+            const payload = await response.json() as { data?: AicisSignal[] };
+            return { iso3, ok: true, status: response.status, signals: Array.isArray(payload.data) ? payload.data : [] };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (/RateLimit|Rate limit|429|Retry after/i.test(message)) {
+              const waitMs = retryAfterMs(message);
               if (totalThrottleWaitMs + waitMs > MAX_TOTAL_THROTTLE_MS || attempt === 1) {
-                return { iso3, ok: false, status: 429, signals: [], error: `${msg.slice(0, 160)} (budget exhausted)` };
+                return { iso3, ok: false, status: 429, signals: [], error: `${message.slice(0, 160)} (budget exhausted)` };
               }
               totalThrottleWaitMs += waitMs;
-              await new Promise((res) => setTimeout(res, waitMs));
+              await new Promise((resolve) => setTimeout(resolve, waitMs));
               continue;
             }
-            return { iso3, ok: false, status: 0, signals: [], error: msg.slice(0, 160) };
+            return { iso3, ok: false, status: 0, signals: [], error: message.slice(0, 160) };
           }
         }
         return { iso3, ok: false, status: 0, signals: [], error: "exhausted retries" };
       };
 
       for (let i = 0; i < countries.length && !throttled; i += BATCH_SIZE) {
-        const batch = countries.slice(i, i + BATCH_SIZE);
-        const settled = await Promise.all(batch.map(fetchOneWithBackoff));
-
-        for (const res of settled) {
-          pages += 1;
-          if (!res.ok) {
-            if (res.status === 429 || res.status === 503) {
+        const settled = await Promise.all(countries.slice(i, i + BATCH_SIZE).map(fetchCountry));
+        for (const result of settled) {
+          pages++;
+          if (!result.ok) {
+            if (result.status === 429 || result.status === 503) {
               throttledCountries++;
-              warnings.push(`AICIS ${res.iso3} ${res.error}`);
+              warnings.push(`AICIS ${result.iso3} ${result.error}`);
               if (totalThrottleWaitMs >= MAX_TOTAL_THROTTLE_MS) {
-                warnings.push(`AICIS rate-limit budget exhausted after ${(totalThrottleWaitMs / 1000).toFixed(0)}s — stopping sweep.`);
+                warnings.push(`AICIS rate-limit budget exhausted after ${Math.round(totalThrottleWaitMs / 1000)}s.`);
                 throttled = true;
                 break;
               }
             } else {
-              warnings.push(`AICIS ${res.iso3} ${res.error}; skipped.`);
+              warnings.push(`AICIS ${result.iso3} ${result.error}; skipped.`);
             }
             continue;
           }
-          const signals = res.signals;
-          const iso3 = res.iso3;
-          for (const sig of signals) {
-            const numeric = Number(sig.value);
-            if (!Number.isFinite(numeric)) continue;
-            const sIso = (sig.iso3 ?? iso3).toUpperCase();
-            const domain = (sig.domain ?? "general").toLowerCase();
-            const metric = (sig.metric_name ?? "unknown").toLowerCase();
+
+          for (const signal of result.signals) {
+            const value = Number(signal.value);
+            if (!Number.isFinite(value)) continue;
+            const iso3 = (signal.iso3 ?? result.iso3).toUpperCase();
+            const domain = (signal.domain ?? "general").toLowerCase();
+            const metric = (signal.metric_name ?? "unknown").toLowerCase();
             out.push({
-              metric_key: `aicis.${domain}.${metric}.${sIso}`,
-              value: numeric,
-              unit: sig.unit ?? undefined,
-              period: sig.period ?? undefined,
-              region: sIso,
+              metric_key: `aicis.${domain}.${metric}.${iso3}`,
+              value,
+              unit: signal.unit ?? undefined,
+              period: signal.period ?? signal.provenance_observed_at ?? signal.ingested_at ?? undefined,
+              region: iso3,
               metadata: {
-                signal_id: sig.signal_id,
+                signal_id: signal.signal_id,
                 domain,
-                iso3: sIso,
-                confidence: sig.confidence,
-                freshness_score: sig.freshness_score,
-                source_provider: sig.source_provider,
-                source_url: sig.source_url,
-                provenance_observed_at: sig.provenance_observed_at,
-                entity_name: sig.entity_name,
-                entity_type: sig.entity_type,
-                sovereignty_status: sig.sovereignty_status,
+                iso3,
+                confidence: signal.confidence,
+                freshness_score: signal.freshness_score,
+                source_provider: signal.source_provider,
+                source_url: signal.source_url,
+                provenance_observed_at: signal.provenance_observed_at,
+                entity_name: signal.entity_name,
+                entity_type: signal.entity_type,
+                sovereignty_status: signal.sovereignty_status,
               },
             });
           }
         }
         if (!throttled && i + BATCH_SIZE < countries.length) {
-          await new Promise((res) => setTimeout(res, INTER_BATCH_DELAY_MS));
+          await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
         }
       }
 
@@ -261,10 +211,7 @@ const adapters: Record<string, VendorAdapter> = {
         throttled_countries: throttledCountries,
         total_throttle_wait_ms: totalThrottleWaitMs,
       });
-
-      if (out.length === 0) {
-        throw new Error("AICIS bridge returned 0 usable signals — refusing empty ingest.");
-      }
+      if (out.length === 0) throw new Error("AICIS bridge returned 0 usable signals — refusing empty ingest.");
       return { rows: out, pages_fetched: pages, warnings };
     },
   },
@@ -272,19 +219,19 @@ const adapters: Record<string, VendorAdapter> = {
   worldbank: {
     vendor_key: "worldbank",
     async fetch({ config }): Promise<FetchResult> {
-      const country = (config.country as string) ?? "WLD";
-      const indicator = (config.indicator as string) ?? "NY.GDP.MKTP.KD.ZG";
-      const url = `https://api.worldbank.org/v2/country/${country}/indicator/${indicator}?format=json&per_page=25`;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`World Bank HTTP ${r.status}`);
-      const j = (await r.json()) as unknown[];
-      const series = Array.isArray(j) && j.length > 1
-        ? (j[1] as Array<Record<string, unknown>>)
+      const country = typeof config.country === "string" ? config.country : "WLD";
+      const indicator = typeof config.indicator === "string" ? config.indicator : "NY.GDP.MKTP.KD.ZG";
+      const response = await fetch(
+        `https://api.worldbank.org/v2/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=25`,
+        { signal: AbortSignal.timeout(30_000) },
+      );
+      if (!response.ok) throw new Error(`World Bank HTTP ${response.status}`);
+      const payload = await response.json() as unknown[];
+      const series = Array.isArray(payload) && payload.length > 1
+        ? payload[1] as Array<Record<string, unknown>>
         : [];
       const latest = series.find((row) => row.value != null && Number.isFinite(Number(row.value)));
-      if (!latest) {
-        throw new Error(`World Bank: no non-null observations for ${indicator}/${country}`);
-      }
+      if (!latest) throw new Error(`World Bank: no non-null observations for ${indicator}/${country}`);
       return {
         rows: [{
           metric_key: `worldbank.${indicator}.${country}`,
@@ -300,19 +247,16 @@ const adapters: Record<string, VendorAdapter> = {
   imf: {
     vendor_key: "imf",
     async fetch({ config }): Promise<FetchResult> {
-      const indicator = (config.indicator as string) ?? "PCPIPCH";
-      const country = (config.country as string) ?? "USA";
-      const url = `https://www.imf.org/external/datamapper/api/v1/${indicator}/${country}`;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`IMF HTTP ${r.status}`);
-      const j = (await r.json()) as {
-        values?: Record<string, Record<string, Record<string, number>>>;
-      };
-      const series = j.values?.[indicator]?.[country] ?? {};
-      const years = Object.keys(series)
-        .filter((y) => series[y] != null && Number.isFinite(series[y]))
-        .sort()
-        .reverse();
+      const indicator = typeof config.indicator === "string" ? config.indicator : "PCPIPCH";
+      const country = typeof config.country === "string" ? config.country : "USA";
+      const response = await fetch(
+        `https://www.imf.org/external/datamapper/api/v1/${encodeURIComponent(indicator)}/${encodeURIComponent(country)}`,
+        { signal: AbortSignal.timeout(30_000) },
+      );
+      if (!response.ok) throw new Error(`IMF HTTP ${response.status}`);
+      const payload = await response.json() as { values?: Record<string, Record<string, Record<string, number>>> };
+      const series = payload.values?.[indicator]?.[country] ?? {};
+      const years = Object.keys(series).filter((year) => Number.isFinite(series[year])).sort().reverse();
       const latestYear = years[0];
       if (!latestYear) throw new Error(`IMF: no observations for ${indicator}/${country}`);
       return {
@@ -332,150 +276,161 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
   const log = createLogger("ingest-external-signals", req);
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 
-  const json = (data: unknown, status = 200) =>
-    new Response(JSON.stringify(data), {
-      status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const cronSecret = Deno.env.get("INGEST_CRON_SECRET");
+  if (!supabaseUrl || !serviceKey || !anonKey) return json({ error: "External ingestion service unavailable" }, 503);
 
-  // ── Auth gate ─────────────────────────────────────────────────────────
   const cronHeader = req.headers.get("x-cron-secret");
   const authHeader = req.headers.get("authorization") ?? "";
-  const bearer = authHeader.toLowerCase().startsWith("bearer ")
-    ? authHeader.slice(7).trim()
-    : "";
+  const bearer = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
 
-  let isAuthorised = false;
+  let actorType: "cron" | "service" | "user" | null = null;
+  let actorUserId: string | null = null;
   let actor = "unknown";
   let triggerLabel = "service";
 
-  if (cronSecret && cronHeader && cronHeader === cronSecret) {
-    isAuthorised = true;
+  if (cronSecret && cronHeader && timingSafeEqual(cronHeader, cronSecret)) {
+    actorType = "cron";
     actor = "cron";
     triggerLabel = "scheduled";
-  } else if (bearer && bearer === serviceKey) {
-    isAuthorised = true;
+  } else if (bearer && timingSafeEqual(bearer, serviceKey)) {
+    actorType = "service";
     actor = "service";
-    triggerLabel = "service";
   } else if (bearer) {
-    const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${bearer}` } },
-    }) as any;
-    const { data: user } = await userClient.auth.getUser();
-    if (user?.user) {
-      isAuthorised = true;
-      actor = `user:${user.user.id}`;
+    });
+    const { data: { user }, error } = await userClient.auth.getUser();
+    if (!error && user?.id) {
+      actorType = "user";
+      actorUserId = user.id;
+      actor = `user:${user.id}`;
       triggerLabel = "manual";
-      log.setUser(user.user.id);
+      log.setUser(user.id);
     }
   }
 
-  if (!isAuthorised) {
+  if (!actorType) {
     log.warn("unauthorised invocation");
     return json({ error: "Unauthorised" }, 401);
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey) as any;
-
+  const supabase = createClient(supabaseUrl, serviceKey);
   let body: Record<string, unknown> = {};
   try {
-    body = await req.json();
+    const parsed = await req.json();
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
   } catch {
-    /* allow empty body for cron */
+    // Empty body is valid for scheduled cron invocation.
   }
-  const mode = (body.mode as string) ?? "scheduled";
+  const mode = typeof body.mode === "string" ? body.mode : "scheduled";
+  if (!["scheduled", "manual", "backfill", "test"].includes(mode)) return json({ error: "Invalid mode" }, 400);
+  if (actorType === "user" && SYSTEM_MODES.has(mode)) {
+    return json({ error: `${mode} mode is restricted to system/cron callers` }, 403);
+  }
 
   log.info("ingestion start", { mode, actor });
-
   const startTs = Date.now();
   const results: Array<Record<string, unknown>> = [];
 
   try {
-    let sources: Array<Record<string, unknown>> = [];
+    let sources: SourceRow[] = [];
 
     if (mode === "scheduled") {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("external_data_sources")
         .select("*")
         .eq("is_active", true)
         .or(`next_refresh_at.is.null,next_refresh_at.lte.${new Date().toISOString()}`);
-      sources = data ?? [];
-    } else if (mode === "manual" && body.source_id) {
-      const { data } = await supabase
+      if (error) throw new Error(`Failed to resolve scheduled sources: ${error.message}`);
+      sources = (data ?? []) as SourceRow[];
+    } else if ((mode === "manual" || mode === "backfill") && typeof body.source_id === "string") {
+      const { data, error } = await supabase
         .from("external_data_sources")
         .select("*")
-        .eq("id", body.source_id as string)
+        .eq("id", body.source_id)
         .maybeSingle();
-      if (data) sources = [data];
-    } else if (mode === "backfill" && body.source_id) {
-      // BACKFILL: one-shot deep pull. For AICIS, sweeps ALL countries.
-      const { data } = await supabase
-        .from("external_data_sources")
-        .select("*")
-        .eq("id", body.source_id as string)
-        .maybeSingle();
-      if (data) {
-        const cfg = (data.config as Record<string, unknown>) ?? {};
+      if (error) throw new Error(`Failed to resolve external source: ${error.message}`);
+      if (!data) return json({ error: "External source not found" }, 404);
+      sources = [data as SourceRow];
+      if (mode === "backfill") {
+        const config = isRecord(data.config) ? data.config : {};
         sources = [{
           ...data,
           config: {
-            ...cfg,
-            per_country_limit: Number(body.per_country_limit ?? cfg.per_country_limit ?? 100),
-            max_countries: Number(body.max_countries ?? 0), // 0 = all countries
+            ...config,
+            per_country_limit: boundedNumber(body.per_country_limit ?? config.per_country_limit, 1, 500, 100),
+            max_countries: boundedNumber(body.max_countries, 0, 1000, 0),
           },
         }];
       }
-    } else if (mode === "test" && body.vendor_key) {
-      const adapter = adapters[body.vendor_key as string];
+    } else if (mode === "test" && typeof body.vendor_key === "string") {
+      const adapter = adapters[body.vendor_key];
       if (!adapter) return json({ error: "Unknown vendor" }, 400);
-      const result = await adapter.fetch({
-        config: (body.config as Record<string, unknown>) ?? {},
-        log,
-      });
+      const result = await adapter.fetch({ config: isRecord(body.config) ? body.config : {}, log });
       log.info("dry-run complete", { vendor_key: body.vendor_key, rows: result.rows.length });
       return json({ ok: true, dry_run: true, ...result });
     } else {
-      return json({ error: "Invalid mode" }, 400);
+      return json({ error: "source_id is required for manual/backfill mode" }, 400);
+    }
+
+    if (actorType === "user") {
+      if (sources.length !== 1 || !actorUserId) return json({ error: "Manual refresh requires exactly one source" }, 403);
+      const orgId = typeof sources[0].organization_id === "string" ? sources[0].organization_id : null;
+      if (!orgId) return json({ error: "Source is not attached to an organization" }, 403);
+      const { data: membership, error } = await supabase
+        .from("organization_members")
+        .select("role")
+        .eq("organization_id", orgId)
+        .eq("user_id", actorUserId)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to verify organization administrator: ${error.message}`);
+      if (!membership || !["owner", "admin"].includes(String(membership.role))) {
+        return json({ error: "Owner or admin role required for manual external refresh" }, 403);
+      }
     }
 
     log.info("sources resolved", { count: sources.length });
 
     for (const src of sources) {
-      const adapter = adapters[src.vendor_key as string];
+      const vendorKey = typeof src.vendor_key === "string" ? src.vendor_key : "";
+      const sourceId = typeof src.id === "string" ? src.id : "";
+      const orgId = typeof src.organization_id === "string" ? src.organization_id : null;
+      const adapter = adapters[vendorKey];
+      if (!sourceId) {
+        results.push({ vendor_key: vendorKey, status: "error", error: "source id missing" });
+        continue;
+      }
       if (!adapter) {
-        results.push({ vendor_key: src.vendor_key, status: "skipped", reason: "no_adapter" });
+        results.push({ vendor_key: vendorKey, status: "skipped", reason: "no_adapter" });
         continue;
       }
 
-      // ── AICIS tier guard ─────────────────────────────────────────────
-      if (src.vendor_key === "aicis" && src.organization_id) {
-        const { data: sub } = await supabase
+      if (vendorKey === "aicis" && orgId) {
+        const { data: subscription, error } = await supabase
           .from("subscriptions")
           .select("tier, status")
-          .eq("organization_id", src.organization_id as string)
+          .eq("organization_id", orgId)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
-
-        const tier = (sub?.tier ?? "").toLowerCase();
-        const status = sub?.status ?? "";
-        const allowed =
-          ["active", "trialing"].includes(status) && AICIS_PRO_TIERS.has(tier);
-
+        if (error) throw new Error(`Failed to verify AICIS entitlement: ${error.message}`);
+        const tier = String(subscription?.tier ?? "").toLowerCase();
+        const status = String(subscription?.status ?? "");
+        const allowed = ["active", "trialing"].includes(status) && AICIS_PRO_TIERS.has(tier);
         if (!allowed) {
           const reason = `AICIS sync requires Growth tier or higher (current: ${tier || "free"} / ${status || "no_subscription"})`;
-          log.warn("aicis tier blocked", {
-            org_id: src.organization_id, tier, status,
-          });
           await logRun(supabase, {
-            organization_id: src.organization_id as string,
-            source_id: src.id as string,
-            vendor_key: "aicis",
+            organization_id: orgId,
+            source_id: sourceId,
+            vendor_key: vendorKey,
             trigger: triggerLabel,
             actor,
             status: "error",
@@ -485,181 +440,205 @@ Deno.serve(async (req) => {
             error_message: reason,
             duration_ms: 0,
           });
-          results.push({ vendor_key: "aicis", status: "skipped", reason });
+          results.push({ vendor_key: vendorKey, status: "skipped", reason });
           if (mode === "manual") return json({ error: reason }, 403);
           continue;
         }
       }
 
-      // ── Run vendor with sync-log row ─────────────────────────────────
       const vendorStart = Date.now();
-      const { data: runRow } = await supabase
+      const { data: runRow, error: runCreateError } = await supabase
         .from("external_sync_runs")
         .insert({
-          organization_id: (src.organization_id as string) ?? null,
-          source_id: src.id as string,
-          vendor_key: src.vendor_key as string,
+          organization_id: orgId,
+          source_id: sourceId,
+          vendor_key: vendorKey,
           trigger: triggerLabel,
           actor,
           status: "running",
-          metadata: { mode, page_size: (src.config as Record<string, unknown>)?.page_size ?? null },
+          metadata: { mode, page_size: isRecord(src.config) ? src.config.page_size ?? null : null },
         })
         .select("id")
-        .maybeSingle();
-      const runId = runRow?.id as string | undefined;
+        .single();
+      if (runCreateError || !runRow?.id) {
+        results.push({ vendor_key: vendorKey, status: "error", error: `Failed to create sync run: ${runCreateError?.message ?? "missing id"}` });
+        continue;
+      }
+      const runId = String(runRow.id);
 
       try {
-        const { rows, pages_fetched, warnings = [] } = await adapter.fetch({
-          config: (src.config as Record<string, unknown>) ?? {},
-          log,
-        });
-
-        // Batch upsert (500 rows/chunk) + dedupe within request to avoid
-        // "ON CONFLICT DO UPDATE command cannot affect row a second time"
-        let upserted = 0;
-        const orgId = (src.organization_id as string) ?? null;
+        const fetched = await adapter.fetch({ config: isRecord(src.config) ? src.config : {}, log });
+        const warnings = [...(fetched.warnings ?? [])];
         const seen = new Set<string>();
-        const payload = rows
+        let invalidPeriods = 0;
+
+        const payload = fetched.rows
           .filter((row) => Number.isFinite(Number(row.value)))
-          .map((row) => ({
-            organization_id: orgId,
-            category: (src.category as string) ?? "macro",
-            metric_name: row.metric_key,
-            value: Number(row.value),
-            unit: row.unit ?? null,
-            period_start: row.period ?? null,
-            region: row.region ?? null,
-            source: src.vendor_name as string,
-            source_url: (src.endpoint_url as string) ?? null,
-            confidence_grade:
-              ((src.trust_level as number) ?? 70) >= 85 ? "A" : "B",
-            metadata: {
-              ...(row.metadata ?? {}),
-              vendor_key: src.vendor_key,
-              license: src.license_type,
+          .flatMap((row) => {
+            const period = normalizePeriod(row.period);
+            if (row.period && !period) {
+              invalidPeriods++;
+              return [];
+            }
+            const record = {
               organization_id: orgId,
-            },
-          }))
-          .filter((r) => {
-            const k = `${r.organization_id ?? "_"}|${r.metric_name}|${r.source}|${r.period_start ?? ""}`;
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
+              category: typeof src.category === "string" ? src.category : "macro",
+              metric_name: row.metric_key,
+              value: Number(row.value),
+              unit: row.unit ?? null,
+              period_start: period,
+              region: row.region ?? null,
+              source: typeof src.vendor_name === "string" ? src.vendor_name : vendorKey,
+              source_url: typeof src.endpoint_url === "string" ? src.endpoint_url : null,
+              confidence_grade: Number(src.trust_level ?? 70) >= 85 ? "A" : "B",
+              metadata: {
+                ...(row.metadata ?? {}),
+                vendor_key: vendorKey,
+                license: src.license_type ?? null,
+                organization_id: orgId,
+              },
+            };
+            const key = `${record.organization_id ?? "_"}|${record.metric_name}|${record.source}|${record.period_start ?? ""}`;
+            if (seen.has(key)) return [];
+            seen.add(key);
+            return [record];
           });
 
-        const CHUNK = 500;
-        for (let i = 0; i < payload.length; i += CHUNK) {
-          const slice = payload.slice(i, i + CHUNK);
-          const { error } = await supabase
-            .from("internal_reference_data")
-            .upsert(slice, {
+        if (invalidPeriods > 0) warnings.push(`${invalidPeriods} rows rejected because period could not be normalized to a date`);
+        if (fetched.rows.length > 0 && payload.length === 0) {
+          throw new Error(`Fetched ${fetched.rows.length} rows but none were valid for persistence`);
+        }
+
+        const writeErrors: string[] = [];
+        let upserted = 0;
+        for (let i = 0; i < payload.length; i += 500) {
+          const chunk = payload.slice(i, i + 500);
+          const { error } = await supabase.from("internal_reference_data").upsert(chunk, {
+            onConflict: "organization_id,metric_name,source,period_start",
+            ignoreDuplicates: false,
+          });
+          if (!error) {
+            upserted += chunk.length;
+            continue;
+          }
+
+          log.warn("batch upsert failed; falling back to row writes", {
+            vendor_key: vendorKey,
+            chunk_start: i,
+            chunk_size: chunk.length,
+            error: error.message,
+          });
+          for (const row of chunk) {
+            const { error: rowError } = await supabase.from("internal_reference_data").upsert(row, {
               onConflict: "organization_id,metric_name,source,period_start",
               ignoreDuplicates: false,
             });
-          if (error) {
-            log.warn("batch upsert failed", {
-              vendor_key: src.vendor_key,
-              chunk_start: i,
-              chunk_size: slice.length,
-              error: error.message,
-            });
-          } else {
-            upserted += slice.length;
+            if (rowError) writeErrors.push(`${row.metric_name}: ${rowError.message}`);
+            else upserted++;
           }
         }
 
-        const nextRefresh = new Date(
-          Date.now() + (src.refresh_interval_hours as number) * 3600 * 1000,
-        );
-        await supabase
+        if (writeErrors.length > 0) warnings.push(`${writeErrors.length} reference rows failed to persist: ${writeErrors.slice(0, 5).join(" | ")}`);
+        if (payload.length > 0 && upserted === 0) {
+          throw new Error(`Fetched ${fetched.rows.length} rows, prepared ${payload.length}, but persisted 0`);
+        }
+
+        const refreshHours = boundedNumber(src.refresh_interval_hours, 1, 24 * 30, 24);
+        const status = warnings.length > 0 ? "partial" : "success";
+        const warningMessage = warnings.length > 0 ? warnings.join(" | ").slice(0, 4000) : null;
+
+        const { error: sourceUpdateError } = await supabase
           .from("external_data_sources")
           .update({
             last_refreshed_at: new Date().toISOString(),
-            next_refresh_at: nextRefresh.toISOString(),
-            last_error: null,
+            next_refresh_at: new Date(Date.now() + refreshHours * 3600 * 1000).toISOString(),
+            last_error: warningMessage,
           })
-          .eq("id", src.id as string);
+          .eq("id", sourceId);
+        if (sourceUpdateError) throw new Error(`Failed to update source freshness: ${sourceUpdateError.message}`);
 
-        const status = warnings.length > 0 ? "partial" : "success";
-        if (runId) {
-          await supabase
-            .from("external_sync_runs")
-            .update({
-              status,
-              rows_fetched: rows.length,
-              rows_upserted: upserted,
-              pages_fetched,
-              completed_at: new Date().toISOString(),
-              duration_ms: Date.now() - vendorStart,
-              error_message: warnings.length > 0 ? warnings.join(" | ") : null,
-            })
-            .eq("id", runId);
-        }
+        await finalizeRun(supabase, runId, {
+          status,
+          rows_fetched: fetched.rows.length,
+          rows_upserted: upserted,
+          pages_fetched: fetched.pages_fetched,
+          error_message: warningMessage,
+          duration_ms: Date.now() - vendorStart,
+        });
 
-        log.info("vendor success", {
-          vendor_key: src.vendor_key,
+        log.info("vendor complete", {
+          vendor_key: vendorKey,
+          status,
           upserted,
-          pages_fetched,
+          pages_fetched: fetched.pages_fetched,
           warnings: warnings.length,
           duration_ms: Date.now() - vendorStart,
         });
         results.push({
-          vendor_key: src.vendor_key,
+          vendor_key: vendorKey,
           status,
-          rows_fetched: rows.length,
+          rows_fetched: fetched.rows.length,
           upserted,
-          pages_fetched,
+          pages_fetched: fetched.pages_fetched,
           warnings,
         });
-      } catch (e) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        await supabase
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const { error: sourceError } = await supabase
           .from("external_data_sources")
           .update({
-            last_error: errMsg,
+            last_error: message,
             next_refresh_at: new Date(Date.now() + 3600 * 1000).toISOString(),
           })
-          .eq("id", src.id as string);
-        if (runId) {
-          await supabase
-            .from("external_sync_runs")
-            .update({
-              status: "error",
-              error_message: errMsg,
-              completed_at: new Date().toISOString(),
-              duration_ms: Date.now() - vendorStart,
-            })
-            .eq("id", runId);
+          .eq("id", sourceId);
+        if (sourceError) log.error("failed to record source error", { source_id: sourceId, error: sourceError.message });
+
+        try {
+          await finalizeRun(supabase, runId, {
+            status: "error",
+            rows_fetched: 0,
+            rows_upserted: 0,
+            pages_fetched: 0,
+            error_message: message,
+            duration_ms: Date.now() - vendorStart,
+          });
+        } catch (finalizeError) {
+          log.error("failed to finalize external sync run", {
+            run_id: runId,
+            error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+          });
         }
-        log.error("vendor failure", { vendor_key: src.vendor_key, error: errMsg });
-        results.push({ vendor_key: src.vendor_key, status: "error", error: errMsg });
+        log.error("vendor failure", { vendor_key: vendorKey, error: message });
+        results.push({ vendor_key: vendorKey, status: "error", error: message });
       }
     }
 
+    const failed = results.filter((result) => result.status === "error").length;
+    const partial = results.filter((result) => result.status === "partial").length;
+    const overallStatus = failed > 0 ? (failed === results.length ? "failed" : "partial") : partial > 0 ? "partial" : "completed";
+
     log.info("ingestion complete", {
       mode,
+      status: overallStatus,
       sources_processed: sources.length,
       duration_ms: Date.now() - startTs,
     });
 
     return json({
-      ok: true,
+      ok: failed === 0,
+      status: overallStatus,
       mode,
       actor,
       duration_ms: Date.now() - startTs,
       sources_processed: sources.length,
       results,
-    });
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : String(e);
-    log.error("fatal", { error: errMsg });
-    return json({ error: errMsg }, 500);
+    }, overallStatus === "failed" ? 502 : 200);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.error("fatal", { error: message });
+    return json({ error: message }, 500);
   }
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface SyncRunInsert {
   organization_id: string | null;
@@ -675,12 +654,56 @@ interface SyncRunInsert {
   duration_ms: number;
 }
 
-async function logRun(
-  supabase: ReturnType<typeof createClient>,
-  run: SyncRunInsert,
-) {
-  await supabase.from("external_sync_runs").insert({
+interface SyncRunUpdate {
+  status: string;
+  rows_fetched: number;
+  rows_upserted: number;
+  pages_fetched: number;
+  error_message: string | null;
+  duration_ms: number;
+}
+
+async function logRun(supabase: ServiceClient, run: SyncRunInsert) {
+  const { error } = await supabase.from("external_sync_runs").insert({
     ...run,
     completed_at: new Date().toISOString(),
   });
+  if (error) throw new Error(`Failed to write external sync run: ${error.message}`);
+}
+
+async function finalizeRun(supabase: ServiceClient, runId: string, update: SyncRunUpdate) {
+  const { error } = await supabase.from("external_sync_runs").update({
+    ...update,
+    completed_at: new Date().toISOString(),
+  }).eq("id", runId);
+  if (error) throw new Error(`Failed to finalize external sync run: ${error.message}`);
+}
+
+function normalizePeriod(raw?: string): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value) return null;
+  if (/^\d{4}$/.test(value)) return `${value}-01-01`;
+  if (/^\d{4}-\d{2}$/.test(value)) return `${value}-01`;
+  const quarter = value.match(/^(\d{4})-?Q([1-4])$/i);
+  if (quarter) return `${quarter[1]}-${String((Number(quarter[2]) - 1) * 3 + 1).padStart(2, "0")}-01`;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function boundedNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let i = 0; i < left.length; i++) diff |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  return diff === 0;
 }
