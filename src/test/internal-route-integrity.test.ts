@@ -32,8 +32,8 @@ const matchers = knownRoutes.map(routePattern);
 function normalizeTarget(target: string): string | null {
   const trimmed = target.trim();
   if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return null;
-  const clean = trimmed.split(/[?#]/, 1)[0] || "/";
-  return clean;
+  const withoutQuery = trimmed.split(/[?#]/, 1)[0] || "/";
+  return withoutQuery.replace(/\$\{[^}]+\}/g, "__dynamic__");
 }
 
 function isRegistered(target: string): boolean {
@@ -63,8 +63,11 @@ function literalTargets(source: string, rel: string): string[] {
   const targets: string[] = [];
   const patterns = [
     /\b(?:href|to)\s*=\s*["']([^"']+)["']/g,
+    /\b(?:href|to)\s*=\s*\{\s*`([^`]+)`\s*\}/g,
     /\bnavigate\(\s*["']([^"']+)["']/g,
+    /\bnavigate\(\s*`([^`]+)`/g,
     /\b(?:href|to|url)\s*:\s*["']([^"']+)["']/g,
+    /\b(?:href|to|url)\s*:\s*`([^`]+)`/g,
   ];
 
   // Navigation registries often store destinations as plain string arrays/sets.
@@ -78,10 +81,27 @@ function literalTargets(source: string, rel: string): string[] {
   return targets;
 }
 
+function duplicates(values: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([value]) => value);
+}
+
 describe("internal route integrity", () => {
+  it("does not register duplicate route paths", () => {
+    expect(duplicates(registeredRoutes), "Duplicate routes create ambiguous navigation and entitlement behavior").toEqual([]);
+  });
+
+  it("does not register duplicate alias sources", () => {
+    expect(duplicates(aliasSources), "Duplicate aliases make redirects order-dependent").toEqual([]);
+  });
+
   it("keeps public aliases pointed at registered destinations", () => {
     for (const target of aliasTargets) {
-      expect(registeredRoutes.some((route) => routePattern(route).test(target)), `Alias target ${target} is not registered`).toBe(true);
+      expect(
+        registeredRoutes.some((route) => routePattern(route).test(target)),
+        `Alias target ${target} is not registered`,
+      ).toBe(true);
     }
   });
 
