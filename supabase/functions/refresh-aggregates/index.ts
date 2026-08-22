@@ -1,232 +1,210 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { isValidUUID } from "../_shared/input-validation.ts";
+import { isRecord, parseJsonBody } from "../_shared/ingest-utils.ts";
 
-/**
- * Refresh Aggregates Edge Function
- * 
- * Computes pre-aggregated rollups from the clean metrics layer
- * into the metric_aggregates table for fast dashboard serving.
- * 
- * Supports: monthly, quarterly, yearly aggregation periods.
- * Designed for 100M+ metric scale — dashboards read aggregates, not raw metrics.
- * 
- * Auth: Accepts both authenticated user calls and internal service calls
- * (identified by service role key in Authorization header).
- */
+const MAX_BODY_BYTES = 64 * 1024;
+const ALLOWED_PERIODS = new Set(["monthly", "quarterly", "yearly"]);
+
+type AggregateResult = {
+  aggregated_count: number | string | null;
+  metric_count: number | string | null;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
+  const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
+  let pipelineRunId: string | null = null;
+  let pipelineRunScoped = false;
+  let serviceClient: ReturnType<typeof createClient> | null = null;
 
   try {
-    const { organization_id, dataset_id, pipeline_run_id, period_types, workspace_id } = await req.json();
-
-    if (!organization_id) {
-      return new Response(JSON.stringify({ error: "organization_id required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const parsed = await parseJsonBody(req, MAX_BODY_BYTES);
+    if (parsed.error || !isRecord(parsed.body)) {
+      return respond({ error: parsed.error ?? "JSON object body required" }, 400);
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const organizationId = typeof parsed.body.organization_id === "string"
+      ? parsed.body.organization_id.trim()
+      : "";
+    let datasetId = typeof parsed.body.dataset_id === "string"
+      ? parsed.body.dataset_id.trim()
+      : "";
+    pipelineRunId = typeof parsed.body.pipeline_run_id === "string"
+      ? parsed.body.pipeline_run_id.trim()
+      : null;
 
-    // Auth: verify caller is either the service role or an authenticated user with org membership
+    if (!isValidUUID(organizationId)) return respond({ error: "valid organization_id required" }, 400);
+    if (datasetId && !isValidUUID(datasetId)) return respond({ error: "dataset_id must be a valid UUID" }, 400);
+    if (pipelineRunId && !isValidUUID(pipelineRunId)) return respond({ error: "pipeline_run_id must be a valid UUID" }, 400);
+
+    const requestedPeriods = Array.isArray(parsed.body.period_types)
+      ? parsed.body.period_types
+      : ["monthly", "quarterly", "yearly"];
+    const periods = Array.from(new Set(requestedPeriods.map((value) => String(value).trim())));
+    if (periods.length === 0 || periods.some((period) => !ALLOWED_PERIODS.has(period))) {
+      return respond({ error: "period_types may contain only monthly, quarterly, yearly" }, 400);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!supabaseUrl || !serviceKey || !anonKey) return respond({ error: "Aggregate service unavailable" }, 503);
+
+    serviceClient = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+
     const authHeader = req.headers.get("Authorization") || "";
-    const token = authHeader.replace("Bearer ", "");
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
     const isServiceCall = token === serviceKey;
+    let actorUserId: string | null = null;
 
     if (!isServiceCall) {
-      // Validate user JWT using getClaims for secure, real-time verification
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+      if (!token) return respond({ error: "Unauthorized" }, 401);
       const userClient = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: authHeader } },
+        global: { headers: { Authorization: `Bearer ${token}` } },
       });
-      const { data: { user }, error } = await userClient.auth.getUser();
-      if (error || !user?.id) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const userId = user.id;
-      // Verify org membership
-      const { data: membership } = await supabase
+      const { data: { user }, error: authError } = await userClient.auth.getUser();
+      if (authError || !user?.id) return respond({ error: "Unauthorized" }, 401);
+      actorUserId = user.id;
+
+      const { data: membership, error: membershipError } = await serviceClient
         .from("organization_members")
         .select("id")
-        .eq("user_id", userId)
-        .eq("organization_id", organization_id)
+        .eq("user_id", user.id)
+        .eq("organization_id", organizationId)
         .maybeSingle();
-      if (!membership) {
-        return new Response(JSON.stringify({ error: "Forbidden: not a member of this organization" }), {
-          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (membershipError) return respond({ error: `Organization authorization unavailable: ${membershipError.message}` }, 503);
+      if (!membership) return respond({ error: "Forbidden: not a member of this organization" }, 403);
+    }
+
+    if (datasetId) {
+      const { data: dataset, error: datasetError } = await serviceClient
+        .from("datasets")
+        .select("id")
+        .eq("id", datasetId)
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      if (datasetError) return respond({ error: `Dataset scope validation failed: ${datasetError.message}` }, 503);
+      if (!dataset) return respond({ error: "Dataset not found or does not belong to this organization" }, 403);
+    }
+
+    if (pipelineRunId) {
+      const { data: run, error: runError } = await serviceClient
+        .from("pipeline_runs")
+        .select("id,organization_id,dataset_id")
+        .eq("id", pipelineRunId)
+        .maybeSingle();
+      if (runError) return respond({ error: `Pipeline scope validation failed: ${runError.message}` }, 503);
+      if (!run || run.organization_id !== organizationId) {
+        return respond({ error: "Pipeline run does not belong to this organization" }, 403);
       }
-    }
-
-    // Verify dataset belongs to org if provided
-    if (dataset_id) {
-      const { data: ds } = await supabase.from("datasets").select("id").eq("id", dataset_id).eq("organization_id", organization_id).maybeSingle();
-      if (!ds) {
-        return new Response(JSON.stringify({ error: "Dataset not found or does not belong to this organization" }), {
-          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (datasetId && run.dataset_id !== datasetId) {
+        return respond({ error: "Pipeline run does not belong to the requested dataset" }, 403);
       }
+      if (!datasetId) datasetId = run.dataset_id;
+      pipelineRunScoped = true;
+
+      const { error: runStartError } = await serviceClient
+        .from("pipeline_runs")
+        .update({ stage: "aggregating", status: "running", error_message: null })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", organizationId)
+        .eq("dataset_id", datasetId);
+      if (runStartError) throw new Error(`Pipeline aggregation-state update failed: ${runStartError.message}`);
     }
 
-    if (pipeline_run_id) {
-      await supabase.from("pipeline_runs").update({ stage: "aggregating", status: "running" }).eq("id", pipeline_run_id);
-    }
+    const { data: aggregateRows, error: aggregateError } = await serviceClient.rpc(
+      "refresh_metric_aggregates_scoped",
+      {
+        _org_id: organizationId,
+        _dataset_id: datasetId || null,
+        _period_types: periods,
+      },
+    );
+    if (aggregateError) throw new Error(`Server-side aggregate refresh failed: ${aggregateError.message}`);
 
-    const periods = period_types || ["monthly", "quarterly", "yearly"];
+    const aggregateResult = Array.isArray(aggregateRows)
+      ? aggregateRows[0] as AggregateResult | undefined
+      : undefined;
+    if (!aggregateResult) throw new Error("Server-side aggregate refresh returned no result");
 
-    // Fetch all metrics for scope in batches to avoid 1000-row default limit
-    const allMetrics: Record<string, unknown>[] = [];
-    const PAGE_SIZE = 1000;
-    let page = 0;
-    while (true) {
-      let query = supabase
-        .from("metrics")
-        .select("metric_type, value, date, region, segment, dataset_id")
-        .eq("organization_id", organization_id)
-        .order("date", { ascending: true })
-        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    const aggregated = Math.max(0, Number(aggregateResult.aggregated_count) || 0);
+    const metricCount = Math.max(0, Number(aggregateResult.metric_count) || 0);
 
-      if (dataset_id) {
-        query = query.eq("dataset_id", dataset_id);
-      }
-
-      const { data: batch, error: fetchErr } = await query;
-      if (fetchErr) throw fetchErr;
-      if (!batch || batch.length === 0) break;
-      allMetrics.push(...batch);
-      if (batch.length < PAGE_SIZE) break;
-      page++;
-    }
-
-    const metrics = allMetrics;
-    if (metrics.length === 0) {
-      return new Response(JSON.stringify({ success: true, aggregated: 0, message: "No metrics to aggregate" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (datasetId) {
+      const { error: summaryError } = await serviceClient.rpc("refresh_metric_summaries", {
+        _org_id: organizationId,
+        _dataset_id: datasetId,
       });
+      if (summaryError) throw new Error(`Metric summary refresh failed: ${summaryError.message}`);
     }
 
-    interface AggBucket {
-      sum: number;
-      count: number;
-      min: number;
-      max: number;
-    }
-
-    const buckets = new Map<string, AggBucket>();
-
-    function getPeriodStart(dateStr: string, periodType: string): string {
-      const d = new Date(dateStr);
-      const y = d.getFullYear();
-      const m = d.getMonth();
-      switch (periodType) {
-        case "monthly":
-          return `${y}-${String(m + 1).padStart(2, "0")}-01`;
-        case "quarterly": {
-          const q = Math.floor(m / 3);
-          return `${y}-${String(q * 3 + 1).padStart(2, "0")}-01`;
-        }
-        case "yearly":
-          return `${y}-01-01`;
-        default:
-          return `${y}-${String(m + 1).padStart(2, "0")}-01`;
-      }
-    }
-
-    for (const m of metrics) {
-      for (const period of periods) {
-        const ps = getPeriodStart(String(m.date), period);
-        const key = `${m.dataset_id || "null"}|${m.metric_type}|${period}|${ps}|${m.region || ""}|${m.segment || ""}`;
-        const val = Number(m.value);
-        if (isNaN(val)) continue;
-
-        const existing = buckets.get(key);
-        if (existing) {
-          existing.sum += val;
-          existing.count += 1;
-          existing.min = Math.min(existing.min, val);
-          existing.max = Math.max(existing.max, val);
-        } else {
-          buckets.set(key, { sum: val, count: 1, min: val, max: val });
-        }
-      }
-    }
-
-    const rows: Record<string, unknown>[] = [];
-    for (const [key, agg] of buckets) {
-      const [dsId, metricType, periodType, periodStart, region, segment] = key.split("|");
-      rows.push({
-        organization_id,
-        dataset_id: dsId === "null" ? null : dsId,
-        workspace_id: workspace_id || null,
-        metric_type: metricType,
-        period_type: periodType,
-        period_start: periodStart,
-        region: region || "",
-        segment: segment || "",
-        agg_sum: agg.sum,
-        agg_count: agg.count,
-        agg_min: agg.min,
-        agg_max: agg.max,
-        agg_avg: agg.count > 0 ? agg.sum / agg.count : 0,
-        computed_at: new Date().toISOString(),
-      });
-    }
-
-    let upserted = 0;
-    for (let i = 0; i < rows.length; i += 500) {
-      const batch = rows.slice(i, i + 500);
-      const { error } = await supabase.from("metric_aggregates").upsert(batch, {
-        onConflict: "organization_id,dataset_id,metric_type,period_type,period_start,region,segment",
-      });
-      if (error) throw error;
-      upserted += batch.length;
-    }
-
-    if (pipeline_run_id) {
-      await supabase.from("pipeline_runs").update({
-        stage: "complete",
-        status: "completed",
-        aggregated_count: upserted,
-        completed_at: new Date().toISOString(),
-      }).eq("id", pipeline_run_id);
-    }
-
-    // Refresh precomputed metric summaries alongside aggregates
-    if (dataset_id) {
-      await supabase.rpc("refresh_metric_summaries", {
-        _org_id: organization_id,
-        _dataset_id: dataset_id,
-      });
-    }
-
-    // Audit log
-    await supabase.from("audit_log").insert({
-      organization_id,
+    const { error: auditError } = await serviceClient.from("audit_log").insert({
+      organization_id: organizationId,
       actor_type: isServiceCall ? "system" : "user",
+      actor_id: actorUserId,
       action_type: "refresh_aggregates",
       resource_type: "dataset",
-      resource_id: dataset_id || organization_id,
-      payload: { aggregated: upserted, periods, metric_count: metrics.length },
+      resource_id: datasetId || organizationId,
+      payload: {
+        aggregated,
+        periods,
+        metric_count: metricCount,
+        execution: "postgres_set_based",
+      },
     });
+    if (auditError) throw new Error(`Aggregate audit persistence failed: ${auditError.message}`);
 
-    return new Response(JSON.stringify({
+    if (pipelineRunId && pipelineRunScoped) {
+      const { error: runCompleteError } = await serviceClient
+        .from("pipeline_runs")
+        .update({
+          stage: "complete",
+          status: "completed",
+          aggregated_count: aggregated,
+          error_message: null,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", pipelineRunId)
+        .eq("organization_id", organizationId)
+        .eq("dataset_id", datasetId);
+      if (runCompleteError) throw new Error(`Pipeline completion persistence failed: ${runCompleteError.message}`);
+    }
+
+    return respond({
       success: true,
-      aggregated: upserted,
+      aggregated,
       periods,
-      metric_count: metrics.length,
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      metric_count: metricCount,
+      execution: "postgres_set_based",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("refresh-aggregates error:", message);
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+
+    if (serviceClient && pipelineRunId && pipelineRunScoped) {
+      try {
+        const { error: partialError } = await serviceClient
+          .from("pipeline_runs")
+          .update({
+            stage: "aggregate_failed",
+            status: "partial",
+            error_message: message.slice(0, 2000),
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", pipelineRunId);
+        if (partialError) console.error("refresh-aggregates pipeline failure bookkeeping error:", partialError.message);
+      } catch (bookkeepingError) {
+        console.error("refresh-aggregates pipeline failure bookkeeping exception:", bookkeepingError);
+      }
+    }
+
+    return respond({ error: message }, 500);
   }
 });
