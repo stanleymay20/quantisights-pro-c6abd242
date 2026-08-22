@@ -11,8 +11,8 @@ interface DatasetRequiredProps {
 }
 
 /**
- * Gates data-dependent modules on a verified active dataset.
- * Query failure is rendered as unavailable evidence, never as onboarding/empty.
+ * Gates data-dependent modules on a verified Org → Workspace → Project → Dataset
+ * hierarchy. Read failures are unavailable evidence, never onboarding/empty data.
  */
 const DatasetRequired = ({
   children,
@@ -21,12 +21,15 @@ const DatasetRequired = ({
 }: DatasetRequiredProps) => {
   const {
     hasOrg,
+    hasWorkspace,
     hasProject,
     hasDataset,
     contextLoading,
     contextError,
+    workspaceEvidenceReady,
+    projectEvidenceReady,
     datasetEvidenceReady,
-    refreshDatasets,
+    retryContext,
   } = useActiveDataContext();
   const navigate = useNavigate();
 
@@ -38,36 +41,52 @@ const DatasetRequired = ({
     );
   }
 
-  if (contextError || (hasOrg && hasProject && !datasetEvidenceReady)) {
+  const unresolvedVerifiedLayer = hasOrg && (
+    !workspaceEvidenceReady
+    || (hasWorkspace && !projectEvidenceReady)
+    || (hasProject && !datasetEvidenceReady)
+  );
+
+  if (contextError || unresolvedVerifiedLayer) {
     return (
       <EmptyState
         icon={<AlertTriangle className="w-8 h-8 text-destructive" />}
-        title="Dataset context unavailable"
-        description={contextError ?? "Quantivis could not verify the datasets linked to this project. No empty-data claim has been made."}
+        title="Data context unavailable"
+        description={contextError ?? "Quantivis could not verify the active workspace, project, or dataset hierarchy. No empty-data claim has been made."}
         action={
-          <Button size="sm" variant="outline" onClick={() => void refreshDatasets()}>
+          <Button size="sm" variant="outline" onClick={() => void retryContext()}>
             <RefreshCw className="w-4 h-4 mr-2" />
-            Retry Dataset Verification
+            Retry Context Verification
           </Button>
         }
       />
     );
   }
 
-  if (!hasOrg || !hasProject || !hasDataset) {
-    const headline = !hasDataset
+  if (!hasOrg || !hasWorkspace || !hasProject || !hasDataset) {
+    const missingLayer = !hasOrg
+      ? "organization"
+      : !hasWorkspace
+        ? "workspace"
+        : !hasProject
+          ? "project"
+          : "dataset";
+
+    const headline = missingLayer === "dataset"
       ? `${moduleName} needs data to work`
-      : "Connect your data to get started";
+      : `Select a ${missingLayer} to use ${moduleName}`;
 
     const body = moduleDescription
-      ?? `Upload a CSV or connect a data source — ${moduleName.toLowerCase()} activates once Quantivis has a verified active dataset.`;
+      ?? (missingLayer === "dataset"
+        ? `Upload a CSV or connect a data source — ${moduleName.toLowerCase()} activates once Quantivis has a verified active dataset.`
+        : `Quantivis verified the current context and found no active ${missingLayer}. Select or create one before using ${moduleName.toLowerCase()}.`);
 
     return (
       <EmptyState
         icon={<Database className="w-8 h-8 text-primary" />}
         title={headline}
         description={body}
-        action={
+        action={missingLayer === "dataset" ? (
           <div className="flex flex-col sm:flex-row items-center gap-3">
             <Button size="sm" onClick={() => navigate("/data-upload")}>
               <Upload className="w-4 h-4 mr-2" />
@@ -78,7 +97,7 @@ const DatasetRequired = ({
               Try with Sample Data
             </Button>
           </div>
-        }
+        ) : undefined}
       />
     );
   }
