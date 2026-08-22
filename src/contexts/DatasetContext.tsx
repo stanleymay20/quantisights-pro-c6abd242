@@ -19,6 +19,8 @@ interface DatasetContextType {
   activeDataset: Dataset | null;
   activeDatasetId: string | null;
   loading: boolean;
+  error: string | null;
+  evidenceReady: boolean;
   refreshDatasets: () => Promise<void>;
 }
 
@@ -35,10 +37,14 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
   const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [evidenceReady, setEvidenceReady] = useState(false);
   const requestSeq = useRef(0);
 
   const fetchDatasets = useCallback(async () => {
     const seq = ++requestSeq.current;
+    setError(null);
+    setEvidenceReady(false);
 
     if (workspaceLoading || projectLoading) {
       setDatasets([]);
@@ -49,9 +55,11 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
     if (!currentWorkspaceId || !currentProjectId || !currentProject) {
       setDatasets([]);
       setLoading(false);
+      setEvidenceReady(true);
       return;
     }
 
+    setDatasets([]);
     setLoading(true);
     const { data: links, error: linkErr } = await supabase
       .from("project_datasets")
@@ -61,8 +69,10 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
     if (seq !== requestSeq.current) return;
 
     if (linkErr) {
-      console.error("[DatasetContext] Failed to fetch project_datasets:", linkErr.message);
+      const message = `Unable to verify project datasets: ${linkErr.message}`;
+      console.error("[DatasetContext]", message);
       setDatasets([]);
+      setError(message);
       setLoading(false);
       return;
     }
@@ -70,11 +80,12 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
     const dsIds = [...new Set((links ?? []).map((link) => link.dataset_id).filter(Boolean))];
     if (dsIds.length === 0) {
       setDatasets([]);
+      setEvidenceReady(true);
       setLoading(false);
       return;
     }
 
-    const { data, error } = await supabase
+    const { data, error: datasetError } = await supabase
       .from("datasets")
       .select("id, name, organization_id, status, row_count, is_stale, created_at, file_path")
       .eq("organization_id", currentProject.organization_id)
@@ -83,36 +94,34 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
 
     if (seq !== requestSeq.current) return;
 
-    if (error) {
-      console.error("[DatasetContext] Failed to fetch datasets:", error.message);
+    if (datasetError) {
+      const message = `Unable to verify linked datasets: ${datasetError.message}`;
+      console.error("[DatasetContext]", message);
       setDatasets([]);
+      setError(message);
       setLoading(false);
       return;
     }
 
-    // A linked dataset must still belong to the same organization as the
-    // project. RLS should enforce this server-side; keep the client invariant as
-    // a second line of defence and to prevent stale/malformed links in the UI.
-    setDatasets((data ?? []).filter((dataset) => dataset.organization_id === currentProject.organization_id));
+    const verified = (data ?? []).filter((dataset) => dataset.organization_id === currentProject.organization_id);
+    setDatasets(verified);
+    setEvidenceReady(true);
     setLoading(false);
   }, [currentWorkspaceId, currentProjectId, currentProject, workspaceLoading, projectLoading]);
 
   useEffect(() => {
-    // Incrementing occurs inside fetchDatasets. Clearing first ensures a previous
-    // project's dataset can never remain visible while the new query resolves.
     setDatasets([]);
+    setError(null);
+    setEvidenceReady(false);
     setLoading(workspaceLoading || projectLoading || !!currentProjectId);
     void fetchDatasets();
   }, [fetchDatasets, workspaceLoading, projectLoading, currentProjectId]);
 
   const activeDataset = useMemo(
-    () => datasets.find((dataset) => dataset.id === projectActiveDatasetId) ?? null,
-    [datasets, projectActiveDatasetId]
+    () => evidenceReady ? datasets.find((dataset) => dataset.id === projectActiveDatasetId) ?? null : null,
+    [datasets, projectActiveDatasetId, evidenceReady]
   );
 
-  // Expose only a resolved, project-linked dataset ID. A stale
-  // projects.active_dataset_id must not make downstream modules query a dataset
-  // that DatasetContext could not verify.
   const activeDatasetId = activeDataset?.id ?? null;
 
   return (
@@ -122,6 +131,8 @@ export const DatasetProvider = ({ children }: { children: ReactNode }) => {
         activeDataset,
         activeDatasetId,
         loading,
+        error,
+        evidenceReady,
         refreshDatasets: fetchDatasets,
       }}
     >
