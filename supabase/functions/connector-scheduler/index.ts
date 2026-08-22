@@ -91,6 +91,30 @@ Deno.serve(async (req: Request) => {
     const skipped: string[] = [];
 
     for (const sched of (schedules ?? []) as ScheduleRow[]) {
+      // Resolve a real dispatch target before claiming the schedule. Unsupported
+      // connectors must never advance last_dispatch_at/next_run_at as though an
+      // invocation occurred.
+      const { data: cRow, error: connectorError } = await svc
+        .from("data_connectors")
+        .select("connector_type,status")
+        .eq("id", sched.connector_id)
+        .eq("organization_id", sched.organization_id)
+        .maybeSingle();
+      if (connectorError || !cRow || cRow.status === "paused") {
+        skipped.push(sched.connector_id);
+        continue;
+      }
+
+      const fnName = pickFunction(cRow.connector_type);
+      if (!fnName) {
+        log.warn("no certified scheduler target for connector", {
+          connector: sched.connector_id,
+          connector_type: cRow.connector_type,
+        });
+        skipped.push(sched.connector_id);
+        continue;
+      }
+
       const intervalMs = NEXT_INTERVAL_MS[sched.schedule_kind] ?? 60 * 60 * 1000;
       const nextRun = new Date(now.getTime() + intervalMs).toISOString();
 
@@ -114,30 +138,13 @@ Deno.serve(async (req: Request) => {
         continue;
       }
 
-      // Look up the connector inside the same organization before dispatch.
-      const { data: cRow, error: connectorError } = await svc
-        .from("data_connectors")
-        .select("connector_type,status")
-        .eq("id", sched.connector_id)
-        .eq("organization_id", sched.organization_id)
-        .maybeSingle();
-      if (connectorError || !cRow || cRow.status === "paused") {
-        skipped.push(sched.connector_id);
-        continue;
-      }
-
-      const fnName = pickFunction(cRow.connector_type);
-      if (!fnName) {
-        skipped.push(sched.connector_id);
-        continue;
-      }
-
       const url = `${supabaseUrl}/functions/v1/${fnName}`;
       try {
         const response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${serviceKey}`,
             "x-cron-secret": provided,
             apikey: anonKey,
           },
@@ -184,7 +191,10 @@ function pickFunction(connectorType: string): string | null {
   switch (connectorType) {
     case "rest_api":
       return "connector-rest-sync";
-    // csv_upload, postgres, mysql, snowflake, bigquery: not yet wired
+    case "hubspot":
+      return "connector-pull";
+    // Salesforce remains pilot-hardening until OAuth provisioning is certified.
+    // csv_upload, postgres, mysql, snowflake, bigquery: not yet scheduler-wired.
     default:
       return null;
   }
