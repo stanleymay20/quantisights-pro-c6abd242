@@ -2,8 +2,8 @@
  * Phase 6A — Governance Audit Writer
  *
  * Append-only record of which governance configuration influenced a given
- * advisory / intervention / decision. Surfaced in UI for "Why did I receive
- * this?" and used as procurement / regulator evidence.
+ * advisory / intervention / decision. Governance evidence is part of the
+ * trusted decision record, so failed writes must be observable to callers.
  */
 import type { GovernanceProfile } from "./governance-profile.ts";
 
@@ -24,36 +24,38 @@ export async function recordGovernanceUse(
   serviceKey: string,
   entry: GovernanceAuditEntry,
 ): Promise<void> {
-  try {
-    await fetch(`${supabaseUrl}/rest/v1/context_governance_audit`, {
-      method: "POST",
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify({
-        organization_id: entry.organization_id,
-        subject_type: entry.subject_type,
-        subject_id: entry.subject_id,
-        governance_profile_id: entry.profile.id,
-        governance_profile_version: entry.profile.version,
-        governance_model: entry.profile.governance_model,
-        risk_profile: entry.profile.risk_appetite,
-        context_pack: entry.context_pack ?? null,
-        engine_version: entry.engine_version ?? "phase-6a",
-        thresholds_applied: entry.thresholds_applied,
-        approval_rules_applied: entry.approval_rules_applied,
-        decision_path: entry.decision_path,
-      }),
-    });
-  } catch (e) {
-    console.warn("[governance-audit] write failed", (e as Error).message);
+  const response = await fetch(`${supabaseUrl}/rest/v1/context_governance_audit`, {
+    method: "POST",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify({
+      organization_id: entry.organization_id,
+      subject_type: entry.subject_type,
+      subject_id: entry.subject_id,
+      governance_profile_id: entry.profile.id,
+      governance_profile_version: entry.profile.version,
+      governance_model: entry.profile.governance_model,
+      risk_profile: entry.profile.risk_appetite,
+      context_pack: entry.context_pack ?? null,
+      engine_version: entry.engine_version ?? "phase-6a",
+      thresholds_applied: entry.thresholds_applied,
+      approval_rules_applied: entry.approval_rules_applied,
+      decision_path: entry.decision_path,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`governance audit write failed (${response.status}): ${body.slice(0, 300)}`);
   }
 }
 
-/** Build the user-facing "Why did I receive this?" governance_context blob */
+/** Build the user-facing "Why did I receive this?" governance_context blob. */
 export function buildGovernanceContext(
   profile: GovernanceProfile,
   thresholds: Record<string, number>,
