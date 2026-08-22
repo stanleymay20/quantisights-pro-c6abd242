@@ -79,15 +79,40 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
   const [compensationRequests, setCompensationRequests] = useState<ExecutionCompensationRequest[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const clearEvidence = useCallback(() => {
+    setPlans([]);
+    setEvents([]);
+    setReceipts([]);
+    setCompensationRequests([]);
+  }, []);
+
+  const requireAuth = useCallback(async () => {
+    const auth = await getVerifiedAuth();
+    if (auth) return auth;
+    toast({ title: "Authentication required", description: "Your session could not be verified. Please sign in again.", variant: "destructive" });
+    return null;
+  }, [toast]);
 
   const fetchTimeline = useCallback(async () => {
-    if (!organizationId || !decisionId) return;
+    if (!organizationId || !decisionId) {
+      clearEvidence();
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    // Clear previous decision/org evidence before loading the next verified
+    // context. Stale execution state must never bridge tenants or decisions.
+    clearEvidence();
+    setError(null);
     setLoading(true);
     try {
       const auth = await getVerifiedAuth();
-      if (!auth) return;
+      if (!auth) throw new Error("Authentication could not be verified.");
 
-      const { data, error } = await invokeWithRetry<{ plans: ExecutionPlan[]; events: ExecutionEvent[] }>(
+      const { data, error: timelineError } = await invokeWithRetry<{ plans: ExecutionPlan[]; events: ExecutionEvent[] }>(
         "execute-decision-action",
         {
           body: { action: "get_timeline", organization_id: organizationId, decision_id: decisionId },
@@ -95,11 +120,14 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
         },
       );
 
-      if (error) throw error;
-      setPlans(data?.plans || []);
-      setEvents(data?.events || []);
+      if (timelineError) throw timelineError;
+      if (!data || !Array.isArray(data.plans) || !Array.isArray(data.events)) {
+        throw new Error("Execution timeline service returned an incomplete evidence payload.");
+      }
 
-      // Service-role-only execution records are exposed through tenant-checking RPC projections.
+      // Service-role-only execution records are exposed through tenant-checking
+      // RPC projections. These are part of execution truth, so either projection
+      // being unavailable degrades the whole timeline rather than becoming [].
       const [receiptResult, compensationResult] = await Promise.all([
         (supabase as any).rpc("list_execution_action_receipts", {
           p_organization_id: organizationId,
@@ -112,47 +140,48 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       ]);
 
       if (receiptResult.error) {
-        console.error("Failed to fetch execution receipts:", receiptResult.error);
-        setReceipts([]);
-      } else {
-        setReceipts(Array.isArray(receiptResult.data) ? receiptResult.data as ExecutionReceipt[] : []);
+        throw new Error(`Execution receipts unavailable: ${receiptResult.error.message}`);
+      }
+      if (compensationResult.error) {
+        throw new Error(`Compensation evidence unavailable: ${compensationResult.error.message}`);
+      }
+      if (!Array.isArray(receiptResult.data) || !Array.isArray(compensationResult.data)) {
+        throw new Error("Execution evidence projections returned an invalid payload.");
       }
 
-      if (compensationResult.error) {
-        console.error("Failed to fetch compensation requests:", compensationResult.error);
-        setCompensationRequests([]);
-      } else {
-        setCompensationRequests(
-          Array.isArray(compensationResult.data)
-            ? compensationResult.data as ExecutionCompensationRequest[]
-            : [],
-        );
-      }
+      setPlans(data.plans);
+      setEvents(data.events);
+      setReceipts(receiptResult.data as ExecutionReceipt[]);
+      setCompensationRequests(compensationResult.data as ExecutionCompensationRequest[]);
+      setError(null);
     } catch (e: unknown) {
-      console.error("Failed to fetch timeline:", e);
+      const message = e instanceof Error ? e.message : "Execution evidence could not be verified.";
+      console.error("Failed to fetch execution evidence:", e);
+      clearEvidence();
+      setError(message);
     } finally {
       setLoading(false);
     }
-  }, [organizationId, decisionId]);
+  }, [organizationId, decisionId, clearEvidence]);
 
   useEffect(() => {
-    fetchTimeline();
+    void fetchTimeline();
   }, [fetchTimeline]);
 
   useEffect(() => {
-    if (!decisionId) return;
-    return createSafeChannel(`exec-plans-${decisionId}`, (channel) =>
+    if (!organizationId || !decisionId) return;
+    return createSafeChannel(`exec-plans-${organizationId}-${decisionId}`, (channel) =>
       channel.on("postgres_changes", {
         event: "*",
         schema: "public",
         table: "execution_plans",
         filter: `decision_id=eq.${decisionId}`,
       }, () => {
-        fetchTimeline();
+        void fetchTimeline();
       })
       .subscribe()
     );
-  }, [decisionId, fetchTimeline]);
+  }, [organizationId, decisionId, fetchTimeline]);
 
   const createPlan = useCallback(async (params: {
     action_title: string;
@@ -163,10 +192,10 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     trigger_config?: Record<string, unknown>;
   }) => {
     if (!organizationId || !decisionId) return null;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return null;
 
-    const { data, error } = await invokeWithRetry("execute-decision-action", {
+    const { data, error: createError } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "create_plan",
         organization_id: organizationId,
@@ -176,24 +205,24 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       headers: authHeaders(auth),
     });
 
-    if (error) {
-      toast({ title: "Failed to create action", description: error.message, variant: "destructive" });
+    if (createError || !data) {
+      toast({ title: "Failed to create action", description: createError?.message ?? "Execution service returned no creation confirmation.", variant: "destructive" });
       return null;
     }
     toast({ title: "Execution action created" });
-    fetchTimeline();
+    await fetchTimeline();
     return data;
-  }, [organizationId, decisionId, toast, fetchTimeline]);
+  }, [organizationId, decisionId, toast, fetchTimeline, requireAuth]);
 
   const updatePlanStatus = useCallback(async (planId: string, status: string, notes?: string) => {
     if (!organizationId) return;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return;
 
     const previousPlans = plans;
     setPlans(prev => prev.map(p => p.id === planId ? { ...p, status } : p));
 
-    const { error } = await invokeWithRetry("execute-decision-action", {
+    const { error: updateError } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "update_plan_status",
         organization_id: organizationId,
@@ -204,23 +233,23 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       headers: authHeaders(auth),
     });
 
-    if (error) {
+    if (updateError) {
       setPlans(previousPlans);
-      toast({ title: "Failed to update status", description: error.message, variant: "destructive" });
+      toast({ title: "Failed to update status", description: updateError.message, variant: "destructive" });
     } else {
       toast({ title: `Action marked as ${status}` });
-      fetchTimeline();
+      await fetchTimeline();
     }
-  }, [organizationId, plans, toast, fetchTimeline]);
+  }, [organizationId, plans, toast, fetchTimeline, requireAuth]);
 
   const triggerWebhook = useCallback(async (planId: string, webhookUrl: string, payload?: Record<string, unknown>) => {
     if (!organizationId) return;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return;
 
     const idempotencyKey = crypto.randomUUID();
 
-    const { data, error } = await invokeWithRetry("execute-decision-action", {
+    const { data, error: webhookError } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "trigger_webhook",
         organization_id: organizationId,
@@ -232,22 +261,22 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       headers: authHeaders(auth),
     });
 
-    if (error || !(data as Record<string, unknown>)?.success) {
-      toast({ title: "Webhook failed", variant: "destructive" });
+    if (webhookError || !(data as Record<string, unknown> | null)?.success) {
+      toast({ title: "Webhook failed", description: webhookError?.message ?? "No successful execution receipt was returned.", variant: "destructive" });
     } else {
       toast({ title: "Webhook triggered successfully" });
     }
-    fetchTimeline();
-  }, [organizationId, toast, fetchTimeline]);
+    await fetchTimeline();
+  }, [organizationId, toast, fetchTimeline, requireAuth]);
 
   const notifySlack = useCallback(async (planId: string, channel: string, message: string) => {
     if (!organizationId) return;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return;
 
     const idempotencyKey = crypto.randomUUID();
 
-    const { data, error } = await invokeWithRetry("execute-decision-action", {
+    const { data, error: slackError } = await invokeWithRetry("execute-decision-action", {
       body: {
         action: "notify_slack",
         organization_id: organizationId,
@@ -259,13 +288,13 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       headers: authHeaders(auth),
     });
 
-    if (error || !(data as Record<string, unknown>)?.success) {
-      toast({ title: "Slack notification failed", variant: "destructive" });
+    if (slackError || !(data as Record<string, unknown> | null)?.success) {
+      toast({ title: "Slack notification failed", description: slackError?.message ?? "No successful execution receipt was returned.", variant: "destructive" });
     } else {
       toast({ title: "Slack notification sent" });
     }
-    fetchTimeline();
-  }, [organizationId, toast, fetchTimeline]);
+    await fetchTimeline();
+  }, [organizationId, toast, fetchTimeline, requireAuth]);
 
   const reconcileReceipt = useCallback(async (
     receiptId: string,
@@ -274,7 +303,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     externalReference?: string,
   ) => {
     if (!organizationId) return null;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return null;
 
     const normalizedNote = note.trim();
@@ -287,7 +316,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       return null;
     }
 
-    const { data, error } = await (supabase as any).rpc(
+    const { data, error: reconcileError } = await (supabase as any).rpc(
       "reconcile_execution_action_receipt",
       {
         p_organization_id: organizationId,
@@ -298,15 +327,15 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       },
     );
 
-    if (error) {
-      toast({ title: "Reconciliation failed", description: error.message, variant: "destructive" });
+    if (reconcileError || !data) {
+      toast({ title: "Reconciliation failed", description: reconcileError?.message ?? "No reconciliation confirmation was returned.", variant: "destructive" });
       return null;
     }
 
     toast({ title: `Execution receipt reconciled as ${resolution}` });
     await fetchTimeline();
     return data;
-  }, [organizationId, toast, fetchTimeline]);
+  }, [organizationId, toast, fetchTimeline, requireAuth]);
 
   const requestCompensation = useCallback(async (params: {
     receiptId: string;
@@ -316,7 +345,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     evidence?: Record<string, unknown>;
   }) => {
     if (!organizationId) return null;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return null;
 
     const reason = params.reason.trim();
@@ -330,7 +359,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       return null;
     }
 
-    const { data, error } = await (supabase as any).rpc("request_execution_compensation", {
+    const { data, error: compensationError } = await (supabase as any).rpc("request_execution_compensation", {
       p_organization_id: organizationId,
       p_receipt_id: params.receiptId,
       p_compensation_type: "webhook",
@@ -342,15 +371,15 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       p_evidence: params.evidence || {},
     });
 
-    if (error) {
-      toast({ title: "Compensation request failed", description: error.message, variant: "destructive" });
+    if (compensationError || !data) {
+      toast({ title: "Compensation request failed", description: compensationError?.message ?? "No compensation request confirmation was returned.", variant: "destructive" });
       return null;
     }
 
     toast({ title: "Compensation submitted for independent review" });
     await fetchTimeline();
     return data;
-  }, [organizationId, toast, fetchTimeline]);
+  }, [organizationId, toast, fetchTimeline, requireAuth]);
 
   const reviewCompensation = useCallback(async (
     requestId: string,
@@ -358,7 +387,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     note: string,
   ) => {
     if (!organizationId) return null;
-    const auth = await getVerifiedAuth();
+    const auth = await requireAuth();
     if (!auth) return null;
 
     const normalizedNote = note.trim();
@@ -371,22 +400,22 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
       return null;
     }
 
-    const { data, error } = await (supabase as any).rpc("review_execution_compensation", {
+    const { data, error: reviewError } = await (supabase as any).rpc("review_execution_compensation", {
       p_organization_id: organizationId,
       p_request_id: requestId,
       p_decision: decision,
       p_note: normalizedNote,
     });
 
-    if (error) {
-      toast({ title: "Compensation review failed", description: error.message, variant: "destructive" });
+    if (reviewError || !data) {
+      toast({ title: "Compensation review failed", description: reviewError?.message ?? "No compensation review confirmation was returned.", variant: "destructive" });
       return null;
     }
 
     toast({ title: `Compensation ${decision}` });
     await fetchTimeline();
     return data;
-  }, [organizationId, toast, fetchTimeline]);
+  }, [organizationId, toast, fetchTimeline, requireAuth]);
 
   const completionRate = plans.length > 0
     ? plans.filter(p => p.status === "completed").length / plans.length
@@ -396,6 +425,7 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
   const pendingCompensations = compensationRequests.filter(request => request.status === "requested");
   const approvedCompensations = compensationRequests.filter(request => request.status === "approved");
   const uncertainCompensations = compensationRequests.filter(request => request.status === "uncertain");
+  const evidenceReady = Boolean(organizationId && decisionId && !loading && !error);
 
   return {
     plans,
@@ -408,6 +438,8 @@ export const useExecutionPlans = (organizationId: string | null, decisionId: str
     approvedCompensations,
     uncertainCompensations,
     loading,
+    error,
+    evidenceReady,
     createPlan,
     updatePlanStatus,
     triggerWebhook,
