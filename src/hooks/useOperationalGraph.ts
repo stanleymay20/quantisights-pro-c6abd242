@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveDataContext } from "@/hooks/useActiveDataContext";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
@@ -95,10 +95,34 @@ export const useOperationalGraph = () => {
   const [governance, setGovernance] = useState<GovernanceEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const scopeRef = useRef<string | null>(null);
+
+  const clearGraph = useCallback(() => {
+    setNodes([]);
+    setEdges([]);
+    setScores([]);
+    setAttention([]);
+    setPatterns([]);
+    setGovernance([]);
+  }, []);
 
   const refresh = useCallback(async () => {
-    if (!orgId) return;
+    if (!orgId) {
+      scopeRef.current = null;
+      clearGraph();
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (scopeRef.current !== orgId) {
+      scopeRef.current = orgId;
+      clearGraph();
+    }
+
     setLoading(true);
+    setError(null);
     try {
       const sb = supabase as unknown as { from: (t: string) => any };
       const [n, e, s, a, p, g] = await Promise.all([
@@ -109,57 +133,94 @@ export const useOperationalGraph = () => {
         sb.from("graph_memory_patterns").select("*").eq("organization_id", orgId).order("recurrence_frequency", { ascending: false }).limit(25),
         sb.from("graph_governance_events").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(50),
       ]);
+
+      const failures = [
+        ["nodes", n.error],
+        ["edges", e.error],
+        ["topology scores", s.error],
+        ["attention views", a.error],
+        ["memory patterns", p.error],
+        ["governance events", g.error],
+      ].filter(([, queryError]) => Boolean(queryError)) as Array<[string, { message?: string }]>;
+
+      if (failures.length > 0) {
+        const message = failures.map(([surface, queryError]) => `${surface}: ${queryError.message ?? "query failed"}`).join("; ");
+        clearGraph();
+        setError(`Operational graph evidence could not be verified: ${message}`);
+        return;
+      }
+
       setNodes((n.data as GraphNode[]) || []);
       setEdges((e.data as GraphEdge[]) || []);
       setScores((s.data as TopologyScore[]) || []);
       setAttention((a.data as AttentionView[]) || []);
       setPatterns((p.data as MemoryPattern[]) || []);
       setGovernance((g.data as GovernanceEvent[]) || []);
+      setError(null);
+    } catch (e) {
+      clearGraph();
+      setError(e instanceof Error ? e.message : "Operational graph refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [clearGraph, orgId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const rebuildGraph = useCallback(async () => {
-    if (!orgId) return null;
+    if (!orgId) throw new Error("Organization context is required to rebuild the operational graph.");
     setBusy(true);
+    setError(null);
     try {
       const auth = await getVerifiedAuth();
-      if (!auth) return null;
-      const { data } = await invokeWithRetry("build-operational-graph", {
+      if (!auth) throw new Error("A verified authenticated session is required to rebuild the operational graph.");
+
+      const build = await invokeWithRetry("build-operational-graph", {
         body: { organization_id: orgId },
         headers: authHeaders(auth),
       });
-      await invokeWithRetry("compute-graph-topology", {
+      if (build.error) throw build.error;
+      if (!build.data) throw new Error("Operational graph build returned no confirmation.");
+
+      const topology = await invokeWithRetry("compute-graph-topology", {
         body: { organization_id: orgId },
         headers: authHeaders(auth),
       });
-      await invokeWithRetry("compress-graph-attention", {
+      if (topology.error) throw topology.error;
+
+      const compression = await invokeWithRetry("compress-graph-attention", {
         body: { organization_id: orgId },
         headers: authHeaders(auth),
       });
+      if (compression.error) throw compression.error;
+
       await refresh();
-      return data;
+      return build.data;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Operational graph rebuild failed";
+      setError(message);
+      throw e instanceof Error ? e : new Error(message);
     } finally {
       setBusy(false);
     }
   }, [orgId, refresh]);
 
   const traverse = useCallback(
-    async (start_node_id: string, traversal_type: string): Promise<TraversalResult | null> => {
-      if (!orgId) return null;
+    async (start_node_id: string, traversal_type: string): Promise<TraversalResult> => {
+      if (!orgId) throw new Error("Organization context is required for graph traversal.");
       const auth = await getVerifiedAuth();
-      if (!auth) return null;
-      const { data } = await invokeWithRetry("graph-reasoning-engine", {
+      if (!auth) throw new Error("A verified authenticated session is required for graph traversal.");
+      const { data, error: traversalError } = await invokeWithRetry("graph-reasoning-engine", {
         body: { organization_id: orgId, start_node_id, traversal_type },
         headers: authHeaders(auth),
       });
-      return (data as any)?.traversal ?? null;
+      if (traversalError) throw traversalError;
+      const traversal = (data as any)?.traversal as TraversalResult | undefined;
+      if (!traversal) throw new Error("Graph reasoning returned no traversal evidence.");
+      return traversal;
     },
     [orgId],
   );
 
-  return { nodes, edges, scores, attention, patterns, governance, loading, busy, refresh, rebuildGraph, traverse };
+  return { nodes, edges, scores, attention, patterns, governance, loading, busy, error, refresh, rebuildGraph, traverse };
 };
