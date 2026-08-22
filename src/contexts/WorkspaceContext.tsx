@@ -39,7 +39,12 @@ const toSlug = (name: string) =>
 
 export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  const { currentOrgId } = useOrganization();
+  const {
+    currentOrgId,
+    loading: orgLoading,
+    error: orgError,
+    evidenceReady: orgEvidenceReady,
+  } = useOrganization();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +56,22 @@ export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
     const seq = ++requestSeq.current;
     setError(null);
     setEvidenceReady(false);
+
+    if (orgLoading) {
+      setWorkspaces([]);
+      setCurrentWorkspaceId(null);
+      setLoading(true);
+      return;
+    }
+
+    if (orgError || !orgEvidenceReady) {
+      setWorkspaces([]);
+      setCurrentWorkspaceId(null);
+      sessionStorage.removeItem(STORAGE_KEY);
+      setError(orgError ? `Organization context unavailable: ${orgError}` : "Organization context is not verified.");
+      setLoading(false);
+      return;
+    }
 
     if (!currentOrgId || !user) {
       setWorkspaces([]);
@@ -124,7 +145,7 @@ export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
     else sessionStorage.removeItem(STORAGE_KEY);
     setEvidenceReady(true);
     setLoading(false);
-  }, [currentOrgId, user]);
+  }, [currentOrgId, user, orgLoading, orgError, orgEvidenceReady]);
 
   useEffect(() => {
     setWorkspaces([]);
@@ -153,7 +174,9 @@ export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
   }, [workspaces, currentWorkspaceId, evidenceReady, error]);
 
   const createWorkspace = useCallback(async (name: string, description?: string): Promise<Workspace> => {
-    if (!currentOrgId || !user) throw new Error("No organization or authenticated user");
+    if (!currentOrgId || !user || orgLoading || orgError || !orgEvidenceReady) {
+      throw new Error("Verified organization context required");
+    }
 
     const trimmed = name.trim().slice(0, 100);
     if (!trimmed) throw new Error("Workspace name is required");
@@ -197,7 +220,7 @@ export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
     sessionStorage.setItem(STORAGE_KEY, data.id);
     sessionStorage.removeItem("quantivis_project_id");
     return data;
-  }, [currentOrgId, user]);
+  }, [currentOrgId, user, orgLoading, orgError, orgEvidenceReady]);
 
   const currentWorkspace = evidenceReady && !error
     ? workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null
