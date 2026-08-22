@@ -117,16 +117,23 @@ export default function ExecutiveDailyDriver({
   } = useExecutiveIntelligence();
   const [decisions, setDecisions] = useState<PendingDecision[]>([]);
   const [attributions, setAttributions] = useState<Record<string, DecisionValueAttribution>>({});
+  const [decisionLoadError, setDecisionLoadError] = useState<string | null>(null);
+  const [valueLoadError, setValueLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!orgId || !datasetId) {
       setDecisions([]);
       setAttributions({});
+      setDecisionLoadError(null);
+      setValueLoadError(null);
       return;
     }
 
     let cancelled = false;
     const load = async () => {
+      setDecisionLoadError(null);
+      setValueLoadError(null);
+
       const { data, error } = await (supabase as any)
         .from("decision_ledger")
         .select("id,recommended_action,decision_type,capped_confidence,created_at")
@@ -142,14 +149,17 @@ export default function ExecutiveDailyDriver({
         console.error("[ExecutiveDailyDriver] decision load failed", error);
         setDecisions([]);
         setAttributions({});
+        setDecisionLoadError(error.message ?? "Priority decisions could not be verified.");
         return;
       }
 
       const rows = (data ?? []) as PendingDecision[];
       setDecisions(rows);
+      setDecisionLoadError(null);
       const ids = rows.map((row) => row.id);
       if (ids.length === 0) {
         setAttributions({});
+        setValueLoadError(null);
         return;
       }
 
@@ -163,9 +173,11 @@ export default function ExecutiveDailyDriver({
       if (valueError) {
         console.warn("[ExecutiveDailyDriver] decision value unavailable", valueError);
         setAttributions({});
+        setValueLoadError(valueError.message ?? "Decision value evidence could not be verified.");
         return;
       }
 
+      setValueLoadError(null);
       setAttributions(
         Object.fromEntries(
           ((values ?? []) as DecisionValueAttribution[]).map((row) => [row.decision_id, row]),
@@ -188,6 +200,9 @@ export default function ExecutiveDailyDriver({
   );
 
   const valueSummary = useMemo(() => {
+    if (valueLoadError) {
+      return { label: "Decision value", value: "Unavailable", note: "Could not verify value evidence" };
+    }
     const rows = Object.values(attributions);
     const currencies = new Set(rows.map((row) => row.currency));
     if (rows.length === 0) return { label: "Decision value", value: "Evidence pending", note: "No monetary claim yet" };
@@ -218,7 +233,7 @@ export default function ExecutiveDailyDriver({
       };
     }
     return { label: "Decision value", value: "Evidence pending", note: "No monetary claim yet" };
-  }, [attributions]);
+  }, [attributions, valueLoadError]);
 
   const firstDecision = decisions[0];
   const date = new Date().toLocaleDateString("en-GB", {
@@ -239,9 +254,11 @@ export default function ExecutiveDailyDriver({
             </h1>
             <p className="mt-2 text-sm text-muted-foreground">{date}</p>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {firstDecision
-                ? `${decisions.length} priority decision${decisions.length === 1 ? "" : "s"} are ready for executive review. Start with the highest-ranked item below.`
-                : "No priority decision is waiting right now. Review the executive brief for emerging risks, opportunities and measured outcomes."}
+              {decisionLoadError
+                ? "Priority decisions could not be verified. Quantivis is withholding the executive all-clear until the decision ledger is available."
+                : firstDecision
+                  ? `${decisions.length} priority decision${decisions.length === 1 ? "" : "s"} are ready for executive review. Start with the highest-ranked item below.`
+                  : "No priority decision is waiting right now. Review the executive brief for emerging risks, opportunities and measured outcomes."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -257,14 +274,18 @@ export default function ExecutiveDailyDriver({
         </div>
       </section>
 
-      {degraded && (
+      {(degraded || decisionLoadError || valueLoadError) && (
         <section className="rounded-xl border border-destructive/30 bg-destructive/[0.04] p-4" aria-live="polite">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
             <div>
-              <p className="text-sm font-semibold">Intelligence coverage is degraded</p>
+              <p className="text-sm font-semibold">Executive evidence coverage is degraded</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {degradedSurfaces.length} source surface{degradedSurfaces.length === 1 ? " is" : "s are"} unhealthy. Decisions remain available, but the brief may be incomplete rather than a genuine all-clear.
+                {decisionLoadError
+                  ? "Priority decision evidence is unavailable, so Quantivis is not presenting a no-action-required state."
+                  : valueLoadError
+                    ? "Decision value evidence is unavailable. Decision workflow remains visible, but monetary evidence is explicitly unverified."
+                    : `${degradedSurfaces.length} source surface${degradedSurfaces.length === 1 ? " is" : "s are"} unhealthy. Decisions remain available, but the brief may be incomplete rather than a genuine all-clear.`}
               </p>
             </div>
           </div>
@@ -304,14 +325,20 @@ export default function ExecutiveDailyDriver({
         </div>
 
         <div className="mt-4 space-y-3">
-          {decisions.length === 0 ? (
+          {decisionLoadError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/[0.03] p-8 text-center" role="alert">
+              <AlertTriangle className="mx-auto h-6 w-6 text-destructive" />
+              <p className="mt-3 text-sm font-semibold">Priority decisions are currently unverified</p>
+              <p className="mt-1 text-xs text-muted-foreground">The decision-ledger query failed. This is an unknown state, not a verified zero.</p>
+            </div>
+          ) : decisions.length === 0 ? (
             <div className="rounded-xl border border-dashed p-8 text-center">
               <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
               <p className="mt-3 text-sm font-semibold">No priority decisions waiting</p>
               <p className="mt-1 text-xs text-muted-foreground">Quantivis will surface the next governed decision here when evidence crosses your thresholds.</p>
             </div>
           ) : decisions.map((decision, index) => {
-            const value = valueLabel(attributions[decision.id]);
+            const value = valueLoadError ? { label: "Value evidence", value: "Unavailable", note: "Could not verify monetary evidence" } : valueLabel(attributions[decision.id]);
             return (
               <div key={decision.id} className={`rounded-xl border p-4 ${index === 0 ? "border-primary/30 bg-primary/[0.02]" : "border-border/50"}`}>
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -357,7 +384,11 @@ export default function ExecutiveDailyDriver({
         <Card><CardContent className="p-5">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Next step</p>
           <p className="mt-2 text-sm font-medium leading-6">
-            {firstDecision ? words(firstDecision.recommended_action, 24) : "Review emerging intelligence and recent measured outcomes."}
+            {decisionLoadError
+              ? "Restore decision-ledger availability before treating the executive queue as clear."
+              : firstDecision
+                ? words(firstDecision.recommended_action, 24)
+                : "Review emerging intelligence and recent measured outcomes."}
           </p>
           <Button className="mt-4" variant="outline" onClick={() => navigate("/executive-brief")}>Open full executive brief</Button>
         </CardContent></Card>
