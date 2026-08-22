@@ -63,6 +63,8 @@ jobs:
           deno check --config supabase/functions/deno.json supabase/functions/connector-dynamics-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-netsuite-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-dq-compute/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/connector-sap-discover/index.ts
+          deno check --config supabase/functions/deno.json supabase/functions/connector-sap-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-bigquery-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-snowflake-pull/index.ts
           deno check --config supabase/functions/deno.json supabase/functions/connector-s3-pull/index.ts
