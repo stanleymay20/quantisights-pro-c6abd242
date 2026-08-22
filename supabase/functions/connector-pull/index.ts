@@ -208,14 +208,18 @@ serve(async (req) => {
       : result.errors.length > 0
         ? "partial"
         : "completed";
+    const completedAt = new Date().toISOString();
+    const errorMessage = result.errors.length > 0
+      ? result.errors.join("; ").slice(0, 2_000)
+      : null;
 
     const { error: jobUpdateError } = await serviceClient
       .from("data_sync_jobs")
       .update({
         status: finalStatus,
         records_synced: result.records,
-        error_message: result.errors.length > 0 ? result.errors.join("; ").slice(0, 2_000) : null,
-        completed_at: new Date().toISOString(),
+        error_message: errorMessage,
+        completed_at: completedAt,
       })
       .eq("id", job.id)
       .eq("organization_id", identity.organizationId);
@@ -241,6 +245,26 @@ serve(async (req) => {
     });
     if (auditError) {
       return responseJson({ error: "Connector finished but audit logging failed" }, 503, corsHeaders);
+    }
+
+    const { error: lifecycleError } = await serviceClient.rpc(
+      "persist_connector_pull_lifecycle",
+      {
+        _organization_id: identity.organizationId,
+        _connector_id: identity.id,
+        _data_source_id: identity.dataSourceId,
+        _final_status: finalStatus,
+        _records_synced: result.records,
+        _error_message: errorMessage,
+        _completed_at: completedAt,
+      },
+    );
+    if (lifecycleError) {
+      return responseJson(
+        { error: "Connector finished but lifecycle persistence failed" },
+        503,
+        corsHeaders,
+      );
     }
 
     return responseJson(
