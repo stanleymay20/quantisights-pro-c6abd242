@@ -213,14 +213,16 @@ Deno.serve(async (req: Request) => {
     }
     connectorCreated = true;
 
+    // data_sources has a deliberately generic schema: connector identity lives
+    // in config, while created_by remains mandatory in production and staging.
     const { data: dataSource, error: dataSourceError } = await svc
       .from("data_sources")
       .insert({
         organization_id,
         name,
         source_type: "connector",
-        connector_type,
         status: "pending",
+        created_by: user.id,
         config: { connector_id: connectorId, connector_type },
       })
       .select("id")

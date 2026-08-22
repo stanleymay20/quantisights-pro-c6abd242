@@ -44,6 +44,13 @@ describe("paid-pilot connector support boundary", () => {
     expect(provisioner).not.toContain('new Set(["salesforce", "hubspot"])');
   });
 
+  it("matches the deployed data_sources schema contract when provisioning HubSpot", () => {
+    const provisioner = readFileSync("supabase/functions/connector-credential-store/index.ts", "utf8");
+    expect(provisioner).toContain('source_type: "connector",\n        status: "pending",\n        created_by: user.id,');
+    expect(provisioner).not.toContain('source_type: "connector",\n        connector_type,');
+    expect(provisioner).toContain("config: { connector_id: connectorId, connector_type },");
+  });
+
   it("provides clear certified labeling for HubSpot", () => {
     expect(pilotConnectorBadge("hubspot")).toBe("Pilot certified");
     expect(pilotConnectorBlockReason("hubspot")).toBeNull();
