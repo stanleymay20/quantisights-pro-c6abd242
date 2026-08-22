@@ -14,6 +14,7 @@ const capacityMigration = readFileSync(resolve(process.cwd(), "supabase/migratio
 const freshnessMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822071500_atomic_metric_job_freshness.sql"), "utf8");
 const persistenceMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822072000_atomic_metric_chunk_persistence.sql"), "utf8");
 const governanceMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822103500_metric_ingest_governance_warning.sql"), "utf8");
+const pauseMigration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260822104500_split_metric_queue_pause_controls.sql"), "utf8");
 
 describe("enterprise metric ingest queue contract", () => {
   it("uses durable queue + DLQ with bounded worker settings", () => {
@@ -69,6 +70,14 @@ describe("enterprise metric ingest queue contract", () => {
     expect(backpressureMigration).toContain("_outstanding + _count > _max_depth");
     expect(producer).toContain("Retry-After");
     expect(producer).toContain("retryable: true");
+  });
+
+  it("keeps draining during an admission pause and reserves drain_paused for maintenance", () => {
+    expect(pauseMigration).toContain("drain_paused");
+    expect(pauseMigration).toContain("Admission pause");
+    expect(worker).toContain("state.drain_paused");
+    expect(worker).toContain("admission_paused: !!state.paused");
+    expect(worker).not.toContain('if (state.paused) return json({ skipped: true, reason: "paused" })');
   });
 
   it("scopes idempotency by tenant/source and atomically claims request ids", () => {
