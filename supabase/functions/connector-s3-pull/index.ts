@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, getCorsHeaders } from "../_shared/cors.ts";
@@ -8,28 +7,25 @@ import { upsertCanonicalMetrics } from "../_shared/canonical-mapper.ts";
 import { logConnectorEvent, rowToCanonicalMetric, validateMapping, type S3Config } from "../_shared/warehouse-config.ts";
 
 const GW = "https://connector-gateway.lovable.dev/aws_s3";
-const API = "https://connector-gateway.lovable.dev/api/v1/sign_storage_url?provider=aws_s3&mode=read";
+const SIGN_API = "https://connector-gateway.lovable.dev/api/v1/sign_storage_url?provider=aws_s3&mode=read";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const cors = getCorsHeaders(req);
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
-    return json({ error: "S3 pull service unavailable" }, 503, cors);
-  }
+  if (!supabaseUrl || !serviceRoleKey) return json({ error: "S3 pull service unavailable" }, 503, cors);
   const svc = createClient(supabaseUrl, serviceRoleKey);
 
   try {
-    const { connector_id } = await req.json();
-    if (!connector_id) return json({ error: "connector_id required" }, 400, cors);
+    const requestBody = await req.json().catch(() => ({} as Record<string, unknown>));
+    const connectorId = typeof requestBody.connector_id === "string" ? requestBody.connector_id : null;
+    if (!connectorId) return json({ error: "connector_id required" }, 400, cors);
 
-    const { data: connector, error: connectorError } = await svc.from("data_connectors").select("*").eq("id", connector_id).single();
+    const { data: connector, error: connectorError } = await svc.from("data_connectors").select("*").eq("id", connectorId).single();
     if (connectorError || !connector) return json({ error: "connector not found" }, 404, cors);
     if (connector.connector_type !== "s3") return json({ error: "not an S3 connector" }, 400, cors);
-    if (typeof connector.organization_id !== "string" || !connector.organization_id) {
-      return json({ error: "connector organization missing" }, 500, cors);
-    }
+    if (typeof connector.organization_id !== "string" || !connector.organization_id) return json({ error: "connector organization missing" }, 500, cors);
 
     const authHeader = req.headers.get("authorization");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -48,137 +44,212 @@ serve(async (req) => {
     }
 
     const cfg = (connector.config ?? {}) as S3Config;
-    const m = validateMapping(cfg.mapping);
-    if (!m.ok) return json({ error: `config invalid: ${m.reason}` }, 400, cors);
+    const mappingResult = validateMapping(cfg.mapping);
+    if (!mappingResult.ok) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
     if (!cfg.prefix) return json({ error: "config.prefix required" }, 400, cors);
 
-    const gate = await shouldAllow(svc, connector.organization_id, connector_id);
+    const gate = await shouldAllow(svc, connector.organization_id, connectorId);
     if (!gate.allow) return json({ skipped: true, reason: gate.reason }, 200, cors);
 
-    const LOVABLE = Deno.env.get("LOVABLE_API_KEY");
-    const S3 = Deno.env.get("AWS_S3_API_KEY");
-    if (!LOVABLE || !S3) {
-      await recordFailure(svc, connector_id, "missing gateway secrets (LOVABLE_API_KEY/AWS_S3_API_KEY)");
+    const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+    const s3Key = Deno.env.get("AWS_S3_API_KEY");
+    if (!lovableKey || !s3Key) {
+      await recordFailure(svc, connectorId, "missing gateway secrets (LOVABLE_API_KEY/AWS_S3_API_KEY)");
       return json({ error: "S3 connector not linked" }, 412, cors);
     }
-    const hdr = { Authorization: `Bearer ${LOVABLE}`, "X-Connection-Api-Key": S3 } as const;
-    const t0 = Date.now();
+    const headers = { Authorization: `Bearer ${lovableKey}`, "X-Connection-Api-Key": s3Key } as const;
+    const startedAt = Date.now();
 
-    // ── Checkpoint: pull last seen file key ─────────────────────────────
-    const { data: ckpt } = await svc.from("connector_sync_checkpoints")
-      .select("cursor_value").eq("connector_id", connector_id).eq("cursor_field", "s3_key").maybeSingle();
-    const startAfter = ckpt?.cursor_value ?? undefined;
+    const { data: checkpoint, error: checkpointReadError } = await svc.from("connector_sync_checkpoints")
+      .select("cursor_value")
+      .eq("connector_id", connectorId)
+      .eq("cursor_field", "s3_key")
+      .maybeSingle();
+    if (checkpointReadError) throw new Error(`Failed to read S3 checkpoint: ${checkpointReadError.message}`);
+    const startAfter = typeof checkpoint?.cursor_value === "string" ? checkpoint.cursor_value : undefined;
 
-    // ── List objects ────────────────────────────────────────────────────
-    const qp = new URLSearchParams({ "list-type": "2", prefix: cfg.prefix, "max-keys": String(cfg.max_files_per_run ?? 25) });
-    if (startAfter) qp.set("start-after", startAfter);
-    const listRes = await fetch(`${GW}/?${qp}`, { headers: hdr });
-    if (!listRes.ok) {
-      const msg = `S3 list ${listRes.status}: ${(await listRes.text()).slice(0, 300)}`;
-      await recordFailure(svc, connector_id, msg);
-      return json({ error: msg }, 502, cors);
+    const maxFiles = Math.min(1000, Math.max(1, Number(cfg.max_files_per_run ?? 25)));
+    const params = new URLSearchParams({ "list-type": "2", prefix: cfg.prefix, "max-keys": String(maxFiles) });
+    if (startAfter) params.set("start-after", startAfter);
+    const listResponse = await fetch(`${GW}/?${params}`, { headers, signal: AbortSignal.timeout(30_000) });
+    if (!listResponse.ok) {
+      const message = `S3 list ${listResponse.status}: ${(await listResponse.text()).slice(0, 300)}`;
+      await recordFailure(svc, connectorId, message);
+      return json({ error: message }, 502, cors);
     }
-    const xml = await listRes.text();
-    const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map(x => x[1]).filter(k => k !== startAfter);
-    const filePattern = new RegExp(cfg.file_pattern ?? "\\.(csv|json|jsonl)$", "i");
-    const targets = keys.filter(k => filePattern.test(k));
 
-    let totalRows = 0, totalInserted = 0;
-    const errors: { file: string; reason: string }[] = [];
-    let lastKey = startAfter ?? "";
+    const xml = await listResponse.text();
+    const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((match) => match[1]).filter((key) => key !== startAfter);
+    const filePattern = new RegExp(cfg.file_pattern ?? "\\.(csv|json|jsonl)$", "i");
+    const targets = keys.filter((key) => filePattern.test(key));
+
+    let totalRows = 0;
+    let totalInserted = 0;
+    let processedFiles = 0;
+    let lastSafeKey = startAfter ?? "";
+    let fileFailure = false;
+    const errors: Array<{ file: string; reason: string }> = [];
 
     for (const key of targets) {
       try {
-        const sign = await fetch(API, {
-          method: "POST", headers: { ...hdr, "Content-Type": "application/json" },
+        const signResponse = await fetch(SIGN_API, {
+          method: "POST",
+          signal: AbortSignal.timeout(30_000),
+          headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ object_path: key }),
         });
-        if (!sign.ok) throw new Error(`sign ${sign.status}`);
-        const { url } = await sign.json();
-        const dl = await fetch(url);
-        if (!dl.ok) throw new Error(`download ${dl.status}`);
-        const text = await dl.text();
-        const fmt = cfg.format ?? (key.endsWith(".jsonl") ? "jsonl" : key.endsWith(".json") ? "json" : "csv");
-        const rows = parseFile(text, fmt).slice(0, cfg.max_rows_per_file ?? 50_000);
+        if (!signResponse.ok) throw new Error(`sign ${signResponse.status}`);
+        const signed = await signResponse.json() as { url?: string };
+        if (!signed.url) throw new Error("sign response missing url");
+
+        const download = await fetch(signed.url, { signal: AbortSignal.timeout(60_000) });
+        if (!download.ok) throw new Error(`download ${download.status}`);
+        const text = await download.text();
+        const format: "csv" | "json" | "jsonl" = cfg.format ?? (key.endsWith(".jsonl") ? "jsonl" : key.endsWith(".json") ? "json" : "csv");
+        const maxRows = Math.min(250_000, Math.max(1, Number(cfg.max_rows_per_file ?? 50_000)));
+        const rows = parseFile(text, format).slice(0, maxRows);
         totalRows += rows.length;
 
-        const metrics: any[] = [];
+        const metrics = [];
+        const rowErrors: Array<{ file: string; reason: string }> = [];
         for (let i = 0; i < rows.length; i++) {
-          try { metrics.push(rowToCanonicalMetric(rows[i], m.mapping)); }
-          catch (e) { errors.push({ file: key, reason: `row ${i}: ${e instanceof Error ? e.message : String(e)}` }); }
+          try {
+            metrics.push(rowToCanonicalMetric(rows[i], mappingResult.mapping));
+          } catch (error) {
+            rowErrors.push({ file: key, reason: `row ${i}: ${error instanceof Error ? error.message : String(error)}` });
+          }
         }
+        errors.push(...rowErrors);
+
         const inserted = await upsertCanonicalMetrics(svc, {
-          orgId: connector.organization_id, connectorId: connector_id, sourceType: "s3", metrics,
+          orgId: connector.organization_id,
+          connectorId,
+          sourceType: "s3",
+          metrics,
         });
+        if (rows.length > 0 && inserted === 0) {
+          throw new Error(`file contained ${rows.length} rows but none were valid for canonical persistence`);
+        }
+
         totalInserted += inserted;
-        lastKey = key;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        errors.push({ file: key, reason: msg });
-        await deadLetter(svc, { orgId: connector.organization_id, connectorId: connector_id, errorClass: "s3_object", payload: { key }, errorMessage: msg });
+        processedFiles++;
+        lastSafeKey = key;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push({ file: key, reason: message });
+        await deadLetter(svc, {
+          orgId: connector.organization_id,
+          connectorId,
+          errorClass: "s3_object",
+          payload: { key },
+          errorMessage: message,
+        });
+        fileFailure = true;
+        // The checkpoint is ordered. Never advance beyond a failed object or it
+        // could be skipped forever on the next start-after run.
+        break;
       }
     }
 
-    if (lastKey && lastKey !== startAfter) {
-      await svc.from("connector_sync_checkpoints").upsert({
-        organization_id: connector.organization_id, connector_id, cursor_field: "s3_key",
-        cursor_value: lastKey, updated_at: new Date().toISOString(),
+    if (lastSafeKey && lastSafeKey !== startAfter) {
+      const { error: checkpointWriteError } = await svc.from("connector_sync_checkpoints").upsert({
+        organization_id: connector.organization_id,
+        connector_id: connectorId,
+        cursor_field: "s3_key",
+        cursor_value: lastSafeKey,
+        updated_at: new Date().toISOString(),
       }, { onConflict: "connector_id,cursor_field" });
+      if (checkpointWriteError) throw new Error(`Failed to persist S3 checkpoint: ${checkpointWriteError.message}`);
     }
 
-    await recordSuccess(svc, connector_id);
-    await svc.from("data_connectors").update({
-      last_success_at: new Date().toISOString(), consecutive_failures: 0,
-      health: errors.length ? "degraded" : "healthy",
-    }).eq("id", connector_id);
+    const finalStatus = fileFailure ? (totalInserted > 0 ? "partial" : "failed") : errors.length > 0 ? "partial" : "completed";
+    if (fileFailure) await recordFailure(svc, connectorId, errors.at(-1)?.reason ?? "S3 object processing failed");
+    else await recordSuccess(svc, connectorId);
 
-    const duration_ms = Date.now() - t0;
+    const { error: healthError } = await svc.from("data_connectors").update({
+      ...(fileFailure ? {} : { last_success_at: new Date().toISOString(), consecutive_failures: 0 }),
+      health: finalStatus === "completed" ? "healthy" : finalStatus === "partial" ? "degraded" : "error",
+    }).eq("id", connectorId);
+    if (healthError) throw new Error(`Failed to persist S3 connector health: ${healthError.message}`);
+
+    const durationMs = Date.now() - startedAt;
     logConnectorEvent({
-      connector_type: "s3", connector_id, organization_id: connector.organization_id, phase: "complete",
-      rows_extracted: totalRows, rows_inserted: totalInserted, rows_failed: errors.length, duration_ms,
+      connector_type: "s3",
+      connector_id: connectorId,
+      organization_id: connector.organization_id,
+      phase: finalStatus === "failed" ? "error" : "complete",
+      rows_extracted: totalRows,
+      rows_inserted: totalInserted,
+      rows_failed: errors.length,
+      duration_ms: durationMs,
     });
     return json({
-      success: true, files_processed: targets.length, rows_extracted: totalRows, rows_inserted: totalInserted,
-      rows_invalid: errors.length, sample_errors: errors.slice(0, 5), duration_ms,
-    }, 200, cors);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log(JSON.stringify({ ts: new Date().toISOString(), connector_type: "s3", phase: "error", error: msg }));
-    return json({ error: msg }, 500, cors);
+      success: finalStatus !== "failed",
+      status: finalStatus,
+      files_discovered: targets.length,
+      files_processed: processedFiles,
+      rows_extracted: totalRows,
+      rows_inserted: totalInserted,
+      rows_invalid: errors.length,
+      checkpoint: lastSafeKey || null,
+      sample_errors: errors.slice(0, 5),
+      duration_ms: durationMs,
+    }, finalStatus === "failed" ? 502 : 200, cors);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(JSON.stringify({ ts: new Date().toISOString(), connector_type: "s3", phase: "error", error: message }));
+    return json({ error: message }, 500, cors);
   }
 });
 
-function parseFile(text: string, fmt: "csv" | "json" | "jsonl"): Record<string, unknown>[] {
-  if (fmt === "json") {
-    const v = JSON.parse(text);
-    return Array.isArray(v) ? v : [v];
+function parseFile(text: string, format: "csv" | "json" | "jsonl"): Record<string, unknown>[] {
+  if (format === "json") {
+    const value = JSON.parse(text);
+    if (Array.isArray(value)) return value.filter(isRecord);
+    return isRecord(value) ? [value] : [];
   }
-  if (fmt === "jsonl") {
-    return text.split(/\r?\n/).filter(Boolean).map(l => JSON.parse(l));
+  if (format === "jsonl") {
+    return text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)).filter(isRecord);
   }
-  // CSV (simple — no embedded quoted newlines)
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
   const headers = splitCsv(lines[0]);
-  return lines.slice(1).map(l => {
-    const cells = splitCsv(l);
-    const obj: Record<string, unknown> = {};
-    headers.forEach((h, i) => obj[h] = cells[i]);
-    return obj;
+  return lines.slice(1).map((line) => {
+    const cells = splitCsv(line);
+    const object: Record<string, unknown> = {};
+    headers.forEach((header, index) => object[header] = cells[index]);
+    return object;
   });
 }
+
 function splitCsv(line: string): string[] {
-  const out: string[] = []; let cur = ""; let q = false;
+  const output: string[] = [];
+  let current = "";
+  let quoted = false;
   for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
-    else if (c === "," && !q) { out.push(cur); cur = ""; }
-    else cur += c;
+    const character = line[i];
+    if (character === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === "," && !quoted) {
+      output.push(current);
+      current = "";
+    } else {
+      current += character;
+    }
   }
-  out.push(cur);
-  return out.map(s => s.trim());
+  output.push(current);
+  return output.map((value) => value.trim());
 }
 
-function json(b: unknown, s: number, cors: Record<string, string>) {
-  return new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function json(body: unknown, status: number, cors: Record<string, string>) {
+  return new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 }
