@@ -239,11 +239,21 @@ Deno.serve(async (req) => {
 
   const { data: state, error: stateError } = await svc
     .from("metric_ingest_queue_state")
-    .select("paused,batch_size,visibility_timeout_seconds,max_retries,worker_concurrency,max_chunks_per_run,max_runtime_ms")
+    .select("paused,drain_paused,batch_size,visibility_timeout_seconds,max_retries,worker_concurrency,max_chunks_per_run,max_runtime_ms")
     .eq("id", 1)
     .single();
   if (stateError || !state) return json({ error: `Queue state unavailable: ${stateError?.message ?? "missing row"}` }, 503);
-  if (state.paused) return json({ skipped: true, reason: "paused" });
+  // `paused` is admission control only. During overload we intentionally keep
+  // draining existing work. Only an explicit maintenance drain pause stops the
+  // worker.
+  if (state.drain_paused) {
+    return json({
+      skipped: true,
+      reason: "drain_paused",
+      admission_paused: !!state.paused,
+      drain_paused: true,
+    });
+  }
 
   const startedAt = Date.now();
   let claimedChunks = 0;
@@ -312,6 +322,8 @@ Deno.serve(async (req) => {
     chunk_budget_reached: chunkBudgetReached,
     worker_concurrency: state.worker_concurrency,
     max_chunks_per_run: state.max_chunks_per_run,
+    admission_paused: !!state.paused,
+    drain_paused: !!state.drain_paused,
     errors: errors.slice(0, 20),
   }, status);
 });
