@@ -383,7 +383,9 @@ serve(async (req) => {
       .in("contradiction_key", list.map((candidate) => candidate.contradiction_key));
     if (existingError) throw new Error(`Failed to load existing contradictions: ${existingError.message}`);
 
-    const existingMap = new Map((existing ?? []).map((row: any) => [row.contradiction_key, row]));
+    const existingMap = new Map<string, { id: string; contradiction_key: string; status: string | null }>(
+      (existing ?? []).map((row: { id: string; contradiction_key: string; status: string | null }) => [row.contradiction_key, row] as const),
+    );
     const toInsert = list.filter((candidate) => !existingMap.has(candidate.contradiction_key));
     const toRefresh = list.filter((candidate) => existingMap.has(candidate.contradiction_key));
 
