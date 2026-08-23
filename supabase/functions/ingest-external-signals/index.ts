@@ -35,7 +35,7 @@ interface VendorAdapter {
   fetch: (ctx: FetchContext) => Promise<FetchResult>;
 }
 
-type ServiceClient = ReturnType<typeof createClient>;
+type ServiceClient = ReturnType<typeof createClient<any>>;
 type SourceRow = Record<string, unknown>;
 
 const AICIS_PLATFORM_ENDPOINT = Deno.env.get("AICIS_TEST_ENDPOINT_URL") ?? "";
