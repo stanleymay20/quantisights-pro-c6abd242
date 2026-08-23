@@ -16,8 +16,11 @@ describe("connector credential storage security", () => {
     expect(store).toContain("parseRequestBody");
   });
 
-  it("restricts paid-pilot connector provisioning to certified CRM paths", () => {
-    expect(store).toContain('new Set(["salesforce", "hubspot"])');
+  it("restricts paid-pilot connector provisioning to currently certified CRM paths", () => {
+    // HubSpot is the only credential-provisioning path certified end-to-end today.
+    // Salesforce stays fail-closed until its OAuth token-state provisioning path is certified.
+    expect(store).toContain('new Set(["hubspot"])');
+    expect(store).toContain("Salesforce remains blocked until its OAuth token-state provisioning path");
     expect(store).toContain("This connector is not enabled for the paid pilot");
     expect(store).not.toContain('connector_type: "rest_api"');
   });
@@ -63,8 +66,9 @@ describe("connector credential storage security", () => {
     expect(store).toContain("schedule_kind");
   });
 
-  it("Deno-checks the credential store in CI", () => {
-    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts");
+  it("Deno-checks the credential store in CI through the privileged Edge wrapper", () => {
     expect(ci).toContain("Typecheck privileged Edge functions");
+    expect(ci).toContain('deno check --config "$config" "$file"');
+    expect(ci).toContain("check_edge supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts");
   });
 });
