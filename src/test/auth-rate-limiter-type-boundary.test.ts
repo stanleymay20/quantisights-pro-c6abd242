@@ -20,9 +20,10 @@ describe("auth rate limiter type boundary", () => {
     expect(limiter).toContain('warning: "Rate limiter unavailable — proceeding"');
   });
 
-  it("pins Deno tooling and checks the auth limiter in CI", () => {
+  it("pins Deno tooling and checks the auth limiter in CI through the privileged Edge wrapper", () => {
     expect(ci).toContain("denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed");
     expect(ci).toContain("deno-version: v2.9.5");
-    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts");
+    expect(ci).toContain('deno check --config "$config" "$file"');
+    expect(ci).toContain("check_edge supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts");
   });
 });
