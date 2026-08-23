@@ -245,11 +245,11 @@ export default function ExecutiveDailyDriver({
 
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-3 py-4 sm:px-6 sm:py-6">
-      <section className="rounded-2xl border border-primary/20 bg-primary/[0.03] p-5 sm:p-7">
+      <section className="rounded-2xl border border-primary/20 bg-primary/[0.03] p-5 sm:p-7" aria-labelledby="executive-focus-heading">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <Badge variant="outline" className="mb-3 text-[10px] uppercase tracking-wider">Executive focus</Badge>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            <h1 id="executive-focus-heading" className="text-2xl font-semibold tracking-tight sm:text-3xl">
               Good {greeting()}, {displayName}.
             </h1>
             <p className="mt-2 text-sm text-muted-foreground">{date}</p>
@@ -315,11 +315,11 @@ export default function ExecutiveDailyDriver({
         </CardContent></Card>
       </section>
 
-      <section className="rounded-2xl border border-border/50 bg-background p-5 sm:p-6">
+      <section className="rounded-2xl border border-border/50 bg-background p-5 sm:p-6" aria-labelledby="priority-decisions-heading">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">What needs attention</p>
-            <h2 className="mt-1 text-xl font-semibold">Priority decisions</h2>
+            <h2 id="priority-decisions-heading" className="mt-1 text-xl font-semibold">Priority decisions</h2>
           </div>
           <Button variant="ghost" size="sm" onClick={() => navigate("/decisions")}>View all</Button>
         </div>
