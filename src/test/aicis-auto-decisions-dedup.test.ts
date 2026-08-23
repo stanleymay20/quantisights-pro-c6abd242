@@ -26,19 +26,18 @@ describe("aicis-auto-decisions duplicate-flooding fix (root cause behind many au
   });
 
   it("skips a new prediction-derived decision when its text matches an existing pending one", () => {
-    expect(source).toMatch(/const predictedAction = `Review elevated/);
-    expect(source).toContain("if (pendingActionTexts.has(predictedAction))");
-    expect(source).toContain("recommended_action: predictedAction");
+    expect(source).toMatch(/const action = `Review elevated/);
+    expect(source).toContain("if (pendingActionTexts.has(action))");
+    expect(source).toContain("recommended_action: action");
   });
 
   it("skips a new recommendation-derived decision when its text matches an existing pending one", () => {
-    expect(source).toMatch(/const recommendedAction = r\.intervention_title/);
-    expect(source).toContain("if (pendingActionTexts.has(recommendedAction))");
-    expect(source).toContain("recommended_action: recommendedAction");
+    expect(source).toMatch(/const action = recommendation\.intervention_title/);
+    expect(source).toContain("if (pendingActionTexts.has(action))");
+    expect(source).toContain("recommended_action: action");
   });
 
   it("adds each newly-queued action text to the set so duplicates within the same run are also caught", () => {
-    expect(source).toContain("pendingActionTexts.add(predictedAction)");
-    expect(source).toContain("pendingActionTexts.add(recommendedAction)");
+    expect(source.match(/pendingActionTexts\.add\(action\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 });
