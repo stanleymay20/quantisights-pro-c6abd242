@@ -229,7 +229,7 @@ serve(async (req) => {
                 connector_id: connectorId,
                 service_name: service,
                 entity_set: setName,
-                entity_type: before.entity_type,
+                entity_type: type.entity_type,
                 drift_type: "nav_property_removed",
                 severity: "warning",
                 field_name: name,
