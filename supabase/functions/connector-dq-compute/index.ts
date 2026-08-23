@@ -60,7 +60,7 @@ serve(async (req) => {
     }
 
     const guard = await requireCronOrOrgMember(req, cfg.organization_id);
-    if (!guard.ok) return guard.response;
+    if ("response" in guard) return guard.response;
 
     const { data: runRows, error: runsError } = await svc
       .from("connector_sync_runs")
