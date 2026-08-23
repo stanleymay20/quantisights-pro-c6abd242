@@ -23,7 +23,7 @@ interface SupplierRiskSource {
   created_at: string | null;
 }
 
-type ServiceClient = ReturnType<typeof createClient>;
+type ServiceClient = ReturnType<typeof createClient<any>>;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
