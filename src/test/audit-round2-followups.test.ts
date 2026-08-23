@@ -26,9 +26,9 @@ describe("audit round 2 follow-up findings", () => {
   });
 
   describe("Dashboard 'Critical Risk' fabricated a signal from any pending decision", () => {
-    it("criticalCount no longer falls back to 1 when there are zero real critical/high interventions", () => {
+    it("renders only the real critical intervention count and never synthesizes one from pending decisions", () => {
       const source = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
-      expect(source).toContain("const criticalCount = criticalInterventions.length;");
+      expect(source).toContain("{criticalInterventions.length}");
       expect(source).not.toContain('criticalInterventions.length || (pendingDecisions > 0 ? 1 : 0)');
     });
   });
