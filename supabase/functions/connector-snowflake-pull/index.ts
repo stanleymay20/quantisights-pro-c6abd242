@@ -44,7 +44,7 @@ serve(async (req) => {
 
     const cfg = (connector.config ?? {}) as SnowflakeConfig;
     const mappingResult = validateMapping(cfg.mapping);
-    if (!mappingResult.ok) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
+    if ("reason" in mappingResult) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
     if (!cfg.query) return json({ error: "config.query required" }, 400, cors);
     try {
       assertSelectOnly(cfg.query);
