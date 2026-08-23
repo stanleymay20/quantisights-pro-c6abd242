@@ -5,7 +5,7 @@ import { getGovernanceProfile } from "../_shared/governance-profile.ts";
 import { recordGovernanceUse } from "../_shared/governance-audit.ts";
 
 type SourceKind = "advisory" | "insight";
-type ServiceClient = ReturnType<typeof createClient>;
+type ServiceClient = ReturnType<typeof createClient<any>>;
 
 interface DecisionSource {
   kind: SourceKind;
@@ -117,7 +117,6 @@ serve(async (req) => {
         .insert(row)
         .select("id, advisory_instance_id, decision_origin, source_insight_summary, capped_confidence, predicted_net_impact")
         .single();
-
       if (error) {
         if (error.code === "23505") {
           concurrentSkips++;
