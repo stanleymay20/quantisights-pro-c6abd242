@@ -49,48 +49,66 @@ jobs:
 
       - name: Typecheck privileged Edge functions
         run: |
-          deno check --config supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/delete-account/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-scheduler/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/api-ingest/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/webhook-ingest/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/event-stream/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/queued-metric-ingest/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/process-metric-ingest-queue/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/refresh-aggregates/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/ingest-csv-pipeline/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/ingest-external-signals/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/db-connector/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-sheets-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-dynamics-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-netsuite-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-dq-compute/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-sap-discover/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-sap-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-bigquery-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-snowflake-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-s3-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-discover/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-salesforce-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/connector-hubspot-pull/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/executive-orchestration/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/execution-intelligence/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/predictive-forecast/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/supplier-risk-runtime-ingest/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/detect-executive-contradictions/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/prescriptive-advisory/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/compute-trust-metrics/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/auto-create-decisions/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/aicis-auto-decisions/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/aicis-evaluate-outcomes/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/complete-onboarding/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/activate-pilot/index.ts
-          deno check --config supabase/functions/deno.json supabase/functions/decision-value-summary/index.ts
-          deno check --config supabase/functions/auth-email-hook/deno.json supabase/functions/auth-email-hook/index.ts
-          deno check --config supabase/functions/process-email-queue/deno.json supabase/functions/process-email-queue/index.ts
+          failed=0
+
+          check_edge() {
+            config="$1"
+            file="$2"
+            echo "::group::deno check ${file}"
+            if ! deno check --config "$config" "$file"; then
+              echo "::error file=${file}::Privileged Edge function typecheck failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          }
+
+          check_edge supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/delete-account/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-credential-store/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-scheduler/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/api-ingest/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/webhook-ingest/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/event-stream/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/queued-metric-ingest/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/process-metric-ingest-queue/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/refresh-aggregates/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/ingest-csv-pipeline/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/ingest-external-signals/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/db-connector/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-sheets-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-dynamics-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-netsuite-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-dq-compute/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-sap-discover/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-sap-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-bigquery-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-snowflake-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-s3-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-salesforce-discover/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-salesforce-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/connector-hubspot-pull/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/executive-orchestration/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/execution-intelligence/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/predictive-forecast/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/supplier-risk-runtime-ingest/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/detect-executive-contradictions/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/prescriptive-advisory/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/compute-trust-metrics/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/auto-create-decisions/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/aicis-auto-decisions/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/aicis-evaluate-outcomes/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/complete-onboarding/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/activate-pilot/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/decision-value-summary/index.ts
+          check_edge supabase/functions/auth-email-hook/deno.json supabase/functions/auth-email-hook/index.ts
+          check_edge supabase/functions/process-email-queue/deno.json supabase/functions/process-email-queue/index.ts
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more privileged Edge function typechecks failed."
+            exit 1
+          fi
 
       - name: Test
         run: npm test -- --run
