@@ -142,7 +142,7 @@ Deno.serve(async (req: Request) => {
 
     const orgId = connector.organization_id as string;
     const guard = await requireCronOrOrgMember(req, orgId);
-    if (!guard.ok) return guard.response;
+    if ("response" in guard) return guard.response;
 
     let datasetId: string | null = connector.dataset_id ?? null;
     if (datasetId) {
