@@ -12,13 +12,14 @@ import { verifyCronSecret } from "./cron-secret.ts";
 export async function requireCronOrOrgMember(
   req: Request,
   organizationId: string | undefined,
-): Promise<{ ok: true; via: "cron" | "user"; userId?: string } | { ok?: never; response: Response }> {
+): Promise<{ ok: true; via: "cron" | "user"; userId?: string } | { ok: false; response: Response }> {
   const corsHeaders = getCorsHeaders(req);
 
   // 1) Cron path
   if (req.headers.get("x-cron-secret")) {
     if (verifyCronSecret(req)) return { ok: true, via: "cron" };
     return {
+      ok: false,
       response: new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -30,6 +31,7 @@ export async function requireCronOrOrgMember(
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ") || !organizationId) {
     return {
+      ok: false,
       response: new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -45,6 +47,7 @@ export async function requireCronOrOrgMember(
   const { data: { user }, error } = await userClient.auth.getUser();
   if (error || !user?.id) {
     return {
+      ok: false,
       response: new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -62,6 +65,7 @@ export async function requireCronOrOrgMember(
   });
   if (isMember !== true) {
     return {
+      ok: false,
       response: new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
