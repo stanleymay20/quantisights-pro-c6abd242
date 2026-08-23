@@ -21,6 +21,8 @@ import { preflightWait, observeResponse } from "../_shared/connector-throttle.ts
 import {
   upsertCanonicalEntities, upsertCanonicalEvents,
   upsertCanonicalMetrics, upsertCanonicalRelationships,
+  type CanonicalEntityInput, type CanonicalEventInput,
+  type CanonicalMetricInput, type CanonicalRelationshipInput,
 } from "../_shared/canonical-mapper.ts";
 import { logConnectorEvent } from "../_shared/warehouse-config.ts";
 import {
@@ -32,6 +34,7 @@ import {
 const VENDOR = "sap";
 const SOURCE = "sap" as const;
 const VALID_MODES = new Set(["historical_backfill", "incremental_sync"]);
+type ServiceClient = ReturnType<typeof createClient<any>>;
 
 const DEFAULT_GOV: SapGovernance = {
   allowed_services: ["API_BUSINESS_PARTNER", "API_SALES_ORDER_SRV", "API_MATERIAL_DOCUMENT_SRV", "API_PRODUCT_SRV"],
@@ -62,7 +65,7 @@ serve(async (req) => {
 
     const orgId = connector.organization_id as string;
     const guard = await requireCronOrOrgMember(req, orgId);
-    if (!guard.ok) return guard.response;
+    if ("response" in guard) return guard.response;
 
     const cfg = (connector.config ?? {}) as SapConnectorConfig;
     const version: ODataVersion = cfg.odata_version ?? "V2";
@@ -135,10 +138,10 @@ serve(async (req) => {
 
         let skipToken: string | undefined;
         let pages = 0;
-        const entitiesAccum: Record<string, unknown>[] = [];
-        const eventsAccum: Record<string, unknown>[] = [];
-        const metricsAccum: Record<string, unknown>[] = [];
-        const relsAccum: Record<string, unknown>[] = [];
+        const entitiesAccum: CanonicalEntityInput[] = [];
+        const eventsAccum: CanonicalEventInput[] = [];
+        const metricsAccum: CanonicalMetricInput[] = [];
+        const relsAccum: CanonicalRelationshipInput[] = [];
         let maxCursor: string | undefined;
 
         do {
@@ -158,10 +161,13 @@ serve(async (req) => {
           for (const row of rows) {
             const extId = String(row[ep.canonical.external_id_field] ?? "");
             if (!extId) continue;
+            const rawDisplayName = ep.canonical.display_name_field
+              ? row[ep.canonical.display_name_field]
+              : undefined;
             entitiesAccum.push({
               entity_type: ep.canonical.entity_type,
               external_id: extId,
-              display_name: ep.canonical.display_name_field ? row[ep.canonical.display_name_field] : undefined,
+              display_name: rawDisplayName == null ? undefined : String(rawDisplayName),
               attributes: { ...row, _service: ep.service, _entity_set: ep.entity_set },
             });
             if (ep.cursor_field && row[ep.cursor_field]) {
@@ -275,7 +281,7 @@ serve(async (req) => {
 });
 
 async function finalizeRun(
-  svc: ReturnType<typeof createClient>,
+  svc: ServiceClient,
   runId: string,
   status: string,
   rowsExtracted: number,
