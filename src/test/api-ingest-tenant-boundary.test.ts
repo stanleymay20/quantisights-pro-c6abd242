@@ -10,7 +10,8 @@ describe("API ingest tenant boundary", () => {
   it("does not suppress TypeScript or bypass the service-client type boundary", () => {
     expect(ingest).not.toContain("@ts-nocheck");
     expect(ingest).not.toContain(" as any");
-    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/api-ingest/index.ts");
+    expect(ci).toContain('deno check --config "$config" "$file"');
+    expect(ci).toContain("check_edge supabase/functions/deno.json supabase/functions/api-ingest/index.ts");
   });
 
   it("requires explicit Supabase service configuration", () => {
