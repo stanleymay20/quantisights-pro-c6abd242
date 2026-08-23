@@ -44,7 +44,7 @@ serve(async (req) => {
 
     const cfg = (connector.config ?? {}) as BigQueryConfig;
     const mappingResult = validateMapping(cfg.mapping);
-    if (!mappingResult.ok) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
+    if ("reason" in mappingResult) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
     if (!cfg.query || !cfg.project_id) return json({ error: "config.query and config.project_id required" }, 400, cors);
     try {
       assertSelectOnly(cfg.query);
