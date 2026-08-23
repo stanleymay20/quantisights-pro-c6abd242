@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
       let query = svc.from(table).select(columns);
       if (filter) query = filter(query) as typeof query;
       const { data, error } = await query;
-      return error || !Array.isArray(data) ? null : data as T[];
+      return error || !Array.isArray(data) ? null : data as unknown as T[];
     } catch {
       return null;
     }
