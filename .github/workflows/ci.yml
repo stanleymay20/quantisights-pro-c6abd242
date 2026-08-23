@@ -47,6 +47,9 @@ jobs:
       - name: Strict trusted-kernel typecheck
         run: npm run typecheck:trusted
 
+      - name: Prepare supplier-risk Edge runtime
+        run: node scripts/build-supplier-risk-edge-runtime.mjs
+
       - name: Typecheck privileged Edge functions
         run: |
           failed=0
