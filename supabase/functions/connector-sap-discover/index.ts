@@ -52,7 +52,7 @@ serve(async (req) => {
 
     const orgId = connector.organization_id as string;
     const guard = await requireCronOrOrgMember(req, orgId);
-    if (!guard.ok) return guard.response;
+    if ("response" in guard) return guard.response;
 
     const cfg = (connector.config ?? {}) as SapConnectorConfig;
     const version: ODataVersion = cfg.odata_version ?? "V2";
@@ -229,7 +229,7 @@ serve(async (req) => {
                 connector_id: connectorId,
                 service_name: service,
                 entity_set: setName,
-                entity_type: type.entity_type,
+                entity_type: before.entity_type,
                 drift_type: "nav_property_removed",
                 severity: "warning",
                 field_name: name,
