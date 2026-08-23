@@ -45,7 +45,7 @@ serve(async (req) => {
 
     const cfg = (connector.config ?? {}) as S3Config;
     const mappingResult = validateMapping(cfg.mapping);
-    if (!mappingResult.ok) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
+    if ("reason" in mappingResult) return json({ error: `config invalid: ${mappingResult.reason}` }, 400, cors);
     if (!cfg.prefix) return json({ error: "config.prefix required" }, 400, cors);
 
     const gate = await shouldAllow(svc, connector.organization_id, connectorId);
