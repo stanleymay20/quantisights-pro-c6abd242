@@ -9,19 +9,22 @@ describe("audit round 3 batch fixes", () => {
   describe("Trust Center connector_health_pct still blind to single-surface AICIS outages", () => {
     // The round-2 fix (external_data_sources.last_error) wasn't enough:
     // sync-aicis-bridge clears last_error on ANY surface landing, even if
-    // another surface (e.g. /signals) keeps failing -- "preserve partial-
-    // success semantics". A real, ongoing single-surface outage never
-    // showed up as unhealthy. Fold in per-surface circuit-breaker state
-    // too, the same signal Bridge Health / Pipeline Observability use.
+    // another surface (e.g. /signals) keeps failing. Trust metrics therefore
+    // also consume the per-surface circuit-breaker state used by Bridge Health
+    // and Pipeline Observability.
     const source = read("supabase/functions/compute-trust-metrics/index.ts");
 
     it("also queries aicis_sync_surface_status for circuit-breaker state", () => {
-      expect(source).toContain('svc.from("aicis_sync_surface_status").select("consecutive_failures, circuit_breaker_until")');
+      expect(source).toContain('"aicis_sync_surface_status"');
+      expect(source).toContain('"consecutive_failures,circuit_breaker_until"');
     });
 
-    it("folds surface health into the connector_health_pct computation", () => {
-      expect(source).toContain("healthyAicis");
-      expect(source).toContain("connector_health_pct = Math.round(((healthyEds + healthyAicis) / connectorSample) * 1000) / 10;");
+    it("folds only healthy AICIS surfaces into connector_health_pct", () => {
+      expect(source).toContain("externalSources.length + aicisSurfaces.length");
+      expect(source).toContain("const breakerActive = row.circuit_breaker_until");
+      expect(source).toContain("return !breakerActive && Number(row.consecutive_failures ?? 0) < 3;");
+      expect(source).toContain("/ connectorSample * 1000) / 10");
+      expect(source).toContain('source_tables: ["external_data_sources", "aicis_sync_surface_status"]');
     });
   });
 
