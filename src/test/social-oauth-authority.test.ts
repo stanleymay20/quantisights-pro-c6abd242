@@ -7,6 +7,7 @@ const adapter = readFileSync(
   resolve(root, "src/integrations/lovable/index.ts"),
   "utf8",
 );
+const callback = readFileSync(resolve(root, "src/pages/AuthCallback.tsx"), "utf8");
 const login = readFileSync(resolve(root, "src/pages/Login.tsx"), "utf8");
 const register = readFileSync(resolve(root, "src/pages/Register.tsx"), "utf8");
 
@@ -29,5 +30,14 @@ describe("social OAuth authority", () => {
   it("requires an HTTPS authorization URL before browser navigation", () => {
     expect(adapter).toContain('destination.protocol !== "https:"');
     expect(adapter).toContain("window.location.assign(destination.toString())");
+  });
+
+  it("accepts only the Supabase PKCE session flow at the OAuth callback", () => {
+    expect(callback).toContain("detectSessionInUrl + PKCE");
+    expect(callback).toContain("supabase.auth.onAuthStateChange");
+    expect(callback).toContain("supabase.auth.getSession");
+    expect(callback).not.toContain("supabase.auth.setSession");
+    expect(callback).not.toContain('readOAuthParam(url, "access_token")');
+    expect(callback).not.toContain('readOAuthParam(url, "refresh_token")');
   });
 });
