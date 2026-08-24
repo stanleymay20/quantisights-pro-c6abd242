@@ -12,6 +12,18 @@ const encodeJwt = (payload: Record<string, unknown>) => {
 };
 
 describe("public client bootstrap configuration", () => {
+  it("pins the checked-in production fallback to the active production project", () => {
+    expect(PRODUCTION_PUBLIC_CLIENT_CONFIG.supabaseUrl).toBe(
+      "https://izgfrekdamlgigehxoqs.supabase.co",
+    );
+    expect(PRODUCTION_PUBLIC_CLIENT_CONFIG.supabasePublishableKey).toMatch(
+      /^sb_publishable_[A-Za-z0-9_-]{20,}$/,
+    );
+    expect(JSON.stringify(PRODUCTION_PUBLIC_CLIENT_CONFIG)).not.toContain(
+      "itpwpnwzzitkelffttyx",
+    );
+  });
+
   it("falls back to the checked-in production public config when build env is absent", () => {
     const resolved = resolvePublicClientConfig({});
 
