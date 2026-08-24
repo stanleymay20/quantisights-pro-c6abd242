@@ -6,28 +6,30 @@ const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 describe("UX-1 executive dashboard contract", () => {
-  it("prioritizes the executive brief before operational detail", () => {
+  it("prioritizes executive focus and governed decisions before supporting detail", () => {
     const dashboard = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
 
-    expect(dashboard).toContain("Executive Brief");
-    expect(dashboard).toContain("Next Best Decision");
-    expect(dashboard).toContain("Verified by AICIS");
-    expect(dashboard).toContain("Business Health");
-    expect(dashboard).toContain("Recent Outcomes");
+    for (const marker of [
+      "Executive focus",
+      "What needs attention",
+      "Priority decisions",
+      "decision-time confidence",
+      "Governed review required",
+      "Evidence in view",
+    ]) {
+      expect(dashboard).toContain(marker);
+    }
 
-    expect(dashboard.indexOf("Executive Brief")).toBeLessThan(
-      dashboard.indexOf("Next Best Decision"),
-    );
-    expect(dashboard.indexOf("Next Best Decision")).toBeLessThan(
-      dashboard.indexOf("Business Health"),
-    );
+    expect(dashboard.indexOf("Executive focus")).toBeLessThan(dashboard.indexOf("Priority decisions"));
+    expect(dashboard.indexOf("Priority decisions")).toBeLessThan(dashboard.indexOf("Why it matters"));
   });
 
-  it("does not expose approve or reject as first-touch dashboard actions", () => {
+  it("routes first-touch actions to review rather than approving or rejecting on the dashboard", () => {
     const dashboard = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
 
-    expect(dashboard).toContain("Review evidence");
-    expect(dashboard).toContain("What happens if you approve");
+    expect(dashboard).toContain("Review top decision");
+    expect(dashboard).toContain('"/decisions?review=top"');
+    expect(dashboard).toContain("Open full executive brief");
     expect(dashboard).not.toContain(">Approve<");
     expect(dashboard).not.toContain(">Reject<");
   });
