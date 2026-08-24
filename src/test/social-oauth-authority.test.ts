@@ -20,6 +20,15 @@ describe("social OAuth authority", () => {
     expect(adapter).not.toContain("@lovable.dev/cloud-auth-js");
   });
 
+  it("preflights the active Supabase Auth provider before redirecting", () => {
+    expect(adapter).toContain("/auth/v1/settings");
+    expect(adapter).toContain("settings.external?.google !== true");
+    expect(adapter).toContain("await ensureGoogleProviderEnabled()");
+    expect(adapter.indexOf("await ensureGoogleProviderEnabled()")).toBeLessThan(
+      adapter.indexOf("supabase.auth.signInWithOAuth"),
+    );
+  });
+
   it("keeps Login and Register on the same social-login adapter", () => {
     expect(login).toContain('import("@/integrations/lovable")');
     expect(register).toContain('import("@/integrations/lovable")');
