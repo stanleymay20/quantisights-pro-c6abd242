@@ -13,13 +13,30 @@ const production = readFileSync(resolve(root, ".github/workflows/deploy-edge-fun
 const viteConfig = readFileSync(resolve(root, "vite.config.ts"), "utf8");
 const liveReleaseVerifier = readFileSync(resolve(root, "scripts/verify-live-release-provenance.mjs"), "utf8");
 
+// Both pins are reviewed immutable commits from actions/upload-artifact. Keeping
+// the previous and Dependabot-proposed pins trusted during the transition lets
+// the supply-chain update itself be validated by the PR merge test without ever
+// permitting an unpinned tag such as @v4 or @main.
+const TRUSTED_UPLOAD_ARTIFACT_PINS = [
+  "ea165f8d65b6e75b540449e92b4886f43607fa02", // v4
+  "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", // v7.0.1
+];
+
+function expectTrustedUploadArtifact(source: string) {
+  expect(
+    TRUSTED_UPLOAD_ARTIFACT_PINS.some((pin) => source.includes(`actions/upload-artifact@${pin}`)),
+    "workflow must use a reviewed immutable actions/upload-artifact commit",
+  ).toBe(true);
+  expect(source).not.toMatch(/actions\/upload-artifact@(v\d+|main)\b/);
+}
+
 describe("release certification chain", () => {
   it("publishes run-scoped tenant-isolation proof for the exact staged SHA", () => {
     expect(gaStaging).toContain("validated-sha.txt");
     expect(gaStaging).toContain("ga-staging-validation-proof");
     expect(gaStaging).toContain("staging_validation_run_id");
     expect(gaStaging).toContain("Verify checked-out staging target");
-    expect(gaStaging).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
+    expectTrustedUploadArtifact(gaStaging);
   });
 
   it("requires real client acceptance after tenant isolation and publishes an exact-SHA proof", () => {
@@ -116,26 +133,16 @@ describe("release certification chain", () => {
     expect(production).toContain("node scripts/verify-live-release-provenance.mjs");
   });
 
-  it("routes every client source change and release-pipeline change through staging on main only", () => {
-    expect(staging).toContain("branches: [main]");
+  it("routes every successful main CI SHA through exact-SHA staging", () => {
+    expect(staging).toContain("workflow_run:");
+    expect(staging).toContain('workflows: ["CI"]');
+    expect(staging).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(staging).toContain("github.event.workflow_run.event == 'push'");
+    expect(staging).toContain("github.event.workflow_run.head_branch == 'main'");
+    expect(staging).toContain("CI_SHA: ${{ github.event.workflow_run.head_sha }}");
+    expect(staging).toContain("ref: ${{ steps.release.outputs.sha }}");
+    expect(staging).toContain("Verify checked-out staging target");
     expect(staging).not.toContain("agent/fix-staging-edge-imports");
-
-    // `src/**` is deliberate: enumerating individual pages/components allowed new
-    // executive surfaces to bypass staging until somebody remembered to update
-    // this workflow. The broad source invariant is safer and simpler.
-    expect(staging).toContain('"src/**"');
-    expect(staging).not.toContain('"src/pages/Register.tsx"');
-    expect(staging).not.toContain('"src/components/layout/**"');
-    expect(staging).not.toContain('"src/routes/**"');
-
-    expect(staging).toContain('"tests/client-acceptance/**"');
-    expect(staging).toContain('"playwright.client-acceptance.config.ts"');
-    expect(staging).toContain('"vite.config.ts"');
-    expect(staging).toContain('"scripts/verify-live-release-provenance.mjs"');
-    expect(staging).toContain('".github/workflows/client-acceptance.yml"');
-    expect(staging).toContain('".github/workflows/ga-staging-validation.yml"');
-    expect(staging).toContain('".github/workflows/ga-readiness.yml"');
-    expect(staging).toContain('".github/workflows/deploy-edge-functions.yml"');
   });
 
   it("keeps production manual-only", () => {
