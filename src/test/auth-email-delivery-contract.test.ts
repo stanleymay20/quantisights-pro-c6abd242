@@ -38,10 +38,15 @@ describe("auth email delivery contract", () => {
     expect(hook).toContain("emailData.token_hash,");
   });
 
-  it("uses deterministic message IDs and updates the pending audit row on enqueue failure", () => {
+  it("makes hook retries idempotent and retryable without multiplying audit rows", () => {
     expect(hook).toContain("deterministicMessageId");
     expect(hook).toContain("idempotency_key: messageId");
-    expect(hook).toContain(".update({");
+    expect(hook).toContain(".select('id, status')");
+    expect(hook).toContain("existingLog?.status === 'sent'");
+    expect(hook).toContain("existingLog?.id");
+    expect(hook).toContain("retryableResponse");
+    expect(hook).toContain("'Retry-After': '2'");
+    expect(hook).toContain("503");
     expect(hook).toContain("status: 'failed'");
     expect(hook).toContain(".eq('status', 'pending')");
   });
