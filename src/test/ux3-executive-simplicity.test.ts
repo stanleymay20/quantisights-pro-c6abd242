@@ -32,14 +32,16 @@ describe("UX-3 executive simplicity", () => {
     expect(contextBar).toContain("Decision context");
   });
 
-  it("adds an explicit executive mode block on the dashboard for the top decisions", () => {
+  it("makes the dashboard itself the executive mode instead of nesting a duplicate mode block", () => {
     const dashboard = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
 
-    expect(dashboard).toContain("Executive Mode");
-    expect(dashboard).toContain("Today I recommend");
-    expect(dashboard).toContain("topExecutiveDecisions");
-    expect(dashboard).toContain("Expected impact");
-    expect(dashboard).toContain("Evidence");
-    expect(dashboard).toContain("Estimated execution");
+    expect(dashboard).toContain("Executive focus");
+    expect(dashboard).toContain("Priority decisions");
+    expect(dashboard).toContain("decision-time confidence");
+    expect(dashboard).toContain("Governed review required");
+    expect(dashboard).toContain("Evidence in view");
+    expect(dashboard).toContain("Decision value");
+    expect(dashboard).toContain('"/decisions?review=top"');
+    expect(dashboard).not.toContain("topExecutiveDecisions");
   });
 });
