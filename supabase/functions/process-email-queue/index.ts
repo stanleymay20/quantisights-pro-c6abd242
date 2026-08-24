@@ -1,5 +1,5 @@
-import { sendLovableEmail } from '@lovable.dev/email-js'
 import { createClient } from '@supabase/supabase-js'
+import { sendResendEmail } from '../_shared/resend.ts'
 
 const MAX_RETRIES = 5
 const DEFAULT_BATCH_SIZE = 10
@@ -7,29 +7,40 @@ const DEFAULT_SEND_DELAY_MS = 200
 const DEFAULT_AUTH_TTL_MINUTES = 15
 const DEFAULT_TRANSACTIONAL_TTL_MINUTES = 60
 
+function providerStatus(error: unknown): number | null {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status?: unknown }).status
+    return typeof status === 'number' ? status : null
+  }
+  return null
+}
+
 // Check if an error is a rate-limit (429) response.
-// Uses EmailAPIError.status when available, and falls back to parsing the
-// message for compatibility with older provider responses.
 function isRateLimited(error: unknown): boolean {
-  if (error && typeof error === 'object' && 'status' in error) {
-    return (error as { status: number }).status === 429
-  }
-  return error instanceof Error && error.message.includes('429')
+  return providerStatus(error) === 429 || (error instanceof Error && error.message.includes('429'))
 }
 
-// Check if an error is a forbidden (403) response. Retrying won't help.
-// Move straight to DLQ.
-function isForbidden(error: unknown): boolean {
-  if (error && typeof error === 'object' && 'status' in error) {
-    return (error as { status: number }).status === 403
-  }
-  return error instanceof Error && error.message.includes('403')
+// Authentication/authorization failures are provider configuration problems.
+// Retrying other messages with the same credentials cannot succeed.
+function isProviderConfigurationFailure(error: unknown): boolean {
+  const status = providerStatus(error)
+  return status === 401 || status === 403
 }
 
-// Extract Retry-After seconds from a structured EmailAPIError, or default to 60s.
+// These responses are permanent for the individual message and should not burn
+// the retry budget repeatedly.
+function isPermanentMessageFailure(error: unknown): boolean {
+  const status = providerStatus(error)
+  return status === 400 || status === 404 || status === 422
+}
+
+// Extract Retry-After seconds from a structured provider error, or default to 60s.
 function getRetryAfterSeconds(error: unknown): number {
   if (error && typeof error === 'object' && 'retryAfterSeconds' in error) {
-    return (error as { retryAfterSeconds: number | null }).retryAfterSeconds ?? 60
+    const value = (error as { retryAfterSeconds?: unknown }).retryAfterSeconds
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value
+    }
   }
   return 60
 }
@@ -79,12 +90,18 @@ async function moveToDlq(
 }
 
 Deno.serve(async (req) => {
-  const apiKey = Deno.env.get('LOVABLE_API_KEY')
+  const resendApiKey = Deno.env.get('RESEND_API_KEY')
+  const resendFromEmail = Deno.env.get('RESEND_FROM_EMAIL')
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
-  if (!apiKey || !supabaseUrl || !supabaseServiceKey) {
-    console.error('Missing required environment variables')
+  if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey) {
+    console.error('Missing required email worker environment variables', {
+      resend_api_key_present: Boolean(resendApiKey),
+      resend_from_email_present: Boolean(resendFromEmail),
+      supabase_url_present: Boolean(supabaseUrl),
+      service_role_present: Boolean(supabaseServiceKey),
+    })
     return new Response(
       JSON.stringify({ error: 'Server configuration error' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -249,36 +266,43 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const lovableApiBaseUrl = Deno.env.get('LOVABLE_SEND_URL') || undefined
-        await sendLovableEmail(
-          {
-            run_id: payload.run_id,
-            to: payload.to,
-            from: payload.from,
-            sender_domain: payload.sender_domain,
-            subject: payload.subject,
-            html: payload.html,
-            text: payload.text,
-            purpose: payload.purpose,
-            label: payload.label,
-            idempotency_key: payload.idempotency_key,
-            unsubscribe_token: payload.unsubscribe_token,
-            message_id: payload.message_id,
-          },
-          // email-js uses apiBaseUrl for endpoint overrides. Keep the existing
-          // secret name for compatibility with deployed environments.
-          { apiKey, apiBaseUrl: lovableApiBaseUrl }
-        )
+        await sendResendEmail({
+          apiKey: resendApiKey,
+          from: resendFromEmail,
+          to: String(payload.to ?? ''),
+          subject: String(payload.subject ?? ''),
+          html: typeof payload.html === 'string' ? payload.html : null,
+          text: typeof payload.text === 'string' ? payload.text : null,
+          idempotencyKey:
+            typeof payload.idempotency_key === 'string'
+              ? payload.idempotency_key
+              : typeof payload.message_id === 'string'
+                ? payload.message_id
+                : null,
+        })
 
-        // Log success
-        await supabase.from('email_send_log').insert({
+        // Log success. A partial unique index guarantees at most one sent row
+        // per message_id even if two workers race after visibility timeout.
+        const { error: sentLogError } = await supabase.from('email_send_log').insert({
           message_id: payload.message_id,
           template_name: payload.label || queue,
           recipient_email: payload.to,
           status: 'sent',
         })
+        if (sentLogError) {
+          console.error('Provider accepted email but sent audit row failed', {
+            queue,
+            msg_id: msg.msg_id,
+            message_id: payload.message_id,
+            error: sentLogError,
+          })
+          // Do not retry the provider after an accepted send. Resend's
+          // Idempotency-Key is still a second line of defense, but preserving the
+          // queue here would create an ambiguous state. Delete it and surface the
+          // audit failure through logs/observability instead.
+        }
 
-        // Delete from queue
+        // Delete from queue after provider acceptance.
         const { error: delError } = await supabase.rpc('delete_email', {
           queue_name: queue,
           message_id: msg.msg_id,
@@ -294,6 +318,7 @@ Deno.serve(async (req) => {
           msg_id: msg.msg_id,
           read_ct: msg.read_ct,
           failed_attempts: failedAttempts,
+          provider_status: providerStatus(error),
           error: errorMsg,
         })
 
@@ -324,17 +349,20 @@ Deno.serve(async (req) => {
           )
         }
 
-        // 403s are permanent configuration or authorization failures for this
-        // message, so move straight to DLQ and stop processing the rest of the batch.
-        if (isForbidden(error)) {
+        if (isProviderConfigurationFailure(error)) {
           await moveToDlq(supabase, queue, msg, errorMsg.slice(0, 1000))
           return new Response(
-            JSON.stringify({ processed: totalProcessed, stopped: 'forbidden' }),
+            JSON.stringify({ processed: totalProcessed, stopped: 'provider_configuration' }),
             { headers: { 'Content-Type': 'application/json' } }
           )
         }
 
-        // Log non-429 failures to track real retry attempts.
+        if (isPermanentMessageFailure(error)) {
+          await moveToDlq(supabase, queue, msg, errorMsg.slice(0, 1000))
+          continue
+        }
+
+        // Log transient failures to track real retry attempts.
         await supabase.from('email_send_log').insert({
           message_id: payload.message_id,
           template_name: payload.label || queue,
@@ -346,7 +374,7 @@ Deno.serve(async (req) => {
           failedAttemptsByMessageId.set(payload.message_id, failedAttempts + 1)
         }
 
-        // Non-429 errors: message stays invisible until VT expires, then retried
+        // Transient errors: message stays invisible until VT expires, then retried.
       }
 
       // Small delay between sends to smooth bursts
