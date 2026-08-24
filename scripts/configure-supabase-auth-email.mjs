@@ -51,6 +51,10 @@ const managementRequest = async (path, { method = "GET", body } = {}) => {
 const authConfigPath = `/v1/projects/${projectRef}/config/auth`;
 const hookUri = `https://${projectRef}.supabase.co/functions/v1/auth-email-hook`;
 const workerUri = `https://${projectRef}.supabase.co/functions/v1/process-email-queue`;
+const runSql = async (query) => managementRequest(
+  `/v1/projects/${projectRef}/database/query`,
+  { method: "POST", body: { query } },
+);
 
 if (action === "disable") {
   try {
@@ -58,11 +62,40 @@ if (action === "disable") {
       method: "PATCH",
       body: { hook_send_email_enabled: false },
     });
+
+    // A disabled Auth hook is not enough if an old queue worker remains active.
+    // Stop the custom dispatcher too so no authentication/transactional email
+    // depends on an unavailable external provider. Messages remain durable in
+    // PGMQ until a provider-backed configure run re-enables the worker.
+    await runSql(`
+DO $$
+DECLARE
+  worker_job_id bigint;
+BEGIN
+  FOR worker_job_id IN
+    SELECT jobid FROM cron.job WHERE jobname = 'process-email-queue'
+  LOOP
+    PERFORM cron.unschedule(worker_job_id);
+  END LOOP;
+END $$;
+`);
+
     const verified = await managementRequest(authConfigPath);
     if (verified.hook_send_email_enabled === true) {
       fail("Send Email Hook remained enabled after disable request");
     }
-    console.log(`Send Email Hook disabled for secret rotation on ${projectRef}.`);
+
+    const workerState = await runSql(`
+SELECT count(*)::int AS worker_cron_count
+FROM cron.job
+WHERE jobname = 'process-email-queue';
+`);
+    const workerRow = Array.isArray(workerState) ? workerState[0] : workerState?.[0];
+    if (Number(workerRow?.worker_cron_count) !== 0) {
+      fail("process-email-queue cron remained configured after disable request");
+    }
+
+    console.log(`Custom Auth email hook and queue worker disabled for ${projectRef}.`);
     process.exit(0);
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -91,14 +124,8 @@ const getLegacyServiceRoleKey = async () => {
   return value;
 };
 
-const runSql = async (query) => managementRequest(
-  `/v1/projects/${projectRef}/database/query`,
-  { method: "POST", body: { query } },
-);
-
 try {
   const serviceRoleKey = await getLegacyServiceRoleKey();
-  const projectUrl = `https://${projectRef}.supabase.co`;
 
   const setupSql = `
 BEGIN;
@@ -178,7 +205,7 @@ SELECT
 
   // Invoke the worker once with no queue requirement. This proves the gateway,
   // service-role authorization, SUPABASE_* runtime configuration, and the
-  // provider credential are present without sending an email.
+  // independent provider credentials are present without sending an email.
   const workerResponse = await fetch(workerUri, {
     method: "POST",
     headers: {
