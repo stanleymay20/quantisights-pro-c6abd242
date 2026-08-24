@@ -49,7 +49,9 @@ describe("plan entitlement enforcement", () => {
   it("renders gated routes through the entitlement boundary", () => {
     const app = read("src/App.tsx");
     expect(app).toContain("RouteEntitlement");
-    expect(app).toContain("feature ? <RouteEntitlement feature={feature}>");
+    expect(app).toMatch(
+      /const entitledElement = feature\s*\?\s*<RouteEntitlement feature=\{feature\}>\{element\}<\/RouteEntitlement>\s*:\s*element;/,
+    );
   });
 
   it("keeps representative growth and enterprise tier boundaries explicit", () => {
