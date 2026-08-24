@@ -115,7 +115,7 @@ describe("internal route integrity", () => {
       for (const rawTarget of literalTargets(source, rel)) {
         const target = normalizeTarget(rawTarget);
         if (!target) continue;
-        if (/^\/(?:assets|lovable-uploads|favicon|robots\.txt|sitemap\.xml|manifest)/.test(target)) continue;
+        if (/^\/(?:assets|lovable-uploads|\.well-known|favicon|pgp-key\.txt|robots\.txt|sitemap\.xml|manifest)/.test(target)) continue;
         if (!isRegistered(target)) broken.push(`${rel}: ${rawTarget}`);
       }
     }
