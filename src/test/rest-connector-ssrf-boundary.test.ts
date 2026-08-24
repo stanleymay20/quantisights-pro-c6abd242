@@ -9,10 +9,10 @@ const ci = read(".github/workflows/ci.yml");
 
 describe("REST connector SSRF boundary", () => {
   it("routes connector HTTP requests through the shared outbound guard", () => {
-    expect(connector).toContain('safeOutboundFetch');
+    expect(connector).toContain("safeOutboundFetch");
     expect(connector).toContain('from "../_shared/outbound-http.ts"');
-    expect(connector).not.toContain('await fetch(url.toString(), { method, headers })');
-    expect(ci).toContain("deno check --config supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts");
+    expect(connector).not.toContain("await fetch(url.toString(), { method, headers })");
+    expect(ci).toContain("check_edge supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts");
   });
 
   it("requires HTTPS and rejects embedded URL credentials", () => {
@@ -24,11 +24,11 @@ describe("REST connector SSRF boundary", () => {
 
   it("rejects local/private/reserved IP ranges and internal host suffixes", () => {
     for (const marker of [
-      'a === 10',
-      'a === 127',
-      'a === 169 && b === 254',
-      'a === 172 && b >= 16 && b <= 31',
-      'a === 192 && b === 168',
+      "a === 10",
+      "a === 127",
+      "a === 169 && b === 254",
+      "a === 172 && b >= 16 && b <= 31",
+      "a === 192 && b === 168",
       'ip === "::1"',
       'ip.startsWith("fc")',
       'ip.startsWith("fd")',
