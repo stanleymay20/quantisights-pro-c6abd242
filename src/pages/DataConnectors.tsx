@@ -50,6 +50,18 @@ interface DiscoveredTable {
   row_count: number;
 }
 
+type SyncOutcome = { records: number | null; errors: string[]; status: "succeeded" | "failed" | "unavailable" };
+
+async function readJsonObject(res: Response): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = await res.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 interface MetricMapping {
   source_table: string;
   source_column: string;
@@ -276,8 +288,13 @@ const DataConnectors = () => {
         method: "POST", headers,
         body: JSON.stringify({ organization_id: currentOrgId, connector_type: selectedType, name: sourceName, credentials, schedule_kind: "hourly" }),
       });
-      const storeData = await storeRes.json();
-      if (!storeData.success) throw new Error(storeData.error || "Failed to save credentials");
+      const storeData = await readJsonObject(storeRes);
+      if (!storeRes.ok || !storeData || storeData.success !== true || typeof storeData.connector_id !== "string") {
+        throw new Error(
+          (storeData && typeof storeData.error === "string" ? storeData.error : null) ||
+          `Failed to save credentials (HTTP ${storeRes.status})`,
+        );
+      }
 
       const connectorId = storeData.connector_id;
       toast({ title: "Credentials saved securely", description: "Starting initial data sync…" });
@@ -287,20 +304,31 @@ const DataConnectors = () => {
         method: "POST", headers,
         body: JSON.stringify({ connector_id: connectorId }),
       });
-      const syncData = await syncRes.json();
+      const syncData = await readJsonObject(syncRes);
+      const syncVerified = syncRes.ok && !!syncData && syncData.success === true;
 
-      if (syncData.success || (syncData.records ?? 0) > 0) {
-        toast({ title: `${CONNECTORS.find(c => c.type === selectedType)?.label} connected`, description: `${syncData.records ?? 0} records synced. Your data is ready.` });
+      fetchExisting();
+
+      if (syncVerified) {
+        const records = typeof syncData!.records === "number" ? syncData!.records : null;
+        toast({
+          title: `${CONNECTORS.find(c => c.type === selectedType)?.label} connected`,
+          description: records === null ? "Initial sync completed." : `${records} records synced. Your data is ready.`,
+        });
         import("@/lib/analytics").then(({ trackConnectorConnected }) =>
           trackConnectorConnected(selectedType)
         );
-      } else {
-        const errMsg = syncData.error || (syncData.errors || []).slice(0, 2).join("; ");
-        toast({ title: "Saved — sync issue", description: errMsg || "Credentials saved. Sync will retry automatically.", variant: "destructive" });
+        setStep("select");
+        navigate("/dataset-explorer");
+        return;
       }
-      fetchExisting();
-      setStep("select");
-      navigate("/dataset-explorer");
+
+      // Credentials stored, but the sync is failed/unverified — do NOT present this as connected.
+      const errMsg =
+        (syncData && typeof syncData.error === "string" ? syncData.error : null) ||
+        (syncData && Array.isArray(syncData.errors) ? syncData.errors.slice(0, 2).join("; ") : "") ||
+        `Initial sync could not be verified (HTTP ${syncRes.status})`;
+      toast({ title: "Credentials saved — initial sync failed", description: errMsg, variant: "destructive" });
     } catch (err: unknown) {
       toast({ title: "Connection failed", description: err instanceof Error ? err.message : "Check credentials and try again.", variant: "destructive" });
     } finally {
@@ -334,9 +362,23 @@ const DataConnectors = () => {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/db-connector`,
         { method: "POST", headers, body: JSON.stringify({ action: "test", ...buildConnectorPayload() }) }
       );
-      const data = await res.json();
-      setTestResult(data);
-      if (data.success) setStep("testing");
+      const data = await readJsonObject(res);
+      if (!res.ok || !data || data.success !== true) {
+        setTestResult({
+          success: false,
+          message:
+            (data && typeof data.error === "string" ? data.error : null) ||
+            (data && typeof data.message === "string" ? data.message : null) ||
+            `Connection test failed (HTTP ${res.status})`,
+        });
+        return;
+      }
+      setTestResult({
+        success: true,
+        message: typeof data.message === "string" ? data.message : "Connection succeeded",
+        version: typeof data.version === "string" ? data.version : undefined,
+      });
+      setStep("testing");
     } catch (err: unknown) {
       setTestResult({ success: false, message: err instanceof Error ? err.message : "Unknown error" });
     } finally {
@@ -352,8 +394,18 @@ const DataConnectors = () => {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/db-connector`,
         { method: "POST", headers, body: JSON.stringify({ action: "discover", ...buildConnectorPayload() }) }
       );
-      const data = await res.json();
-      setTables(data.tables || []);
+      const data = await readJsonObject(res);
+      if (!res.ok || !data || data.success === false || !Array.isArray(data.tables)) {
+        toast({
+          title: "Schema discovery unavailable",
+          description:
+            (data && typeof data.error === "string" ? data.error : null) ||
+            `Schema could not be verified (HTTP ${res.status})`,
+          variant: "destructive",
+        });
+        return;
+      }
+      setTables(data.tables as DiscoveredTable[]);
       setStep("schema");
     } catch (err: unknown) {
       toast({ title: "Schema discovery failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
@@ -371,8 +423,19 @@ const DataConnectors = () => {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/db-connector`,
         { method: "POST", headers, body: JSON.stringify({ action: "preview", ...buildConnectorPayload(), selected_tables: [tableName] }) }
       );
-      const data = await res.json();
-      setPreviewData(data);
+      const data = await readJsonObject(res);
+      if (!res.ok || !data || data.success === false || !Array.isArray(data.rows)) {
+        toast({
+          title: "Preview unavailable",
+          description:
+            (data && typeof data.error === "string" ? data.error : null) ||
+            `Preview could not be verified (HTTP ${res.status})`,
+          variant: "destructive",
+        });
+        return;
+      }
+      const rows = data.rows as any[];
+      setPreviewData({ rows, count: typeof data.count === "number" ? data.count : rows.length });
     } catch (err: unknown) {
       toast({ title: "Preview failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     }
@@ -454,7 +517,7 @@ const DataConnectors = () => {
         username: creds.username || null, ssl_mode: creds.sslMode || null,
         selected_tables: selectedTables as unknown as Json,
         discovered_schema: { tables } as unknown as Json,
-        connection_status: "connected", last_tested_at: new Date().toISOString(),
+        connection_status: "pending", last_tested_at: new Date().toISOString(),
       }).select("id").single();
       if (ccErr) throw ccErr;
 
@@ -466,7 +529,8 @@ const DataConnectors = () => {
         aggregation: m.aggregation, is_active: true,
       }));
       if (mappingInserts.length > 0) {
-        await supabase.from("metric_mappings").insert(mappingInserts);
+        const { error: mmErr } = await supabase.from("metric_mappings").insert(mappingInserts);
+        if (mmErr) throw mmErr;
       }
 
       // 4. Create sync schedule
@@ -476,10 +540,11 @@ const DataConnectors = () => {
       else if (syncFrequency === "daily") nextRun.setDate(nextRun.getDate() + 1);
       else nextRun.setDate(nextRun.getDate() + 7);
 
-      await supabase.from("sync_schedules").insert({
+      const { error: schedErr } = await supabase.from("sync_schedules").insert({
         organization_id: currentOrgId, data_source_id: ds.id,
         frequency: syncFrequency, is_active: true, next_run_at: nextRun.toISOString(),
       });
+      if (schedErr) throw schedErr;
 
       // 5. Run initial sync
       const auth = await getVerifiedAuth();
@@ -494,13 +559,32 @@ const DataConnectors = () => {
           }),
         }
       );
-      const syncData = await res.json();
-      setSyncResult(syncData);
+      const syncData = await readJsonObject(res);
+      if (!res.ok || !syncData || syncData.success === false) {
+        const errors = Array.isArray(syncData?.errors)
+          ? (syncData!.errors as unknown[]).map(String)
+          : [
+              (syncData && typeof syncData.error === "string" ? syncData.error : null) ||
+              `Initial sync could not be verified (HTTP ${res.status})`,
+            ];
+        setSyncResult({ records: null, errors, status: res.ok ? "failed" : "unavailable" });
+        setStep("done");
+        return;
+      }
+      setSyncResult({
+        records: typeof syncData.records === "number" ? syncData.records : null,
+        errors: Array.isArray(syncData.errors) ? (syncData.errors as unknown[]).map(String) : [],
+        status: "succeeded",
+      });
+      await supabase.from("connector_configs")
+        .update({ connection_status: "connected" })
+        .eq("organization_id", currentOrgId)
+        .eq("data_source_id", ds.id);
       setStep("done");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       toast({ title: "Sync failed", description: msg, variant: "destructive" });
-      setSyncResult({ records: 0, errors: [msg] });
+      setSyncResult({ records: null, errors: [msg], status: "failed" });
       setStep("done");
     } finally {
       setSyncing(false);
@@ -939,7 +1023,20 @@ const DataConnectors = () => {
                 </div>
 
                 {/* Existing connections */}
-                {existingConnectors.length > 0 && (
+                {inventoryError && (
+                  <div className="mb-8 p-4 rounded-lg border border-destructive/30 bg-destructive/10">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertCircle className="w-4 h-4 text-destructive" />
+                      <span className="text-sm font-medium">Existing connections unavailable</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      We could not verify your connector inventory, so no count is shown. {inventoryError}
+                    </p>
+                    <Button size="sm" variant="outline" onClick={fetchExisting}>Retry</Button>
+                  </div>
+                )}
+
+                {existingConnectors && existingConnectors.length > 0 && (
                   <div className="mb-8">
                     <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Active Connections</h3>
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1374,7 +1471,7 @@ const DataConnectors = () => {
             {/* ═══ STEP: Done ═══ */}
             {step === "done" && (
               <div className="max-w-lg mx-auto text-center py-12">
-                {syncResult && syncResult.records > 0 ? (
+                {syncResult && syncResult.status === "succeeded" && (syncResult.records ?? 0) > 0 ? (
                   <>
                     <CheckCircle2 className="w-12 h-12 text-primary mx-auto mb-4" />
                     <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">Data Connected!</h2>
@@ -1390,7 +1487,9 @@ const DataConnectors = () => {
                     <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
                     <h2 className="text-[16px] font-semibold tracking-tight tracking-tight mb-2">Sync Issue</h2>
                     <p className="text-sm text-destructive mb-4">
-                      {syncResult?.errors?.[0] || "No data could be synced. Check your metric mappings."}
+                      {syncResult?.status === "unavailable"
+                        ? (syncResult?.errors?.[0] || "Sync status is unavailable — records synced is unknown.")
+                        : (syncResult?.errors?.[0] || "No data could be synced. Check your metric mappings.")}
                     </p>
                   </>
                 )}
