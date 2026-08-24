@@ -1,158 +1,259 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
+import { existsSync, readFileSync } from "node:fs";
 import {
   attachAuthEvidence,
   readSupabaseSession,
-  stagingAuthAvailable,
-  mailCatcherAvailable,
-  mfaFixtureAvailable,
 } from "./lib/auth-evidence";
 
-// EE-1C: Every test annotates the AUTH-### control it exercises so the
-// Playwright → AUTH adapter (tests/evidence/adapters/auth-adapter.mjs) can
-// map results deterministically. Tests that need staging fixtures (real
-// signed-in session, mail-catcher, MFA enrollment) are skipped when those
-// fixtures are absent — the adapter maps SKIP to a WARNING evidence record,
-// never a fake PASS.
+interface AcceptanceFixture {
+  tier?: string;
+  user_id?: string;
+  email: string;
+  password: string;
+  org_id?: string;
+}
 
-const staging = stagingAuthAvailable();
+interface StoredAuth {
+  key: string;
+  access_token: string | null;
+  refresh_token: string | null;
+}
 
-async function signIn(page, email, password) {
+const statePath = process.env.CLIENT_ACCEPTANCE_STATE || "tests/client-acceptance/.state.json";
+
+function fixtureFor(tier = "starter"): AcceptanceFixture | null {
+  if (existsSync(statePath)) {
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      const fixture = state?.customers?.[tier];
+      if (fixture?.email && fixture?.password) return fixture;
+    } catch {
+      // Fall through to explicit evidence credentials.
+    }
+  }
+
+  if (tier === "starter" && process.env.EVIDENCE_STAGING_EMAIL && process.env.EVIDENCE_STAGING_PASSWORD) {
+    return {
+      email: process.env.EVIDENCE_STAGING_EMAIL,
+      password: process.env.EVIDENCE_STAGING_PASSWORD,
+      org_id: process.env.EVIDENCE_STAGING_ORG_ID,
+    };
+  }
+
+  return null;
+}
+
+function adminClient() {
+  const url = process.env.LOAD_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null;
+  return createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function signIn(page: Page, fixture: AcceptanceFixture) {
   await page.goto("/login");
-  await page.getByLabel(/email/i).first().fill(email);
-  await page.getByLabel(/password/i).first().fill(password);
-  await page.getByRole("button", { name: /sign in|log in/i }).first().click();
+  await page.getByLabel(/email/i).first().fill(fixture.email);
+  await page.getByLabel(/password/i).first().fill(fixture.password);
+  await page.getByRole("button", { name: /sign in securely|sign in|log in/i }).first().click();
   await page.waitForURL((url) => !/\/login$/.test(url.pathname), { timeout: 15_000 });
 }
 
+async function storedAuth(page: Page): Promise<StoredAuth | null> {
+  return page.evaluate(() => {
+    for (const key of Object.keys(window.localStorage)) {
+      if (!/^sb-.*-auth-token$/.test(key)) continue;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        return {
+          key,
+          access_token: parsed?.access_token ?? parsed?.currentSession?.access_token ?? null,
+          refresh_token: parsed?.refresh_token ?? parsed?.currentSession?.refresh_token ?? null,
+        };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+}
+
+async function mutateStoredAuth(
+  page: Page,
+  mutation: "expire" | "corrupt",
+): Promise<boolean> {
+  return page.evaluate((kind) => {
+    for (const key of Object.keys(window.localStorage)) {
+      if (!/^sb-.*-auth-token$/.test(key)) continue;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (kind === "expire") {
+          parsed.expires_at = 1;
+          parsed.refresh_token = "invalid-expired-refresh-token";
+          if (parsed.currentSession) {
+            parsed.currentSession.expires_at = 1;
+            parsed.currentSession.refresh_token = "invalid-expired-refresh-token";
+          }
+        } else {
+          parsed.access_token = "bad_jwt";
+          parsed.refresh_token = "bad_refresh";
+          parsed.expires_at = Math.floor(Date.now() / 1000) + 3600;
+          if (parsed.currentSession) {
+            parsed.currentSession.access_token = "bad_jwt";
+            parsed.currentSession.refresh_token = "bad_refresh";
+            parsed.currentSession.expires_at = Math.floor(Date.now() / 1000) + 3600;
+          }
+        }
+        window.localStorage.setItem(key, JSON.stringify(parsed));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }, mutation);
+}
+
+const starter = fixtureFor("starter");
+const enterprise = fixtureFor("enterprise") ?? starter;
+
 test.describe("Authentication Flow", () => {
   // ------------------------------------------------------------ AUTH-001
-  test("AUTH-001 login with invalid credentials shows error", async ({ page }, testInfo) => {
+  test("AUTH-001 valid email/password credentials establish a session", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-001");
-    await page.goto("/login");
-    ev.mark({ route: "/login" });
-    await page.getByLabel(/email/i).first().fill("invalid@test.com");
-    await page.getByLabel(/password/i).first().fill("wrongpassword123");
-    await page.getByRole("button", { name: /sign in|log in/i }).first().click();
-    await expect(page.getByText(/invalid|error|incorrect|failed/i).first()).toBeVisible({ timeout: 10_000 });
-    ev.setSession(null, "signed_out");
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
+    const session = await readSupabaseSession(page);
+    expect(session?.user_id).toBeTruthy();
+    expect(new URL(page.url()).pathname).not.toBe("/login");
+    ev.mark({ route: new URL(page.url()).pathname });
+    ev.setSession(session, "signed_in");
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-002
   test("AUTH-002 signOut clears session and redirects to /login", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-002");
-    test.skip(!staging.ok, `staging fixtures missing: ${staging.missing.join(", ")}`);
-    await signIn(page, process.env.EVIDENCE_STAGING_EMAIL!, process.env.EVIDENCE_STAGING_PASSWORD!);
-    ev.setSession(await readSupabaseSession(page), "signed_in");
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
+    expect(await readSupabaseSession(page)).not.toBeNull();
     await page.getByRole("button", { name: /log ?out|sign ?out/i }).first().click();
     await page.waitForURL(/\/login/, { timeout: 10_000 });
-    ev.setSession(await readSupabaseSession(page), "signed_out");
+    const session = await readSupabaseSession(page);
+    expect(session).toBeNull();
+    ev.setSession(session, "signed_out");
     ev.mark({ route: "/login" });
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-003
-  test("AUTH-003 Google OAuth button is present on login", async ({ page }, testInfo) => {
+  test("AUTH-003 Google OAuth button initiates the OAuth broker flow", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-003");
     await page.goto("/login");
-    ev.mark({ route: "/login" });
-    const googleBtn = page.getByRole("button", { name: /google/i }).first();
-    await expect(googleBtn).toBeVisible();
+    const googleButton = page.getByRole("button", { name: /google/i }).first();
+    await expect(googleButton).toBeVisible();
+
+    const oauthRequest = page.waitForRequest(
+      (request) => /oauth|google/i.test(request.url()) && !/googleapis\.com\/.*(?:font|icon)/i.test(request.url()),
+      { timeout: 15_000 },
+    );
+    await googleButton.click();
+    const request = await oauthRequest;
+    const url = new URL(request.url());
+    ev.note(`OAuth initiation host=${url.host} path=${url.pathname}`);
+    expect(request.url()).toMatch(/oauth|google/i);
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-004
-  test("AUTH-004 /auth/callback handles missing code gracefully (PKCE surface)", async ({ page }, testInfo) => {
-    const ev = attachAuthEvidence(page, testInfo, "AUTH-004");
-    const res = await page.goto("/auth/callback");
-    ev.mark({ route: "/auth/callback", response_status: res?.status() ?? null });
-    // Callback without a code MUST NOT white-screen; it should surface a UI
-    // (error, retry, or safe redirect back to /login).
-    await page.waitForLoadState("domcontentloaded");
-    const url = new URL(page.url());
-    expect(["/auth/callback", "/login", "/"].some((p) => url.pathname.startsWith(p))).toBeTruthy();
-    await ev.finalize();
+  test("AUTH-004 PKCE callback exchanges a real one-time authorization code", async ({ page }, testInfo) => {
+    attachAuthEvidence(page, testInfo, "AUTH-004");
+    test.skip(true, "real one-time PKCE authorization-code fixture is not wired yet; do not fake PASS with a no-code callback");
   });
 
   // ------------------------------------------------------------ AUTH-005
   test("AUTH-005 session persists across reload", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-005");
-    test.skip(!staging.ok, `staging fixtures missing: ${staging.missing.join(", ")}`);
-    await signIn(page, process.env.EVIDENCE_STAGING_EMAIL!, process.env.EVIDENCE_STAGING_PASSWORD!);
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
     const before = await readSupabaseSession(page);
+    expect(before?.user_id).toBeTruthy();
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
     const after = await readSupabaseSession(page);
     expect(after?.user_id).toBe(before?.user_id);
+    expect(new URL(page.url()).pathname).not.toBe("/login");
     ev.setSession(after, "signed_in");
+    ev.mark({ route: new URL(page.url()).pathname });
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-006
-  test("AUTH-006 access token refresh keeps session valid", async ({ page }, testInfo) => {
+  test("AUTH-006 refresh token grant returns a fresh authenticated session", async ({ page, request }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-006");
-    test.skip(!staging.ok, `staging fixtures missing: ${staging.missing.join(", ")}`);
-    await signIn(page, process.env.EVIDENCE_STAGING_EMAIL!, process.env.EVIDENCE_STAGING_PASSWORD!);
-    // Force a refresh via the client helper if exposed, else assert the
-    // Supabase autoRefresh cycle by waiting past the token skew window.
-    const refreshed = await page.evaluate(async () => {
-      try {
-        const g: any = window;
-        const sb = g.supabase ?? g.__supabase ?? null;
-        if (!sb?.auth?.refreshSession) return { skipped: true };
-        const { data, error } = await sb.auth.refreshSession();
-        return { access_token: data?.session?.access_token ? "present" : null, error: error?.message ?? null };
-      } catch (e: any) {
-        return { error: e?.message ?? String(e) };
-      }
+    const supabaseUrl = process.env.LOAD_SUPABASE_URL;
+    const anonKey = process.env.LOAD_SUPABASE_ANON_KEY;
+    test.skip(!starter || !supabaseUrl || !anonKey, "staging credentials, Supabase URL and anon key are required");
+
+    await signIn(page, starter!);
+    const stored = await storedAuth(page);
+    expect(stored?.refresh_token).toBeTruthy();
+
+    const response = await request.post(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+      headers: {
+        apikey: anonKey!,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      data: { refresh_token: stored!.refresh_token },
     });
-    ev.note(`refreshSession result: ${JSON.stringify(refreshed)}`);
-    ev.setSession(await readSupabaseSession(page), "signed_in");
-    // Non-blocking: a null result is acceptable when the client isn't exposed
-    // on window; the presence of a persisted session covers this control.
-    expect(await readSupabaseSession(page)).not.toBeNull();
+    ev.mark({ response_status: response.status() });
+    expect(response.ok()).toBeTruthy();
+    const body = await response.json();
+    expect(body.access_token).toBeTruthy();
+    expect(body.refresh_token).toBeTruthy();
+    ev.note("Refresh grant returned access_token + rotated refresh_token; token values intentionally not attached.");
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-007
-  test("AUTH-007 expired token routes user back to /login without crash", async ({ page }, testInfo) => {
+  test("AUTH-007 expired session fails closed to /login without crashing", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-007");
-    test.skip(!staging.ok, `staging fixtures missing: ${staging.missing.join(", ")}`);
-    await signIn(page, process.env.EVIDENCE_STAGING_EMAIL!, process.env.EVIDENCE_STAGING_PASSWORD!);
-    await page.evaluate(() => {
-      for (const key of Object.keys(window.localStorage)) {
-        if (!/^sb-.*-auth-token$/.test(key)) continue;
-        const raw = window.localStorage.getItem(key);
-        if (!raw) continue;
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed.expires_at) parsed.expires_at = 1;
-          if (parsed.currentSession?.expires_at) parsed.currentSession.expires_at = 1;
-          window.localStorage.setItem(key, JSON.stringify(parsed));
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-    await page.goto("/dashboard");
-    await page.waitForURL(/\/(login|dashboard)/, { timeout: 15_000 });
-    ev.mark({ route: new URL(page.url()).pathname });
-    ev.setSession(await readSupabaseSession(page), /\/login/.test(page.url()) ? "signed_out" : "signed_in");
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
+    expect(await mutateStoredAuth(page, "expire")).toBeTruthy();
+    await page.reload();
+    await page.waitForURL(/\/login/, { timeout: 15_000 });
+    expect(await readSupabaseSession(page)).toBeNull();
+    ev.mark({ route: "/login" });
+    ev.setSession(null, "signed_out");
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-008
-  test("AUTH-008 corrupt sb-* token is purged, user recovers to /login", async ({ page }, testInfo) => {
+  test("AUTH-008 corrupt project auth token is purged and recovers to /login", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-008");
-    await page.goto("/");
-    await page.evaluate(() => {
-      window.localStorage.setItem("sb-fake-auth-token", JSON.stringify({ access_token: "bad_jwt", refresh_token: "x" }));
-    });
-    await page.goto("/dashboard");
-    await page.waitForURL(/\/(login|$)/, { timeout: 15_000 });
-    const key = await page.evaluate(() => window.localStorage.getItem("sb-fake-auth-token"));
-    ev.note(`sb-fake-auth-token after recovery: ${key ? "still present" : "cleared"}`);
-    ev.mark({ route: new URL(page.url()).pathname });
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
+    expect(await mutateStoredAuth(page, "corrupt")).toBeTruthy();
+    await page.reload();
+    await page.waitForURL(/\/login/, { timeout: 15_000 });
+    const remaining = await page.evaluate(() =>
+      Object.keys(window.localStorage).filter((key) => key.startsWith("sb-")),
+    );
+    expect(remaining).toEqual([]);
+    ev.note("Corrupt real project auth storage was removed; token values intentionally not attached.");
+    ev.mark({ route: "/login" });
+    ev.setSession(null, "signed_out");
     await ev.finalize();
   });
 
@@ -160,59 +261,88 @@ test.describe("Authentication Flow", () => {
   test("AUTH-009 unauthenticated user is redirected from protected routes", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-009");
     await page.goto("/dashboard");
-    await page.waitForURL(/\/(login|$)/, { timeout: 10_000 });
-    ev.mark({ route: new URL(page.url()).pathname });
+    await page.waitForURL(/\/login/, { timeout: 10_000 });
+    ev.mark({ route: "/login" });
     ev.setSession(null, "signed_out");
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-010
-  test("AUTH-010 MFA is enforced when org policy requires it", async ({ page }, testInfo) => {
+  test("AUTH-010 require_mfa organisation policy gates dashboard before enrollment", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-010");
-    test.skip(!staging.ok || !mfaFixtureAvailable(), "MFA fixture missing (needs EVIDENCE_MFA_TOTP_SECRET + EVIDENCE_MFA_EMAIL)");
-    await page.goto("/login");
-    await page.getByLabel(/email/i).first().fill(process.env.EVIDENCE_MFA_EMAIL!);
-    await page.getByLabel(/password/i).first().fill(process.env.EVIDENCE_STAGING_PASSWORD!);
-    await page.getByRole("button", { name: /sign in|log in/i }).first().click();
-    await expect(page.getByText(/verification code|authenticator|mfa|two.?factor/i).first()).toBeVisible({ timeout: 15_000 });
-    ev.mark({ route: new URL(page.url()).pathname });
-    ev.setSession(await readSupabaseSession(page), "mfa_challenge");
-    await ev.finalize();
+    const admin = adminClient();
+    test.skip(!enterprise?.org_id || !admin, "disposable staging enterprise org + service role are required");
+
+    const { error: enableError } = await admin!
+      .from("organizations")
+      .update({ require_mfa: true })
+      .eq("id", enterprise!.org_id!);
+    expect(enableError).toBeNull();
+
+    try {
+      await signIn(page, enterprise!);
+      await expect(page.getByText(/multi-factor authentication required/i).first()).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("button", { name: /set up 2fa/i }).first()).toBeVisible();
+      ev.mark({ route: new URL(page.url()).pathname });
+      ev.setSession(await readSupabaseSession(page), "mfa_enrollment_required");
+      await ev.finalize();
+    } finally {
+      const { error: restoreError } = await admin!
+        .from("organizations")
+        .update({ require_mfa: false })
+        .eq("id", enterprise!.org_id!);
+      expect(restoreError).toBeNull();
+    }
   });
 
   // ------------------------------------------------------------ AUTH-011
-  test("AUTH-011 forgot password submits reset request", async ({ page }, testInfo) => {
+  test("AUTH-011 password reset request is accepted and recovery email is enqueued", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-011");
+    const admin = adminClient();
+    test.skip(!starter || !admin, "disposable staging user + service role are required");
+
+    const { count: beforeCount, error: beforeError } = await admin!
+      .from("email_send_log")
+      .select("id", { count: "exact", head: true })
+      .eq("recipient_email", starter!.email)
+      .eq("template_name", "recovery");
+    expect(beforeError).toBeNull();
+
     await page.goto("/forgot-password");
-    ev.mark({ route: "/forgot-password" });
-    await expect(page.getByLabel(/email/i).first()).toBeVisible();
-    await page.getByLabel(/email/i).first().fill("recovery-probe@example.com");
-    const submit = page.getByRole("button", { name: /send|reset|submit/i }).first();
-    if (await submit.isVisible().catch(() => false)) {
-      await submit.click();
-      // Any acknowledgement text or navigation is acceptable evidence that the
-      // request was accepted by the client.
-      await page.waitForTimeout(1000);
-    }
+    await page.getByLabel(/email/i).first().fill(starter!.email);
+    const recoverResponse = page.waitForResponse(
+      (response) => response.url().includes("/auth/v1/recover") && response.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("button", { name: /send|reset/i }).first().click();
+    const response = await recoverResponse;
+    ev.mark({ route: "/forgot-password", response_status: response.status() });
+    expect(response.ok()).toBeTruthy();
+
+    await expect.poll(async () => {
+      const { count, error } = await admin!
+        .from("email_send_log")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_email", starter!.email)
+        .eq("template_name", "recovery");
+      if (error) throw error;
+      return count ?? 0;
+    }, { timeout: 20_000 }).toBeGreaterThan(beforeCount ?? 0);
+
+    ev.note("Recovery request returned 2xx and auth-email-hook created a recovery email_send_log row.");
     await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-012
-  test("AUTH-012 password reset completion via recovery link", async ({ page }, testInfo) => {
-    const ev = attachAuthEvidence(page, testInfo, "AUTH-012");
-    test.skip(!mailCatcherAvailable(), "mail-catcher fixture missing (needs EVIDENCE_MAIL_CATCHER_URL)");
-    // Real reset flow requires fetching the link from the mail-catcher. Kept
-    // gated so the pipeline emits SKIP → WARNING rather than a fake PASS.
-    ev.note("staging mail-catcher wiring required");
-    await ev.finalize();
+  test("AUTH-012 password reset completion follows a real one-time recovery link", async ({ page }, testInfo) => {
+    attachAuthEvidence(page, testInfo, "AUTH-012");
+    test.skip(true, "real one-time recovery-link browser fixture is not wired yet; do not certify page presence as reset completion");
   });
 
   // ------------------------------------------------------------ AUTH-013
-  test("AUTH-013 account recovery round-trip (new password succeeds)", async ({ page }, testInfo) => {
-    const ev = attachAuthEvidence(page, testInfo, "AUTH-013");
-    test.skip(!mailCatcherAvailable() || !staging.ok, "recovery round-trip requires staging creds + mail-catcher");
-    ev.note("staging + mail-catcher fixtures required for full round-trip");
-    await ev.finalize();
+  test("AUTH-013 recovery round-trip proves new password succeeds and old password fails", async ({ page }, testInfo) => {
+    attachAuthEvidence(page, testInfo, "AUTH-013");
+    test.skip(true, "full destructive recovery round-trip fixture is not wired yet; do not fake PASS with a note-only test");
   });
 
   // ------------------------------------------------------------ AUTH-014
@@ -222,25 +352,40 @@ test.describe("Authentication Flow", () => {
     ev.mark({ route: "/login" });
     await expect(page.getByLabel(/email/i).first()).toBeVisible();
     await expect(page.getByLabel(/password/i).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /sign in|log in/i }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /sign in securely|sign in|log in/i }).first()).toBeVisible();
     await ev.finalize();
-    // AUTH-014 is warning-tier: sidecar console_errors carry the evidence.
     expect(ev.sidecar.console_errors.length).toBeLessThanOrEqual(2);
   });
 
   // ------------------------------------------------------------ AUTH-015
-  test("AUTH-015 logout clears sb-* localStorage keys", async ({ page }, testInfo) => {
+  test("AUTH-015 logout clears Supabase and tenant browser state", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-015");
-    test.skip(!staging.ok, `staging fixtures missing: ${staging.missing.join(", ")}`);
-    await signIn(page, process.env.EVIDENCE_STAGING_EMAIL!, process.env.EVIDENCE_STAGING_PASSWORD!);
+    test.skip(!starter, "real disposable staging credentials are required");
+
+    await signIn(page, starter!);
+    await page.evaluate(() => {
+      window.sessionStorage.setItem("quantivis_org_id", "sentinel-org");
+      window.sessionStorage.setItem("quantivis_workspace_id", "sentinel-workspace");
+      window.sessionStorage.setItem("quantivis_project_id", "sentinel-project");
+    });
     await page.getByRole("button", { name: /log ?out|sign ?out/i }).first().click();
     await page.waitForURL(/\/login/, { timeout: 10_000 });
-    const remaining = await page.evaluate(() =>
-      Object.keys(window.localStorage).filter((k) => k.startsWith("sb-")),
-    );
-    ev.note(`remaining sb-* keys after signOut: ${JSON.stringify(remaining)}`);
+
+    const remaining = await page.evaluate(() => ({
+      supabase: Object.keys(window.localStorage).filter((key) => key.startsWith("sb-")),
+      org: window.sessionStorage.getItem("quantivis_org_id"),
+      workspace: window.sessionStorage.getItem("quantivis_workspace_id"),
+      project: window.sessionStorage.getItem("quantivis_project_id"),
+      pkce: window.sessionStorage.getItem("supabase-oauth-code-verifier"),
+    }));
+    expect(remaining.supabase).toEqual([]);
+    expect(remaining.org).toBeNull();
+    expect(remaining.workspace).toBeNull();
+    expect(remaining.project).toBeNull();
+    expect(remaining.pkce).toBeNull();
+    ev.note("Supabase auth keys, tenant scope and PKCE verifier were cleared.");
     ev.mark({ route: "/login" });
-    expect(remaining.length).toBe(0);
+    ev.setSession(null, "signed_out");
     await ev.finalize();
   });
 });
