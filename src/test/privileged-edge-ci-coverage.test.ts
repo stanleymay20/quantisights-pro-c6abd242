@@ -9,6 +9,9 @@ const ci = readFileSync(
 
 describe("privileged Edge CI coverage", () => {
   it("Deno-checks security-sensitive data, database/connector, ingestion, aggregation, orchestration, execution, forecasting, contradiction, advisory, trust, automatic-decision, outcome, and decision-value functions", () => {
+    expect(ci).toContain("check_edge() {");
+    expect(ci).toContain('deno check --config "$1" "$2"');
+
     for (const path of [
       "supabase/functions/delete-account/index.ts",
       "supabase/functions/api-ingest/index.ts",
@@ -44,7 +47,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/decision-value-summary/index.ts",
     ]) {
       expect(ci).toContain(
-        `deno check --config supabase/functions/deno.json ${path}`,
+        `check_edge supabase/functions/deno.json ${path}`,
       );
     }
   });
