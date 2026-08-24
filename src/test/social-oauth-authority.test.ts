@@ -8,6 +8,7 @@ const adapter = readFileSync(
   "utf8",
 );
 const callback = readFileSync(resolve(root, "src/pages/AuthCallback.tsx"), "utf8");
+const googleButton = readFileSync(resolve(root, "src/components/auth/GoogleButton.tsx"), "utf8");
 const login = readFileSync(resolve(root, "src/pages/Login.tsx"), "utf8");
 const register = readFileSync(resolve(root, "src/pages/Register.tsx"), "utf8");
 
@@ -27,6 +28,14 @@ describe("social OAuth authority", () => {
     expect(adapter.indexOf("await ensureGoogleProviderEnabled()")).toBeLessThan(
       adapter.indexOf("supabase.auth.signInWithOAuth"),
     );
+  });
+
+  it("does not advertise an unverified Google provider as available", () => {
+    expect(googleButton).toContain("/auth/v1/settings");
+    expect(googleButton).toContain('type ProviderState = "checking" | "available" | "unavailable"');
+    expect(googleButton).toContain('settings.external?.google === true ? "available" : "unavailable"');
+    expect(googleButton).toContain('"Google sign-in unavailable"');
+    expect(googleButton).toContain("disabled={isDisabled}");
   });
 
   it("keeps Login and Register on the same social-login adapter", () => {
