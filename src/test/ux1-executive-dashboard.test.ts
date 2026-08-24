@@ -20,8 +20,17 @@ describe("UX-1 executive dashboard contract", () => {
       expect(dashboard).toContain(marker);
     }
 
-    expect(dashboard.indexOf("Executive focus")).toBeLessThan(dashboard.indexOf("Priority decisions"));
-    expect(dashboard.indexOf("Priority decisions")).toBeLessThan(dashboard.indexOf("Why it matters"));
+    // Compare unique render-section anchors rather than display text that may
+    // also appear earlier in error/fallback copy.
+    const executiveFocusSection = dashboard.indexOf('aria-labelledby="executive-focus-heading"');
+    const priorityDecisionsSection = dashboard.indexOf('aria-labelledby="priority-decisions-heading"');
+    const supportingDetailSection = dashboard.indexOf(">Why it matters</p>");
+
+    expect(executiveFocusSection).toBeGreaterThanOrEqual(0);
+    expect(priorityDecisionsSection).toBeGreaterThanOrEqual(0);
+    expect(supportingDetailSection).toBeGreaterThanOrEqual(0);
+    expect(executiveFocusSection).toBeLessThan(priorityDecisionsSection);
+    expect(priorityDecisionsSection).toBeLessThan(supportingDetailSection);
   });
 
   it("routes first-touch actions to review rather than approving or rejecting on the dashboard", () => {
