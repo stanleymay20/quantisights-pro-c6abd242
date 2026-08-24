@@ -1,6 +1,6 @@
 # Repository Audit — Remediation Status
 
-Updated: 2026-08-14
+Updated: 2026-08-24
 
 > This document supersedes the 2026-07-02 audit snapshot. The repository has changed substantially since that review; findings that described missing tests, failing lint, mixed lockfiles, or a minimal release gate are no longer current.
 
@@ -14,6 +14,7 @@ The normal CI path includes:
 - `npm run lint`
 - `npm run typecheck`
 - `npm run typecheck:trusted`
+- privileged Supabase Edge-function Deno typechecks
 - full Vitest suite
 - evidence-framework tests
 - security-configuration verification
@@ -110,15 +111,15 @@ The application-wide compatibility configuration remains intentionally relaxed w
 - `noUncheckedIndexedAccess: true`;
 - `exactOptionalPropertyTypes: true`.
 
-`npm run typecheck:trusted` is required by CI and the production release gate. The initial strict boundary covers evidence-contract, decision-maturity, and safe-navigation primitives and should be expanded incrementally.
+`npm run typecheck:trusted` is required by CI and the production release gate. The strict boundary has expanded beyond the initial evidence primitives to include decision options, system configuration, cost-of-delay logic, calibration correction, and multiple connector authorization/isolation/validation helpers. It should continue expanding incrementally.
 
 ## Remaining work
 
-### A. Expand strict typing beyond the initial trusted kernel
+### A. Expand strict typing beyond the current trusted kernel
 
 `tsconfig.app.json` still uses relaxed compatibility options outside the trusted kernel. Do not flip the entire repository to strict mode in one change. Expand `tsconfig.trusted.json` iteratively to additional decision-critical modules, fixing each newly exposed error before widening the boundary.
 
-Priority candidates include recommendation generation, cost-of-delay logic, outcome prediction, calibration utilities, and other pure decision-domain modules.
+Priority candidates include recommendation generation, outcome prediction, additional calibration utilities, and other pure decision-domain modules.
 
 ### B. Reduce `@ts-nocheck` in privileged Edge Functions
 
@@ -150,7 +151,7 @@ Lint is enforced without blocking errors, but non-fatal warnings and legacy `@ts
 
 ## Operational note
 
-`main` is currently receiving frequent concurrent edits. CI uses `cancel-in-progress: true`, so a healthy run may be marked cancelled when a newer commit supersedes it. Treat the newest descendant run as authoritative and distinguish supersession from an actual failing step.
+`main` may receive frequent concurrent edits, but CI now serializes evidence per exact commit SHA with `concurrency.group: ci-${{ github.sha }}` and `cancel-in-progress: false`. This is intentional: staging and GA-readiness checks can verify the exact CI result for the precise deployable SHA instead of inheriting or losing evidence when a newer commit appears. Treat an actual failing step as a failure; do not treat an older run as authoritative for a newer descendant SHA.
 
 ## Current remediation priority
 
