@@ -15,6 +15,10 @@ const forgotPassword = readFileSync(
   resolve(root, "src/pages/ForgotPassword.tsx"),
   "utf8",
 );
+const stagingWorkflow = readFileSync(
+  resolve(root, ".github/workflows/deploy-supabase-staging.yml"),
+  "utf8",
+);
 
 describe("auth email delivery contract", () => {
   it("accepts Supabase native Send Email Hook payloads and signatures", () => {
@@ -57,5 +61,13 @@ describe("auth email delivery contract", () => {
     expect(forgotPassword).toContain("we do not reveal whether an account exists");
     expect(forgotPassword).not.toContain("We sent you a password reset link");
     expect(forgotPassword).not.toContain("Sent to{\" \"}");
+  });
+
+  it("keeps staging authentication email independent of Lovable Cloud", () => {
+    expect(stagingWorkflow).toContain("Ensure Auth email is independent of Lovable Cloud");
+    expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs disable");
+    expect(stagingWorkflow).not.toContain("Rotate Auth Send Email Hook secret");
+    expect(stagingWorkflow).not.toContain("Configure and verify staging Auth email pipeline");
+    expect(stagingWorkflow).not.toContain("supabase secrets set SEND_EMAIL_HOOK_SECRET");
   });
 });
