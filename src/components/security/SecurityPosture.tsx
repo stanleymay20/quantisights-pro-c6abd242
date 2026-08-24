@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/hooks/useOrganization";
+import BackupPassword from "@/components/auth/BackupPassword";
 import {
   Shield, Lock, Eye, Database, FileCheck, Activity,
   CheckCircle2, AlertTriangle, XCircle,
@@ -223,6 +224,8 @@ const SecurityPosture = () => {
               </div>
             ))}
           </div>
+
+          <BackupPassword />
 
           <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
             The score above is computed only from controls verified live against your organization's
