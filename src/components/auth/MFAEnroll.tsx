@@ -27,20 +27,25 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
   const [checking, setChecking] = useState(true);
   const [checkError, setCheckError] = useState(false);
 
-  // Check MFA status — exposed standalone so the error-state Retry button can call it
+  // Check MFA status — exposed standalone so the error-state Retry button can call it.
+  // Supabase auth methods commonly return { error } rather than throwing, so both
+  // transport styles must be handled explicitly.
   const loadMfaStatus = async () => {
     setChecking(true);
     setCheckError(false);
     try {
-      const { data } = await supabase.auth.mfa.listFactors();
-      const verified = data?.totp?.filter((f) => f.status === "verified") || [];
+      const { data, error } = await supabase.auth.mfa.listFactors();
+      if (error) throw error;
+      if (!data) throw new Error("MFA factor response was empty");
+
+      const verified = data.totp?.filter((factor) => factor.status === "verified") || [];
       setMfaEnabled(verified.length > 0);
-    } catch (e: unknown) {
+    } catch (error: unknown) {
       // On error, leave mfaEnabled as null (unknown) and surface an explicit
       // retry state — never assume MFA is disabled, which could mask an
       // active MFA enrollment and prompt the user to "set up" something
       // that's already protecting their account.
-      console.error("[MFAEnroll] Factor check failed:", e instanceof Error ? e.message : e);
+      console.error("[MFAEnroll] Factor check failed:", error instanceof Error ? error.message : error);
       setMfaEnabled(null);
       setCheckError(true);
     } finally {
@@ -49,7 +54,7 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
   };
 
   useEffect(() => {
-    loadMfaStatus();
+    void loadMfaStatus();
   }, []);
 
   const startEnrollment = async () => {
@@ -66,8 +71,8 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       setSecret(data.totp.secret);
       setFactorId(data.id);
       setStep("enrolling");
-    } catch (err: unknown) {
-      toast({ title: "Enrollment failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } catch (error: unknown) {
+      toast({ title: "Enrollment failed", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -92,8 +97,8 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
       setMfaEnabled(true);
       onStatusChange?.();
       toast({ title: "2FA Enabled", description: "Two-factor authentication is now active on your account." });
-    } catch (err: unknown) {
-      toast({ title: "Verification failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } catch (error: unknown) {
+      toast({ title: "Verification failed", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -102,17 +107,25 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
   const disableMFA = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.auth.mfa.listFactors();
-      const factors = data?.totp || [];
+      const { data, error } = await supabase.auth.mfa.listFactors();
+      if (error) throw error;
+      if (!data) throw new Error("MFA factor response was empty");
+
+      const factors = data.totp || [];
       for (const factor of factors) {
-        await supabase.auth.mfa.unenroll({ factorId: factor.id });
+        const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId: factor.id });
+        if (unenrollError) throw unenrollError;
       }
+
       setMfaEnabled(false);
       setStep("idle");
       onStatusChange?.();
       toast({ title: "2FA Disabled", description: "Two-factor authentication has been removed." });
-    } catch (err: unknown) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } catch (error: unknown) {
+      // Do not report success after a partial/failed server mutation. Re-read
+      // the authoritative factor state so the UI reflects whatever survived.
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+      void loadMfaStatus();
     } finally {
       setLoading(false);
     }
@@ -141,7 +154,7 @@ const MFAEnroll = ({ onStatusChange }: MFAEnrollProps) => {
           <p className="text-sm text-muted-foreground">
             We couldn't verify your 2FA status right now. If you previously enabled 2FA, it's still active — this is just a connectivity issue with this check.
           </p>
-          <Button variant="outline" size="sm" onClick={loadMfaStatus} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => void loadMfaStatus()} className="gap-2">
             Retry
           </Button>
         </CardContent>

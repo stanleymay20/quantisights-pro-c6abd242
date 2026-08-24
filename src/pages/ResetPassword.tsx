@@ -5,8 +5,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Check, X } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
 
+const MIN_PASSWORD_LENGTH = 12;
 const PASSWORD_RULES = [
-  { label: "At least 8 characters", test: (p: string) => p.length >= 8 },
+  { label: `At least ${MIN_PASSWORD_LENGTH} characters`, test: (p: string) => p.length >= MIN_PASSWORD_LENGTH },
   { label: "Uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
   { label: "Lowercase letter", test: (p: string) => /[a-z]/.test(p) },
   { label: "Number", test: (p: string) => /\d/.test(p) },
@@ -21,7 +22,7 @@ const ResetPassword = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const passedRules = useMemo(() => PASSWORD_RULES.map(r => r.test(password)), [password]);
+  const passedRules = useMemo(() => PASSWORD_RULES.map((rule) => rule.test(password)), [password]);
   const allPassed = passedRules.every(Boolean);
   const strength = passedRules.filter(Boolean).length;
   const strengthLabel = strength <= 1 ? "Weak" : strength <= 3 ? "Fair" : strength <= 4 ? "Good" : "Strong";
@@ -42,8 +43,8 @@ const ResetPassword = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!allPassed) {
       toast({ title: "Password too weak", description: "Please meet all password requirements", variant: "destructive" });
       return;
@@ -56,10 +57,15 @@ const ResetPassword = () => {
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-      toast({ title: "Password updated", description: "You can now sign in with your new password." });
-      navigate("/dashboard");
-    } catch (err: unknown) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+
+      // Password changes terminate the recovery session in Supabase Auth. Clear
+      // any local remnant as well and return to a fresh login instead of
+      // navigating into a protected route with a session that is being revoked.
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      toast({ title: "Password updated", description: "Sign in again with your new password." });
+      navigate("/login", { replace: true });
+    } catch (error: unknown) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
@@ -97,10 +103,10 @@ const ResetPassword = () => {
             id="reset-password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
             required
             className="w-full h-11 px-4 rounded-lg bg-secondary/60 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 text-sm transition-all"
-            placeholder="••••••••"
+            placeholder="••••••••••••"
           />
           {password.length > 0 && (
             <div className="mt-3 space-y-2">
@@ -113,14 +119,14 @@ const ResetPassword = () => {
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-1">
-                {PASSWORD_RULES.map((rule, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    {passedRules[i] ? (
+                {PASSWORD_RULES.map((rule, index) => (
+                  <div key={rule.label} className="flex items-center gap-1.5">
+                    {passedRules[index] ? (
                       <Check className="w-3 h-3 text-success" />
                     ) : (
                       <X className="w-3 h-3 text-muted-foreground/40" />
                     )}
-                    <span className={`text-[11px] ${passedRules[i] ? "text-success" : "text-muted-foreground/60"}`}>
+                    <span className={`text-[11px] ${passedRules[index] ? "text-success" : "text-muted-foreground/60"}`}>
                       {rule.label}
                     </span>
                   </div>
@@ -137,10 +143,10 @@ const ResetPassword = () => {
             id="reset-confirm"
             type="password"
             value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
+            onChange={(event) => setConfirm(event.target.value)}
             required
             className="w-full h-11 px-4 rounded-lg bg-secondary/60 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 text-sm transition-all"
-            placeholder="••••••••"
+            placeholder="••••••••••••"
           />
           {confirm.length > 0 && password !== confirm && (
             <p className="text-xs text-destructive mt-1.5">Passwords do not match</p>

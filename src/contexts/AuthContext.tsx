@@ -179,7 +179,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
-    hydrateSession();
+    void hydrateSession();
 
     return () => {
       cancelled = true;
@@ -209,8 +209,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     deliberateSignOutRef.current = true;
     clearTenantSession();
     setProfile(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+
+    let remoteError: unknown = null;
+    try {
+      const { error } = await supabase.auth.signOut();
+      remoteError = error;
+    } catch (error: unknown) {
+      remoteError = error;
+    } finally {
+      // Session termination is a local security boundary too. A transient
+      // network/API failure must not leave reusable browser tokens behind.
+      clearSupabaseAuthStorage();
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+      clearSentryUser();
+      setLoading(false);
+    }
+
+    if (remoteError) throw remoteError;
   };
 
   return (
