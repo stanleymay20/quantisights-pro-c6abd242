@@ -101,11 +101,26 @@ type OutboundEmail = {
   idempotencyMaterial: string
 }
 
-const jsonResponse = (body: Record<string, unknown>, status = 200) =>
+const jsonResponse = (
+  body: Record<string, unknown>,
+  status = 200,
+  additionalHeaders: Record<string, string> = {},
+) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: {
+      ...corsHeaders,
+      ...additionalHeaders,
+      'Content-Type': 'application/json',
+    },
   })
+
+const retryableResponse = (message: string) =>
+  jsonResponse(
+    { error: message },
+    503,
+    { 'Retry-After': '2' },
+  )
 
 function buildVerificationUrl(
   tokenHash: string | null | undefined,
@@ -302,30 +317,70 @@ async function handleWebhook(req: Request): Promise<Response> {
       newEmail: payload.user.new_email,
     }
 
+    // Hook retries reuse the same deterministic message ID. If an earlier
+    // invocation already completed the send, acknowledge this retry without
+    // queueing another copy. Otherwise reuse the same durable audit row and
+    // safely enqueue again; the worker's sent-message guard removes duplicates.
+    const { data: existingLog, error: existingLogError } = await supabase
+      .from('email_send_log')
+      .select('id, status')
+      .eq('message_id', messageId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (existingLogError) {
+      console.error('Failed to inspect auth-email idempotency state', {
+        emailType,
+        messageId,
+        error: existingLogError.message,
+      })
+      return retryableResponse('Email delivery state is temporarily unavailable')
+    }
+
+    if (existingLog?.status === 'sent') {
+      console.log('Supabase Auth email retry already completed', {
+        emailType,
+        recipient: email.recipient,
+        messageId,
+      })
+      continue
+    }
+
     const EmailTemplate = EMAIL_TEMPLATES[emailType]
     const html = await renderAsync(React.createElement(EmailTemplate, templateProps))
     const text = await renderAsync(React.createElement(EmailTemplate, templateProps), {
       plainText: true,
     })
 
-    const { error: logError } = await supabase.from('email_send_log').insert({
+    const auditRecord = {
       message_id: messageId,
       template_name: emailType,
       recipient_email: email.recipient,
       status: 'pending',
+      error_message: null,
       metadata: {
         source: 'supabase_auth_send_email_hook',
         user_id: payload.user.id,
       },
-    })
+    }
 
-    if (logError) {
-      console.error('Failed to create durable auth-email audit record', {
+    const auditWrite = existingLog?.id
+      ? await supabase
+          .from('email_send_log')
+          .update(auditRecord)
+          .eq('id', existingLog.id)
+      : await supabase
+          .from('email_send_log')
+          .insert(auditRecord)
+
+    if (auditWrite.error) {
+      console.error('Failed to persist durable auth-email audit record', {
         emailType,
         messageId,
-        error: logError.message,
+        error: auditWrite.error.message,
       })
-      return jsonResponse({ error: 'Failed to create email audit record' }, 500)
+      return retryableResponse('Failed to persist email delivery state')
     }
 
     const { error: enqueueError } = await supabase.rpc('enqueue_email', {
@@ -360,7 +415,7 @@ async function handleWebhook(req: Request): Promise<Response> {
         })
         .eq('message_id', messageId)
         .eq('status', 'pending')
-      return jsonResponse({ error: 'Failed to enqueue email' }, 500)
+      return retryableResponse('Failed to enqueue email')
     }
 
     console.log('Supabase Auth email enqueued', {
