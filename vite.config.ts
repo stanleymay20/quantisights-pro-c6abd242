@@ -42,7 +42,7 @@ const releaseMetadata = {
   gitCommit,
   buildTimestamp,
   deploymentId,
-  migrationVersion: "20260813124440",
+  migrationVersion: "20260821230500",
 };
 
 const releaseProvenancePlugin = (): Plugin => ({
