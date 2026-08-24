@@ -78,9 +78,16 @@ try {
     state.customers[tier].org_id = orgId;
     persist();
 
+    // Client-acceptance tier fixtures represent established paying customers,
+    // not first-login prospects. Keep onboarding out of paid-session/auth tests
+    // so those journeys exercise the application state they claim to certify.
     const { error: orgError } = await sb
       .from("organizations")
-      .update({ name: `Client Acceptance ${tier} ${runTag}`, industry: "client-acceptance" })
+      .update({
+        name: `Client Acceptance ${tier} ${runTag}`,
+        industry: "client-acceptance",
+        onboarding_completed: true,
+      })
       .eq("id", orgId);
     if (orgError) throw new Error(`Prepare ${tier} org: ${orgError.message}`);
 
