@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthThrottle } from "@/hooks/useAuthThrottle";
 import AuthLayout from "@/components/auth/AuthLayout";
-import { MailCheck } from "lucide-react";
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState("");
@@ -31,7 +30,10 @@ const ForgotPassword = () => {
       });
       if (error) throw error;
       setSent(true);
-      toast({ title: "Check your email", description: "We sent you a password reset link." });
+      toast({
+        title: "Recovery request received",
+        description: "If an account exists for that email, a secure reset link will be sent shortly.",
+      });
     } catch (err: unknown) {
       toast({
         title: "Error",
@@ -47,7 +49,7 @@ const ForgotPassword = () => {
     return (
       <AuthLayout
         title="Check your inbox"
-        subtitle="If an account exists for this email, a secure reset link is on its way."
+        subtitle="If an account exists for this email, a secure reset link will be sent shortly."
         footer={
           <Link to="/login" className="text-primary hover:underline font-medium">
             Back to sign in
@@ -56,12 +58,11 @@ const ForgotPassword = () => {
       >
         <div className="text-center space-y-4 py-2">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Sent to{" "}
-            <span className="text-foreground font-medium">{email}</span>. The link
-            expires in 60 minutes for your security.
+            Recovery requested for{" "}
+            <span className="text-foreground font-medium">{email}</span>.
           </p>
           <p className="text-[11px] text-muted-foreground/80">
-            Didn't get it? Check spam, or wait a minute and request again.
+            If this address is registered, check your inbox and spam folder. For security, we do not reveal whether an account exists.
           </p>
         </div>
       </AuthLayout>
@@ -71,7 +72,7 @@ const ForgotPassword = () => {
   return (
     <AuthLayout
       title="Reset your password"
-      subtitle="Enter your email and we'll send you a secure reset link."
+      subtitle="Enter your email and, if an account exists, we'll send a secure reset link."
       footer={
         <p>
           Remember your password?{" "}
