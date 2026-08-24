@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const ui = read("src/pages/DataConnectors.tsx");
+const dataSourcesUi = read("src/pages/DataSources.tsx");
 const edge = read("supabase/functions/db-connector/index.ts");
+const syncTruthMigration = read("supabase/migrations/20260824064500_data_sync_jobs_unknown_records.sql");
 
 describe("data connector truth semantics", () => {
   it("does not convert an unavailable connector inventory into an empty inventory", () => {
@@ -34,6 +36,9 @@ describe("data connector truth semantics", () => {
     expect(ui).toContain("records: number | null");
     expect(ui).toContain("setSyncResult({ records: null");
     expect(ui).not.toContain("setSyncResult({ records: 0");
+    // DataSources still has its own manual-sync UI path. Keep this assertion as
+    // a release blocker until that surface is migrated to nullable records too.
+    expect(dataSourcesUi).not.toContain("setResult({ records: 0");
   });
 
   it("keeps missing database-runtime record evidence unknown and fail-closed", () => {
@@ -44,5 +49,12 @@ describe("data connector truth semantics", () => {
     expect(edge).toContain("Database sync did not return a verified records count");
     expect(edge).not.toContain("Number(runtime.body.records ?? 0)");
     expect(edge).not.toContain("body: { records: 0, errors:");
+  });
+
+  it("does not default unmeasured sync jobs to zero in the database", () => {
+    expect(syncTruthMigration).toContain("ALTER COLUMN records_synced DROP DEFAULT");
+    expect(syncTruthMigration).toContain("status IN ('pending', 'running')");
+    expect(syncTruthMigration).toContain("SET records_synced = NULL");
+    expect(syncTruthMigration).toContain("NULL means the count is unknown/not yet measured");
   });
 });
