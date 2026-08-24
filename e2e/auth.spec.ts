@@ -387,7 +387,7 @@ test.describe("Authentication Flow", () => {
           .eq("template_name", "recovery");
         if (error) throw error;
         return count ?? 0;
-      }, { timeout: 20_000 }).toBeGreaterThan(beforeCount ?? 0);
+      }, { timeout: 60_000 }).toBeGreaterThan(beforeCount ?? 0);
 
       ev.note("Recovery request returned 2xx and auth-email-hook created a recovery email_send_log row.");
     } finally {

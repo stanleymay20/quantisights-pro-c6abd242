@@ -63,6 +63,8 @@ describe("authentication pipeline production safety", () => {
     expect(resetPassword).toContain("const MIN_PASSWORD_LENGTH = 12");
     expect(resetPassword).toContain('supabase.auth.signOut({ scope: "local" })');
     expect(resetPassword).toContain('navigate("/login", { replace: true })');
+    expect(resetPassword).toContain("isCheckingRecovery");
+    expect(resetPassword).toContain('window.location.hash.includes("type=recovery") && Boolean(data.session)');
     expect(resetPassword).not.toContain('label: "At least 8 characters"');
   });
 

@@ -19,6 +19,7 @@ const ResetPassword = () => {
   const [confirm, setConfirm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecovery, setIsRecovery] = useState(false);
+  const [isCheckingRecovery, setIsCheckingRecovery] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -29,18 +30,29 @@ const ResetPassword = () => {
   const strengthColor = strength <= 1 ? "bg-destructive" : strength <= 3 ? "bg-warning" : strength <= 4 ? "bg-primary" : "bg-success";
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    let mounted = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") {
-        setIsRecovery(true);
+        if (mounted) {
+          setIsRecovery(Boolean(session));
+          setIsCheckingRecovery(false);
+        }
       }
     });
 
-    const hash = window.location.hash;
-    if (hash.includes("type=recovery")) {
-      setIsRecovery(true);
-    }
+    // The URL fragment alone is not authorization to update a password. Wait
+    // until supabase-js has exchanged it for a recovery session so a fast user
+    // cannot submit while updateUser would still fail with a missing session.
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setIsRecovery(window.location.hash.includes("type=recovery") && Boolean(data.session));
+      setIsCheckingRecovery(false);
+    });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -70,6 +82,14 @@ const ResetPassword = () => {
       setIsLoading(false);
     }
   };
+
+  if (isCheckingRecovery) {
+    return (
+      <AuthLayout title="Verifying reset link" subtitle="Checking this secure recovery request…">
+        <p className="text-sm text-muted-foreground text-center">Please wait a moment.</p>
+      </AuthLayout>
+    );
+  }
 
   if (!isRecovery) {
     return (
