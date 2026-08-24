@@ -7,12 +7,22 @@ const MANAGED_HOSTNAMES = [HOSTNAME, APEX_HOSTNAME];
 const PROHIBITED_LOVABLE_A_RECORD = "185.158.133.1";
 
 function readCloudflareEnvironment(env = process.env) {
-  const { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, LOVABLE_PROXY_ORIGIN } = env;
+  const {
+    CLOUDFLARE_API_TOKEN,
+    CLOUDFLARE_ZONE_ID,
+    APP_PROXY_ORIGIN,
+    LOVABLE_PROXY_ORIGIN,
+  } = env;
 
   if (!CLOUDFLARE_API_TOKEN) throw new Error("CLOUDFLARE_API_TOKEN is required.");
   if (!CLOUDFLARE_ZONE_ID) throw new Error("CLOUDFLARE_ZONE_ID is required.");
 
-  return { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, LOVABLE_PROXY_ORIGIN };
+  return {
+    CLOUDFLARE_API_TOKEN,
+    CLOUDFLARE_ZONE_ID,
+    APP_PROXY_ORIGIN,
+    LOVABLE_PROXY_ORIGIN,
+  };
 }
 
 async function cloudflareRequest(path, options = {}, env = readCloudflareEnvironment()) {
@@ -49,18 +59,25 @@ function normalizeOrigin(origin) {
     .replace(/\/.*$/, "");
 }
 
+// APP_PROXY_ORIGIN is the vendor-neutral production contract. The legacy
+// LOVABLE_PROXY_ORIGIN fallback keeps existing deployments working while the
+// origin is migrated without requiring a coordinated secret rotation.
+export function resolveProxyOrigin(env = process.env) {
+  return normalizeOrigin(env.APP_PROXY_ORIGIN || env.LOVABLE_PROXY_ORIGIN);
+}
+
 function describeRecord(record) {
   return `${record.type} ${record.name} -> ${record.content}; proxied=${String(record.proxied)}`;
 }
 
-function evaluateDnsState(records, lovableProxyOrigin, hostname) {
-  const normalizedOrigin = normalizeOrigin(lovableProxyOrigin);
+function evaluateDnsState(records, proxyOrigin, hostname) {
+  const normalizedOrigin = normalizeOrigin(proxyOrigin);
   const activeRecords = records.filter((record) => record.name === hostname);
   const proxiedRecord = activeRecords.find((record) => record.proxied === true);
   const prohibitedARecord = activeRecords.find(
     (record) => record.type === "A" && record.content === PROHIBITED_LOVABLE_A_RECORD,
   );
-  const matchingLovableCname = normalizedOrigin
+  const matchingProxyCname = normalizedOrigin
     ? activeRecords.find(
         (record) =>
           record.type === "CNAME" &&
@@ -69,14 +86,26 @@ function evaluateDnsState(records, lovableProxyOrigin, hostname) {
       )
     : null;
 
-  if (matchingLovableCname) {
-    return { ok: true, action: "noop", reason: `${hostname} already uses the Lovable proxy-mode CNAME with Cloudflare proxy enabled.` };
+  if (matchingProxyCname) {
+    return {
+      ok: true,
+      action: "noop",
+      reason: `${hostname} already uses the configured proxy-origin CNAME with Cloudflare proxy enabled.`,
+    };
   }
   if (normalizedOrigin) {
-    return { ok: false, action: "upsert-cname", reason: `${hostname} must be converted to proxied CNAME ${normalizedOrigin}.` };
+    return {
+      ok: false,
+      action: "upsert-cname",
+      reason: `${hostname} must be converted to proxied CNAME ${normalizedOrigin}.`,
+    };
   }
   if (proxiedRecord && !prohibitedARecord) {
-    return { ok: true, action: "noop", reason: `${hostname} has a proxied Cloudflare DNS record.` };
+    return {
+      ok: true,
+      action: "noop",
+      reason: `${hostname} has a proxied Cloudflare DNS record.`,
+    };
   }
   return {
     ok: false,
@@ -86,17 +115,18 @@ function evaluateDnsState(records, lovableProxyOrigin, hostname) {
       prohibitedARecord
         ? `It still has the direct Lovable A record ${PROHIBITED_LOVABLE_A_RECORD}.`
         : "No proxied DNS record was found for this hostname.",
-      "Set LOVABLE_PROXY_ORIGIN to the Lovable proxy-mode origin and rerun the Cloudflare workflow.",
+      "Set APP_PROXY_ORIGIN to the approved frontend origin and rerun the Cloudflare workflow.",
+      "LOVABLE_PROXY_ORIGIN remains a temporary backward-compatible fallback.",
     ].join(" "),
   };
 }
 
-export function evaluateWwwDnsState(records, lovableProxyOrigin) {
-  return evaluateDnsState(records, lovableProxyOrigin, HOSTNAME);
+export function evaluateWwwDnsState(records, proxyOrigin) {
+  return evaluateDnsState(records, proxyOrigin, HOSTNAME);
 }
 
-export function evaluateApexDnsState(records, lovableProxyOrigin) {
-  return evaluateDnsState(records, lovableProxyOrigin, APEX_HOSTNAME);
+export function evaluateApexDnsState(records, proxyOrigin) {
+  return evaluateDnsState(records, proxyOrigin, APEX_HOSTNAME);
 }
 
 async function listDnsRecords(env, hostname) {
@@ -178,7 +208,7 @@ async function ensureManagedHostname(env, origin, hostname) {
 }
 
 export async function applyCloudflareDns(env = readCloudflareEnvironment()) {
-  const origin = normalizeOrigin(env.LOVABLE_PROXY_ORIGIN);
+  const origin = resolveProxyOrigin(env);
   for (const hostname of MANAGED_HOSTNAMES) {
     await ensureManagedHostname(env, origin, hostname);
   }
