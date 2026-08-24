@@ -14,6 +14,10 @@ const productionWorkflow = readFileSync(
   resolve(root, ".github/workflows/deploy-edge-functions.yml"),
   "utf8",
 );
+const manualEdgeDeployScript = readFileSync(
+  resolve(root, "scripts/deploy-edge-functions.sh"),
+  "utf8",
+);
 
 describe("staging Supabase security remediation", () => {
   it("removes inherited anonymous execution from privileged public functions", () => {
@@ -67,6 +71,23 @@ describe("staging Supabase security remediation", () => {
     expect(productionWorkflow).not.toContain("SUPABASE_PROJECT_REF: itpwpnwzzitkelffttyx");
     expect(productionWorkflow).toContain("confirm_project_ref");
     expect(productionWorkflow).not.toMatch(/push:\s*\n/);
+  });
+
+  it("requires manual Edge deployments to name a recognised active project explicitly", () => {
+    expect(manualEdgeDeployScript).toContain(
+      ': "${SUPABASE_PROJECT_REF:?Set SUPABASE_PROJECT_REF explicitly',
+    );
+    expect(manualEdgeDeployScript).toContain(
+      'PRODUCTION_PROJECT_REF="izgfrekdamlgigehxoqs"',
+    );
+    expect(manualEdgeDeployScript).toContain(
+      'STAGING_PROJECT_REF="cmnihsbdbpubznlkmjbc"',
+    );
+    expect(manualEdgeDeployScript).toContain(
+      'RETIRED_PROJECT_REF="itpwpnwzzitkelffttyx"',
+    );
+    expect(manualEdgeDeployScript).toContain("must not receive deployments");
+    expect(manualEdgeDeployScript).not.toMatch(/^PROJECT="itpwpnwzzitkelffttyx"/m);
   });
 
   it("quarantines the out-of-band review-only migration", () => {
