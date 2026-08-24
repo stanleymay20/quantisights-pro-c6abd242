@@ -9,13 +9,12 @@ export type PublicClientConfig = {
   source: "environment" | "checked-in-public-default";
 };
 
-// These are browser-public identifiers, not secrets. Supabase anon/publishable
-// keys are intentionally delivered to clients and are constrained by RLS.
+// These are browser-public identifiers, not secrets. Supabase publishable keys
+// are intentionally delivered to clients and are constrained by RLS.
 // NEVER place a service-role key, secret key, or other privileged credential here.
 export const PRODUCTION_PUBLIC_CLIENT_CONFIG = Object.freeze({
-  supabaseUrl: "https://itpwpnwzzitkelffttyx.supabase.co",
-  supabasePublishableKey:
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0cHdwbnd6eml0a2VsZmZ0dHl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3OTIxNTMsImV4cCI6MjA4NzM2ODE1M30.sjrNIlSiU_udZXmE4o822K0bOmbhqNCk_47mSKK86xY",
+  supabaseUrl: "https://izgfrekdamlgigehxoqs.supabase.co",
+  supabasePublishableKey: "sb_publishable_h4JCxt31VXyaALxD-Uj1rw_y6w9_ZaY",
 });
 
 const SUPABASE_HOST_RE = /^([a-z0-9-]+)\.supabase\.co$/i;
