@@ -8,22 +8,24 @@ const sapPull = readFileSync(
 );
 
 describe("SAP connector shared-helper contracts", () => {
-  it("passes organization scope into the hardened throttle preflight", () => {
-    expect(sapPull).toContain("preflightWait(svc, orgId, connector_id, VENDOR)");
-    expect(sapPull).not.toContain("preflightWait(svc, connector_id, VENDOR)");
+  it("passes organization scope and the stored connector id into hardened throttle preflight", () => {
+    expect(sapPull).toContain("const connectorId = typeof body.connector_id");
+    expect(sapPull).toContain("const orgId = connector.organization_id as string");
+    expect(sapPull).toContain("preflightWait(svc, orgId, connectorId, VENDOR)");
+    expect(sapPull).not.toContain("preflightWait(svc, connectorId, VENDOR)");
   });
 
-  it("observes the real HTTP Response through the structured throttle contract", () => {
+  it("observes the real HTTP Response through the structured tenant-scoped throttle contract", () => {
     expect(sapPull).toMatch(
-      /observeResponse\(svc,\s*\{[\s\S]*?orgId,[\s\S]*?connectorId:\s*connector_id,[\s\S]*?vendor:\s*VENDOR,[\s\S]*?res,[\s\S]*?\}\)/,
+      /observeResponse\(svc,\s*\{[\s\S]*?orgId,[\s\S]*?connectorId,[\s\S]*?vendor:\s*VENDOR,[\s\S]*?res[\s\S]*?\}\)/,
     );
-    expect(sapPull).not.toMatch(/observeResponse\(svc,\s*connector_id,\s*VENDOR,/);
+    expect(sapPull).not.toMatch(/observeResponse\(svc,\s*connectorId,\s*VENDOR,/);
   });
 
   it("writes dead letters through the structured tenant-scoped contract", () => {
     expect(sapPull).toMatch(
-      /deadLetter\(svc,\s*\{[\s\S]*?orgId,[\s\S]*?connectorId:\s*connector_id,[\s\S]*?syncRunId:[\s\S]*?payload:[\s\S]*?errorMessage:\s*msg,[\s\S]*?\}\)/,
+      /deadLetter\(svc,\s*\{[\s\S]*?orgId,[\s\S]*?connectorId,[\s\S]*?syncRunId:\s*runId,[\s\S]*?payload:[\s\S]*?errorMessage:\s*msg[\s\S]*?\}\)/,
     );
-    expect(sapPull).not.toMatch(/deadLetter\(svc,\s*connector_id,\s*orgId,/);
+    expect(sapPull).not.toMatch(/deadLetter\(svc,\s*connectorId,\s*orgId,/);
   });
 });
