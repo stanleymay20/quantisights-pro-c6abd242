@@ -132,20 +132,10 @@ jobs:
       - name: Verify staging Edge Functions
         run: bash scripts/verify-supabase-functions.sh
 
-      # Auth email delivery has dynamic state that cannot live in migrations:
-      # a Standard Webhooks secret in Auth + Edge secrets, and a Vault-backed
-      # service-role credential used by the pg_cron queue dispatcher. Rotate the
-      # hook secret fail-closed so old/new secrets are never mixed.
-      - name: Disable Auth Send Email Hook for secret rotation
+      # Authentication must not depend on Lovable Cloud availability or credits.
+      # Keep the custom hook deployed for future independent-provider use, but
+      # explicitly disable it so hosted Supabase SMTP handles signup, recovery,
+      # invite, magic-link, email-change and reauthentication messages.
+      # Transactional application email remains a separate queue/provider concern.
+      - name: Ensure Auth email is independent of Lovable Cloud
         run: node scripts/configure-supabase-auth-email.mjs disable
-
-      - name: Rotate Auth Send Email Hook secret
-        run: |
-          set -Eeuo pipefail
-          hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
-          echo "::add-mask::$hook_secret"
-          echo "SEND_EMAIL_HOOK_SECRET=$hook_secret" >> "$GITHUB_ENV"
-          supabase secrets set SEND_EMAIL_HOOK_SECRET="$hook_secret" --project-ref "$SUPABASE_PROJECT_REF"
-
-      - name: Configure and verify staging Auth email pipeline
-        run: node scripts/configure-supabase-auth-email.mjs configure
