@@ -243,7 +243,7 @@ test("EE-1C: auth-evidence sidecar (base64 body) is merged into evidence fields"
   assert.deepEqual(rec.evidence.notes, ["sidecar ok"]);
 });
 
-test("EE-1C: SKIP staging-only control produces WARNING, never fake PASS", () => {
+test("EE-1C: SKIP critical staging-only MFA control remains release-blocking", () => {
   const json = playwrightJson(
     REQUIRED_CONTROL_IDS.map((id) =>
       id === "AUTH-010"
@@ -254,9 +254,20 @@ test("EE-1C: SKIP staging-only control produces WARNING, never fake PASS", () =>
   const { result } = translate(json);
   assert.equal(result.controls["AUTH-010"].status, "SKIP");
   const pipeline = buildEvidence(result);
-  // Warning-tier: non-blocking; certainly not PASS-with-fake-evidence.
-  assert.equal(pipeline.status, STATUS.WARNING);
-  assert.ok(pipeline.warnings.some((w) => w.control_id === "AUTH-010" && w.code === "CONTROL_SKIPPED"));
+  assert.equal(pipeline.status, STATUS.SECURITY_FAILURE);
+  assert.ok(
+    pipeline.failures.some(
+      (failure) =>
+        failure.control_id === "AUTH-010" &&
+        failure.code === "UNVERIFIED_CRITICAL_CONTROL" &&
+        failure.blocking === true,
+    ),
+  );
+  assert.ok(
+    pipeline.negative_controls.some(
+      (control) => control.name === "AUTH-010" && control.status === STATUS.SECURITY_FAILURE,
+    ),
+  );
 });
 
 test("EE-1C: e2e/auth.spec.ts annotates every AUTH-### control", async () => {
