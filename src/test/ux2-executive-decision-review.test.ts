@@ -67,12 +67,13 @@ describe("UX-2 executive decision review experience", () => {
     expect(ledger).toContain("setExpandedDecision(activeDecisions[0].id)");
   });
 
-  it("routes the dashboard Review Decision CTA into the executive review flow and avoids dashboard approval", () => {
+  it("routes dashboard review into the executive review flow and avoids dashboard approval", () => {
     const dashboardDriver = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
 
-    expect(dashboardDriver).toContain('navigate("/decisions?review=top")');
-    expect(dashboardDriver).toContain("Review Decision");
-    expect(dashboardDriver).not.toContain("Approve");
-    expect(dashboardDriver).not.toContain("Reject");
+    expect(dashboardDriver).toContain('"/decisions?review=top"');
+    expect(dashboardDriver).toContain("Review top decision");
+    expect(dashboardDriver).toContain("Governed review required");
+    expect(dashboardDriver).not.toContain(">Approve<");
+    expect(dashboardDriver).not.toContain(">Reject<");
   });
 });
