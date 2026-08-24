@@ -20,12 +20,7 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const cors = {
-  "Access-Control-Allow-Origin": "https://www.quantivis.io",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 
 const IP_WINDOW_SECONDS = 60;
 const IP_MAX_ATTEMPTS = 5;
@@ -39,10 +34,10 @@ interface RateLimitRequestBody {
   action?: RateLimitAction;
 }
 
-function j(body: unknown, status = 200) {
+function j(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...cors, "Content-Type": "application/json" },
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
@@ -59,14 +54,14 @@ function isRateLimitRequestBody(value: unknown): value is RateLimitRequestBody {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return j({ error: "Method not allowed" }, 405);
+  if (req.method === "OPTIONS") return corsPreflightResponse(req);
+  if (req.method !== "POST") return j(req, { error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) {
     console.error("auth-rate-limiter missing required Supabase environment configuration");
-    return j({ allowed: true, warning: "Rate limiter unavailable — proceeding" });
+    return j(req, { allowed: true, warning: "Rate limiter unavailable — proceeding" });
   }
   const svc = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
@@ -102,7 +97,7 @@ Deno.serve(async (req: Request) => {
         _key: `ip:${ip}`,
         _window_seconds: IP_WINDOW_SECONDS,
       }).then(() => {});
-      return j({ recorded: true });
+      return j(req, { recorded: true });
     }
 
     if (action === "record_success") {
@@ -113,7 +108,7 @@ Deno.serve(async (req: Request) => {
           .eq("key", `email:${email.toLowerCase()}`).then(() => {});
       }
       await svc.from("auth_rate_limits").delete().eq("key", `ip:${ip}`).then(() => {});
-      return j({ recorded: true });
+      return j(req, { recorded: true });
     }
 
     // Default: check if this request is allowed
@@ -130,7 +125,7 @@ Deno.serve(async (req: Request) => {
       const windowAge = now - window_start;
       if (windowAge < window_seconds && attempts >= IP_MAX_ATTEMPTS) {
         const retryAfter = window_seconds - windowAge;
-        return j({ allowed: false, reason: "ip", retryAfter, message: `Too many attempts from this network. Try again in ${Math.ceil(retryAfter / 60)} minute(s).` }, 429);
+        return j(req, { allowed: false, reason: "ip", retryAfter, message: `Too many attempts from this network. Try again in ${Math.ceil(retryAfter / 60)} minute(s).` }, 429);
       }
     }
 
@@ -140,15 +135,15 @@ Deno.serve(async (req: Request) => {
       const windowAge = now - window_start;
       if (windowAge < window_seconds && attempts >= EMAIL_MAX_ATTEMPTS) {
         const retryAfter = window_seconds - windowAge;
-        return j({ allowed: false, reason: "email", retryAfter, message: `Too many failed attempts for this account. Try again in ${Math.ceil(retryAfter / 60)} minute(s).` }, 429);
+        return j(req, { allowed: false, reason: "email", retryAfter, message: `Too many failed attempts for this account. Try again in ${Math.ceil(retryAfter / 60)} minute(s).` }, 429);
       }
     }
 
-    return j({ allowed: true });
+    return j(req, { allowed: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("auth-rate-limiter error:", msg);
     // Fail open on errors to avoid locking out legitimate users
-    return j({ allowed: true, warning: "Rate limiter error — proceeding" });
+    return j(req, { allowed: true, warning: "Rate limiter error — proceeding" });
   }
 });
