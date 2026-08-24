@@ -1,11 +1,18 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import HeaderLanguageSwitcher from "@/components/HeaderLanguageSwitcher";
 
 const PublicPageNav = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation();
+
+  // OAuth callbacks are transient security handoffs, not ordinary public pages.
+  // Rendering the marketing/public navigation here causes a visible flash while
+  // Supabase completes the PKCE exchange and the app enters its protected route.
+  if (location.pathname === "/auth/callback") return null;
+
   return (
     <div style={{
       position: "sticky",
