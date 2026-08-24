@@ -2,8 +2,8 @@ name: Client Acceptance
 
 # Buyer/reviewer-style browser validation for the exact SHA that already passed
 # real staging tenant isolation. This gate builds the frontend locally but points
-# it at the real staging Supabase project, then exercises public buyer journeys
-# plus disposable Essentials, Governance, and Enterprise customer identities.
+# it at the real staging Supabase project, then exercises public buyer journeys,
+# disposable paid-tier identities, and the Authentication evidence contract.
 
 on:
   workflow_run:
@@ -24,19 +24,14 @@ jobs:
   review:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # Keep browser binaries and their Linux system dependencies immutable with
-    # the Playwright version resolved by package-lock.json. This avoids relying
-    # on GitHub-hosted apt mirrors during the acceptance run.
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble
       options: --ipc=host
-    timeout-minutes: 35
+    timeout-minutes: 40
     environment: staging
     permissions:
       contents: read
       actions: read
-    # Container jobs default `run` steps to `sh`, but this workflow intentionally
-    # uses Bash features such as [[ ... =~ ... ]] and pipefail.
     defaults:
       run:
         shell: bash
@@ -48,6 +43,7 @@ jobs:
       CLIENT_ACCEPTANCE_BASE_URL: http://127.0.0.1:4173
       CLIENT_ACCEPTANCE_STATE: tests/client-acceptance/.state.json
       PLAYWRIGHT_HTML_REPORT: artifacts/client-acceptance/playwright-report
+      EVIDENCE_ENV: staging
     steps:
       - name: Resolve tenant-isolation evidence run
         id: staging_evidence
@@ -176,10 +172,68 @@ jobs:
           echo "::error::Client-test frontend did not become ready"
           exit 1
 
+      - name: Exercise authentication controls
+        id: auth_browser
+        env:
+          E2E_BASE_URL: ${{ env.CLIENT_ACCEPTANCE_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts/authentication
+          set +e
+          npx playwright test e2e/auth.spec.ts \
+            --config=playwright.config.ts \
+            --project=chromium \
+            --workers=1 \
+            --reporter=json > artifacts/authentication/playwright.json
+          rc=$?
+          set -e
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          echo "AUTH_PLAYWRIGHT_EXIT=$rc" >> "$GITHUB_ENV"
+          # Preserve browser output for the adapter even when a control fails.
+          test -s artifacts/authentication/playwright.json
+
+      - name: Translate authentication evidence
+        run: |
+          node tests/evidence/adapters/auth-adapter.mjs \
+            --input artifacts/authentication/playwright.json \
+            --output artifacts/authentication/auth-results.json \
+            --strict
+
+      - name: Certify authentication evidence
+        id: auth_certify
+        env:
+          EVIDENCE_AUTH_RESULTS: artifacts/authentication/auth-results.json
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+          import { buildEvidence } from "./tests/evidence/pipelines/authentication.mjs";
+
+          const adapter = JSON.parse(readFileSync(process.env.EVIDENCE_AUTH_RESULTS, "utf8"));
+          const result = buildEvidence(adapter);
+          writeFileSync("artifacts/authentication/certification.json", JSON.stringify(result, null, 2) + "\n");
+          appendFileSync(process.env.GITHUB_OUTPUT, `status=${result.status}\n`);
+          console.log(`Authentication evidence status: ${result.status}`);
+          for (const failure of result.failures) {
+            console.log(`- ${failure.control_id || "pipeline"}: ${failure.code} — ${failure.message}`);
+          }
+          NODE
+
       - name: Exercise public buyer and all paid-tier customer journeys
         env:
           E2E_BASE_URL: ${{ env.CLIENT_ACCEPTANCE_BASE_URL }}
         run: npx playwright test --config=playwright.client-acceptance.config.ts --reporter=line,html
+
+      - name: Enforce authentication release gate
+        run: |
+          if [ "$AUTH_PLAYWRIGHT_EXIT" != "0" ]; then
+            echo "::error::Authentication browser execution failed with exit code $AUTH_PLAYWRIGHT_EXIT"
+            exit 1
+          fi
+          if [ "${{ steps.auth_certify.outputs.status }}" != "PASS" ]; then
+            echo "::error::Authentication evidence is ${{ steps.auth_certify.outputs.status }}, not PASS"
+            cat artifacts/authentication/certification.json
+            exit 1
+          fi
 
       - name: Record client-acceptance SHA proof
         if: ${{ success() }}
@@ -191,6 +245,7 @@ jobs:
               validated_sha: process.env.CLIENT_ACCEPTANCE_SHA,
               ga_staging_run_id: process.env.GA_STAGING_RUN_ID,
               client_acceptance_run_id: process.env.GITHUB_RUN_ID,
+              authentication_status: "${{ steps.auth_certify.outputs.status }}",
             };
             fs.writeFileSync("artifacts/client-acceptance-proof/proof.json", JSON.stringify(proof, null, 2) + "\n");
           '
@@ -199,6 +254,15 @@ jobs:
       - name: Teardown disposable tier customers
         if: ${{ always() && steps.seed.outcome != 'skipped' }}
         run: node tests/client-acceptance/teardown.mjs
+
+      - name: Publish authentication evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authentication-evidence
+          path: artifacts/authentication
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Publish client review report
         if: ${{ always() }}
