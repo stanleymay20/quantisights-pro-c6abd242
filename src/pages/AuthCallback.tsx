@@ -10,13 +10,14 @@ const consumeStoredNext = () => {
   return safeInternalNavigation(value, "/onboarding");
 };
 
-const readOAuthParam = (url: URL, key: string) => {
-  const queryValue = url.searchParams.get(key);
-  if (queryValue) return queryValue;
+const readOAuthError = (url: URL) => {
+  const queryError = url.searchParams.get("error_description") || url.searchParams.get("error");
+  if (queryError) return queryError;
 
   const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
   if (!hash) return null;
-  return new URLSearchParams(hash).get(key);
+  const hashParams = new URLSearchParams(hash);
+  return hashParams.get("error_description") || hashParams.get("error");
 };
 
 const AuthCallback = () => {
@@ -37,6 +38,9 @@ const AuthCallback = () => {
       if (settled || cancelled) return;
       settled = true;
       if (ok) {
+        // Remove OAuth query/hash material from browser history after the
+        // Supabase client has completed the PKCE exchange.
+        window.history.replaceState({}, document.title, window.location.pathname);
         navigate(next, { replace: true });
       } else {
         setError(true);
@@ -45,60 +49,55 @@ const AuthCallback = () => {
       }
     };
 
-    // Check for provider error first — never proceed to exchange on error response.
+    // Provider errors are terminal. Never attempt to manufacture a session
+    // from URL-supplied access/refresh tokens; Quantivis uses PKCE only.
     const url = new URL(window.location.href);
-    const errParam = readOAuthParam(url, "error_description") || readOAuthParam(url, "error");
-    if (errParam) {
-      console.error("[AuthCallback] OAuth provider error:", errParam);
+    const providerError = readOAuthError(url);
+    if (providerError) {
+      console.error("[AuthCallback] OAuth provider error:", providerError);
       finish(false);
       return;
     }
 
-    // Lovable managed OAuth can return directly to this public callback with
-    // session tokens in either query or hash form. Hydrate them explicitly so
-    // live full-page redirects do not depend solely on Supabase PKCE auto-detect.
-    const accessToken = readOAuthParam(url, "access_token");
-    const refreshToken = readOAuthParam(url, "refresh_token");
-    if (accessToken && refreshToken) {
-      supabase.auth
-        .setSession({ access_token: accessToken, refresh_token: refreshToken })
-        .then(({ error }) => {
-          if (error) {
-            console.error("[AuthCallback] Failed to set OAuth session:", error.message);
-            finish(false);
-            return;
-          }
-          window.history.replaceState({}, document.title, window.location.pathname);
-          finish(true);
-        })
-        .catch((setSessionError: unknown) => {
-          console.error(
-            "[AuthCallback] OAuth session handoff failed:",
-            setSessionError instanceof Error ? setSessionError.message : setSessionError
-          );
-          finish(false);
-        });
-    }
-
-    // The Supabase client is configured with `detectSessionInUrl: true` + PKCE flow,
-    // so it auto-exchanges the `?code=` exactly once on page load. We MUST NOT call
-    // `exchangeCodeForSession` again — that races with the auto-exchange and the
-    // second call fails because the code (and PKCE verifier) have already been
-    // consumed. We only listen for SIGNED_IN and poll getSession as a fallback.
+    // The Supabase client is configured with detectSessionInUrl + PKCE. It
+    // performs the one-time code exchange; this component only observes the
+    // resulting authenticated session so the authorization code is never
+    // exchanged twice.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) finish(true);
     });
 
-    // Fallback: session may have been set before this component mounted.
-    supabase.auth.getSession().then(({ data }) => {
+    // The exchange can finish before this component mounts.
+    supabase.auth.getSession().then(({ data, error: sessionError }) => {
+      if (sessionError) {
+        console.error("[AuthCallback] Failed to read OAuth session:", sessionError.message);
+        return;
+      }
       if (data.session) finish(true);
+    }).catch((sessionReadError: unknown) => {
+      console.error(
+        "[AuthCallback] OAuth session read failed:",
+        sessionReadError instanceof Error ? sessionReadError.message : sessionReadError,
+      );
     });
 
-    // Hard timeout — if no session appears in 6s, bail to /login.
     const timeoutId = window.setTimeout(async () => {
       if (settled || cancelled) return;
-      const { data } = await supabase.auth.getSession();
-      finish(Boolean(data.session));
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.error("[AuthCallback] OAuth session timeout check failed:", sessionError.message);
+          finish(false);
+          return;
+        }
+        finish(Boolean(data.session));
+      } catch (sessionReadError: unknown) {
+        console.error(
+          "[AuthCallback] OAuth timeout session read failed:",
+          sessionReadError instanceof Error ? sessionReadError.message : sessionReadError,
+        );
+        finish(false);
+      }
     }, 6000);
 
     return () => {
