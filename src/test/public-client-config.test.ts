@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PRODUCTION_PUBLIC_CLIENT_CONFIG,
+  STAGING_PUBLIC_CLIENT_CONFIG,
   resolvePublicClientConfig,
   validatePublicClientConfig,
 } from "../../config/public-client-config";
@@ -24,6 +27,21 @@ describe("public client bootstrap configuration", () => {
     );
   });
 
+  it("pins the checked-in staging fallback to the active staging project", () => {
+    expect(STAGING_PUBLIC_CLIENT_CONFIG.supabaseUrl).toBe(
+      "https://cmnihsbdbpubznlkmjbc.supabase.co",
+    );
+    expect(STAGING_PUBLIC_CLIENT_CONFIG.supabasePublishableKey).toMatch(
+      /^sb_publishable_[A-Za-z0-9_-]{20,}$/,
+    );
+    expect(JSON.stringify(STAGING_PUBLIC_CLIENT_CONFIG)).not.toContain(
+      "itpwpnwzzitkelffttyx",
+    );
+    expect(STAGING_PUBLIC_CLIENT_CONFIG.supabaseUrl).not.toBe(
+      PRODUCTION_PUBLIC_CLIENT_CONFIG.supabaseUrl,
+    );
+  });
+
   it("falls back to the checked-in production public config when build env is absent", () => {
     const resolved = resolvePublicClientConfig({});
 
@@ -34,6 +52,23 @@ describe("public client bootstrap configuration", () => {
     });
   });
 
+  it("supports a staging fallback without weakening environment overrides", () => {
+    expect(resolvePublicClientConfig({}, STAGING_PUBLIC_CLIENT_CONFIG)).toEqual({
+      supabaseUrl: STAGING_PUBLIC_CLIENT_CONFIG.supabaseUrl,
+      supabasePublishableKey: STAGING_PUBLIC_CLIENT_CONFIG.supabasePublishableKey,
+      source: "checked-in-public-default",
+    });
+  });
+
+  it("makes Vite production-only by default and sends non-production modes to staging", () => {
+    const viteConfig = readFileSync(resolve(__dirname, "../../vite.config.ts"), "utf8");
+    expect(viteConfig).toContain('mode === "production"');
+    expect(viteConfig).toContain("? PRODUCTION_PUBLIC_CLIENT_CONFIG");
+    expect(viteConfig).toContain(": STAGING_PUBLIC_CLIENT_CONFIG");
+    expect(viteConfig).toContain("supabaseProjectRef");
+    expect(viteConfig).toContain("supabaseConfigSource");
+  });
+
   it("prefers a complete environment override", () => {
     const ref = "abcdefghijklmnopqrst";
     const key = encodeJwt({ role: "anon", ref });
@@ -41,7 +76,7 @@ describe("public client bootstrap configuration", () => {
     expect(resolvePublicClientConfig({
       VITE_SUPABASE_URL: `https://${ref}.supabase.co`,
       VITE_SUPABASE_PUBLISHABLE_KEY: key,
-    })).toEqual({
+    }, STAGING_PUBLIC_CLIENT_CONFIG)).toEqual({
       supabaseUrl: `https://${ref}.supabase.co`,
       supabasePublishableKey: key,
       source: "environment",
