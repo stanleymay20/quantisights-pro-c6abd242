@@ -118,7 +118,6 @@ describe("UX-2 executive review flow", () => {
     const approve = screen.getByTestId("approve-button");
     expect(approve).toBeDisabled();
 
-    // Checking all but one item must not enable approval.
     for (const item of EXECUTIVE_REVIEW_CHECKLIST.slice(0, -1)) {
       fireEvent.click(screen.getByTestId(`checklist-${item.key}`));
     }
@@ -216,8 +215,8 @@ describe("UX-2 wiring (routes, navigation, pages)", () => {
 
   it("links the Dashboard to the Executive Brief", () => {
     const dashboard = read("src/components/dashboard/ExecutiveDailyDriver.tsx");
-    expect(dashboard).toContain('navigate("/executive-brief")');
-    expect(dashboard).toContain("Open Executive Brief");
+    expect(dashboard).toContain('"/executive-brief"');
+    expect(dashboard).toContain("Open full executive brief");
   });
 
   it("does not rank the Executive Brief by raw predicted financial impact", () => {
@@ -239,10 +238,6 @@ describe("UX-2 wiring (routes, navigation, pages)", () => {
 
   it("routes approval onward to the outcome page via the atomic approve_decision RPC", () => {
     const review = read("src/pages/DecisionReview.tsx");
-    // Approval, audit, execution-plan, and outcome-tracking creation must
-    // commit as one privileged server-side transaction — the browser must
-    // never write decision_status or audit_log directly (see
-    // decision-approval-atomicity.test.ts for the full regression suite).
     expect(review).toContain('supabase.rpc("approve_decision"');
     expect(review).toContain('supabase.rpc("reject_decision"');
     expect(review).not.toContain('decision_status: "approved"');
