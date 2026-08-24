@@ -29,12 +29,19 @@ const homepageIds = new Set([
   ...homeSource.matchAll(/\bid\s*=\s*\{\s*["']([^"']+)["']\s*\}/g),
 ].map((match) => match[1]));
 
+function extractNavigationAnchors(source: string, target: "local" | "home"): string[] {
+  const pattern = target === "home"
+    ? /\b(?:href|to)\s*=\s*(?:\{\s*)?["']\/#([A-Za-z][A-Za-z0-9_-]*)["']\s*\}?/g
+    : /\b(?:href|to)\s*=\s*(?:\{\s*)?["']#([A-Za-z][A-Za-z0-9_-]*)["']\s*\}?/g;
+  return [...source.matchAll(pattern)].map((match) => match[1]);
+}
+
 function crossPageHomepageAnchors(source: string): string[] {
-  return [...source.matchAll(/["']\/#([A-Za-z][A-Za-z0-9_-]*)["']/g)].map((match) => match[1]);
+  return extractNavigationAnchors(source, "home");
 }
 
 function localHomepageAnchors(): string[] {
-  return [...homeSource.matchAll(/["']#([A-Za-z][A-Za-z0-9_-]*)["']/g)].map((match) => match[1]);
+  return extractNavigationAnchors(homeSource, "local");
 }
 
 describe("homepage anchor integrity", () => {
