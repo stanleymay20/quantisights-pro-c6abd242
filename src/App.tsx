@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProjectProvider } from "@/contexts/ProjectContext";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import { DatasetProvider } from "@/contexts/DatasetContext";
@@ -47,6 +47,14 @@ const PageLoader = () => (
     <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
   </div>
 );
+
+const AuthenticatedHomeRedirect = ({ children }: { children: ReactNode }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <PageLoader />;
+  if (user) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+};
 
 const SafeRoute = ({ children }: { children: ReactNode }) => (
   <RouteErrorBoundary fallback={(props) => <RouteErrorFallback {...props} />}>
@@ -108,7 +116,8 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <RouteMetadata />            <AuthProvider>
+            <RouteMetadata />
+            <AuthProvider>
               <CookieConsent />
               <SessionTimeout />
               <UpgradeModalProvider />
@@ -117,15 +126,22 @@ const App = () => (
                   {Object.entries(PUBLIC_ROUTE_ALIASES).map(([from, to]) => (
                     <Route key={from} path={from} element={<Navigate to={to} replace />} />
                   ))}
-                  {routes.map(({ path, element, layout, feature }) => (
-                    <Route
-                      key={path}
-                      path={path}
-                      element={wrapLayout[layout](
-                        feature ? <RouteEntitlement feature={feature}>{element}</RouteEntitlement> : element,
-                      )}
-                    />
-                  ))}
+                  {routes.map(({ path, element, layout, feature }) => {
+                    const entitledElement = feature
+                      ? <RouteEntitlement feature={feature}>{element}</RouteEntitlement>
+                      : element;
+                    const routedElement = path === "/"
+                      ? <AuthenticatedHomeRedirect>{entitledElement}</AuthenticatedHomeRedirect>
+                      : entitledElement;
+
+                    return (
+                      <Route
+                        key={path}
+                        path={path}
+                        element={wrapLayout[layout](routedElement)}
+                      />
+                    );
+                  })}
                   <Route path="*" element={wrapLayout.public(<NotFound />)} />
                 </Routes>
               </Suspense>
