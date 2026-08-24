@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 const dashboard = readFileSync(resolve(process.cwd(), "src/pages/Dashboard.tsx"), "utf8");
 const driver = readFileSync(resolve(process.cwd(), "src/components/dashboard/ExecutiveDailyDriver.tsx"), "utf8");
 const insights = readFileSync(resolve(process.cwd(), "src/hooks/useInsights.ts"), "utf8");
+const supplierRisk = readFileSync(
+  resolve(process.cwd(), "supabase/functions/supplier-risk-runtime-ingest/index.ts"),
+  "utf8",
+);
 
 describe("executive unknown-state contract", () => {
   it("does not convert unavailable governed-decision evidence into zero/all-clear", () => {
@@ -41,5 +45,14 @@ describe("executive unknown-state contract", () => {
     expect(driver).toContain("setValueLoadError");
     expect(driver).toContain('value: "Unavailable"');
     expect(driver).toContain("Could not verify value evidence");
+  });
+
+  it("fails supplier-risk decision creation closed when required evidence is unknown", () => {
+    expect(supplierRisk).toContain('status: "INSUFFICIENT_EVIDENCE"');
+    expect(supplierRisk).toContain("impactAmount === null || deliveryDelayHours === null || observedAt === null");
+    expect(supplierRisk).toContain("return typeof parsed === \"number\" && parsed >= 0 ? parsed : null");
+    expect(supplierRisk).toContain("return null;");
+    expect(supplierRisk).not.toContain('return "1970-01-01T00:00:00.000Z"');
+    expect(supplierRisk).not.toContain("parsed > 0 ? parsed : 0");
   });
 });
