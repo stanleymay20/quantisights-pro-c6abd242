@@ -180,10 +180,11 @@ const DataConnectors = () => {
   const [mappings, setMappings] = useState<MetricMapping[]>([]);
   const [syncFrequency, setSyncFrequency] = useState("daily");
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ records: number; errors: string[] } | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncOutcome | null>(null);
 
   const [dataSourceId, setDataSourceId] = useState<string | null>(null);
-  const [existingConnectors, setExistingConnectors] = useState<any[]>([]);
+  const [existingConnectors, setExistingConnectors] = useState<any[] | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -193,13 +194,21 @@ const DataConnectors = () => {
   const fetchExisting = async () => {
     if (!currentOrgId) return;
     setLoading(true);
-    const { data } = await supabase.from("connector_configs")
+    const { data, error } = await supabase.from("connector_configs")
       .select("*, data_sources(*)")
       .eq("organization_id", currentOrgId)
       .order("created_at", { ascending: false });
-    setExistingConnectors(data || []);
+    if (error || !Array.isArray(data)) {
+      // UNKNOWN is not zero: never replace inventory with [] on a failed read.
+      setInventoryError(error?.message || "Connector inventory is unavailable");
+      setLoading(false);
+      return;
+    }
+    setInventoryError(null);
+    setExistingConnectors(data);
     setLoading(false);
   };
+
 
   const getAuthHeaders = async () => {
     const auth = await getVerifiedAuth();
