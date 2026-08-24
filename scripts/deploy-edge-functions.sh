@@ -1,56 +1,43 @@
-#!/bin/bash
-# Deploy all Quantivis edge functions to Supabase.
-# Run from repo root: bash scripts/deploy-edge-functions.sh
+#!/usr/bin/env bash
+# Compatibility entry point for manually deploying all Quantivis Edge Functions.
 #
-# Prerequisites:
-#   npm install
-#   npm install -g supabase
-#   supabase login
-#   supabase link --project-ref itpwpnwzzitkelffttyx
-#
-# IMPORTANT: this script used to hardcode a fixed list of function names.
-# That list was written early in the project and never kept up to date —
-# by the time this was rewritten, 100+ real functions existed in
-# supabase/functions/ (including counterfactual-explain, auth-rate-limiter,
-# cognitive-bias-detect, causal-inference, monte-carlo-sim, stripe-webhook,
-# webauthn-ceremony, and many more) that were silently never deployed by
-# this script despite their source being fixed and merged to main. A fix
-# living correctly in git is not the same as a fix being live — Supabase
-# edge functions deploy through a completely separate pipeline from
-# Lovable's frontend auto-publish, and nothing else in this repo runs
-# `supabase functions deploy` automatically.
-#
-# This version discovers every real function directory at run time instead
-# of relying on a maintained list, so it can't silently drift out of date
-# again. A directory counts as deployable if it sits directly under
-# supabase/functions/, is not named _shared, and contains an index.ts.
+# Production and staging CI use scripts/deploy-supabase-functions-resilient.sh
+# directly with an environment-scoped SUPABASE_PROJECT_REF. Manual invocations
+# must be equally explicit: never infer or silently default a remote project.
 
-set -e
-PROJECT="itpwpnwzzitkelffttyx"
-FUNCTIONS_DIR="$(dirname "$0")/../supabase/functions"
+set -Eeuo pipefail
+
+STAGING_PROJECT_REF="cmnihsbdbpubznlkmjbc"
+PRODUCTION_PROJECT_REF="izgfrekdamlgigehxoqs"
+RETIRED_PROJECT_REF="itpwpnwzzitkelffttyx"
+
+: "${SUPABASE_PROJECT_REF:?Set SUPABASE_PROJECT_REF explicitly to the staging or production project reference}"
+
+case "$SUPABASE_PROJECT_REF" in
+  "$STAGING_PROJECT_REF")
+    environment_name="staging"
+    ;;
+  "$PRODUCTION_PROJECT_REF")
+    environment_name="production"
+    ;;
+  "$RETIRED_PROJECT_REF")
+    echo "ERROR: $RETIRED_PROJECT_REF is the retired Quantivis Supabase project and must not receive deployments." >&2
+    exit 2
+    ;;
+  *)
+    echo "ERROR: Refusing to deploy Quantivis Edge Functions to unrecognised project $SUPABASE_PROJECT_REF." >&2
+    echo "Allowed targets: $STAGING_PROJECT_REF (staging), $PRODUCTION_PROJECT_REF (production)." >&2
+    exit 2
+    ;;
+esac
 
 echo "Preparing generated Edge runtime assets..."
 node scripts/build-supplier-risk-edge-runtime.mjs
 
-echo "Deploying edge functions to $PROJECT..."
-echo ""
-
-count=0
-for dir in "$FUNCTIONS_DIR"/*/; do
-  fn="$(basename "$dir")"
-  if [ "$fn" = "_shared" ]; then
-    continue
-  fi
-  if [ ! -f "${dir}index.ts" ]; then
-    continue
-  fi
-  echo "  → $fn"
-  supabase functions deploy "$fn" --project-ref "$PROJECT"
-  count=$((count + 1))
-done
+echo "Deploying Quantivis Edge Functions to ${environment_name} (${SUPABASE_PROJECT_REF})..."
+SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" bash scripts/deploy-supabase-functions-resilient.sh
 
 echo ""
-echo "Deployed $count functions."
-echo ""
-echo "Done. Now push DB migration:"
-echo "  supabase db push --project-ref $PROJECT"
+echo "Edge Function deployment complete. Database migrations are intentionally separate."
+echo "Preview with: supabase db push --linked --include-all --dry-run"
+echo "Apply only through the corresponding governed staging/production release workflow."
