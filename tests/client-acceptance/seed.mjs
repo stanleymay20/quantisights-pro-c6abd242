@@ -13,9 +13,10 @@ const URL = must("LOAD_SUPABASE_URL");
 const SERVICE_KEY = must("SUPABASE_SERVICE_ROLE_KEY");
 const STATE = process.env.CLIENT_ACCEPTANCE_STATE || "tests/client-acceptance/.state.json";
 const STAGING_URL = "https://cmnihsbdbpubznlkmjbc.supabase.co";
-// Resend's provider-supported test recipient simulates successful delivery
-// without sending Client Acceptance recovery mail to a real person.
-const RECOVERY_TEST_EMAIL = "delivered@resend.dev";
+// AWS SES's documented mailbox simulator accepts mail without delivering it to
+// a person. Unlike provider-specific Resend test recipients, its domain also
+// passes Supabase hosted Auth's public recovery-address validation.
+const RECOVERY_TEST_EMAIL = "success@simulator.amazonses.com";
 
 if (TARGET !== "staging" || URL !== STAGING_URL) {
   throw new Error(`Refusing client-acceptance seeding outside approved staging (${TARGET}, ${URL})`);
@@ -85,8 +86,8 @@ async function resolveSignupOrganization(userId) {
 }
 
 try {
-  // This address is intentionally stable because Resend documents the exact
-  // mailbox as its successful-delivery test sink. Client Acceptance is
+  // This address is intentionally stable because AWS documents the exact
+  // mailbox as its successful-delivery simulator. Client Acceptance is
   // serialized, and this cleanup makes a cancelled prior run recoverable
   // without ever deleting a real staging user.
   await cleanupStaleRecoveryFixture();

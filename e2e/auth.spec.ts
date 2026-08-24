@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import {
   attachAuthEvidence,
   readSupabaseSession,
@@ -49,6 +50,39 @@ function adminClient() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return null;
   return createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+function strongTestPassword() {
+  return `${randomBytes(18).toString("base64url")}!Aa7`;
+}
+
+async function generateRecoveryLink(
+  fixture: AcceptanceFixture,
+  redirectTo: string,
+) {
+  const admin = adminClient();
+  if (!admin) throw new Error("Supabase staging admin client is required");
+
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "recovery",
+    email: fixture.email,
+    options: { redirectTo },
+  });
+  if (error) throw error;
+
+  const actionLink = data?.properties?.action_link;
+  if (!actionLink) throw new Error("Supabase did not return a recovery action link");
+  return { admin, actionLink };
+}
+
+async function completeRecoveryInBrowser(page: Page, actionLink: string, password: string) {
+  await page.goto(actionLink);
+  await page.waitForURL(/\/reset-password(?:[?#]|$)/, { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: /set a new password/i })).toBeVisible();
+  await page.getByLabel(/new password/i).fill(password);
+  await page.getByLabel(/confirm password/i).fill(password);
+  await page.getByRole("button", { name: /update password/i }).click();
+  await page.waitForURL(/\/login(?:[?#]|$)/, { timeout: 15_000 });
 }
 
 async function signIn(page: Page, fixture: AcceptanceFixture) {
@@ -363,14 +397,66 @@ test.describe("Authentication Flow", () => {
 
   // ------------------------------------------------------------ AUTH-012
   test("AUTH-012 password reset completion follows a real one-time recovery link", async ({ page }, testInfo) => {
-    attachAuthEvidence(page, testInfo, "AUTH-012");
-    test.skip(true, "real one-time recovery-link browser fixture is not wired yet; do not certify page presence as reset completion");
+    const ev = attachAuthEvidence(page, testInfo, "AUTH-012");
+    test.skip(!starter || !adminClient(), "disposable staging user + service role are required");
+
+    const originalPassword = starter!.password;
+    const replacementPassword = strongTestPassword();
+    const redirectTo = `${process.env.E2E_BASE_URL || "http://127.0.0.1:4173"}/reset-password`;
+    const { admin, actionLink } = await generateRecoveryLink(starter!, redirectTo);
+
+    try {
+      await completeRecoveryInBrowser(page, actionLink, replacementPassword);
+      await signIn(page, { ...starter!, password: replacementPassword });
+      const session = await readSupabaseSession(page);
+      expect(session?.user_id).toBe(starter!.user_id);
+      ev.setSession(session, "recovered");
+
+      await page.evaluate(() => {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+      });
+      await page.context().clearCookies();
+      await page.goto(actionLink);
+      await expect(page.getByRole("heading", { name: /invalid reset link/i })).toBeVisible({ timeout: 15_000 });
+      ev.note("A genuine admin-generated recovery link updated the password and could not be consumed twice.");
+      ev.mark({ route: new URL(page.url()).pathname });
+    } finally {
+      if (starter!.user_id) {
+        const { error } = await admin.auth.admin.updateUserById(starter!.user_id, { password: originalPassword });
+        expect(error).toBeNull();
+      }
+      await ev.finalize();
+    }
   });
 
   // ------------------------------------------------------------ AUTH-013
   test("AUTH-013 recovery round-trip proves new password succeeds and old password fails", async ({ page }, testInfo) => {
-    attachAuthEvidence(page, testInfo, "AUTH-013");
-    test.skip(true, "full destructive recovery round-trip fixture is not wired yet; do not fake PASS with a note-only test");
+    const ev = attachAuthEvidence(page, testInfo, "AUTH-013");
+    test.skip(!starter || !adminClient(), "disposable staging user + service role are required");
+
+    const oldPassword = starter!.password;
+    const newPassword = strongTestPassword();
+    const redirectTo = `${process.env.E2E_BASE_URL || "http://127.0.0.1:4173"}/reset-password`;
+    const { actionLink } = await generateRecoveryLink(starter!, redirectTo);
+
+    await completeRecoveryInBrowser(page, actionLink, newPassword);
+
+    await page.goto("/login");
+    await page.getByLabel(/email/i).first().fill(starter!.email);
+    await page.getByLabel(/password/i).first().fill(oldPassword);
+    await page.getByRole("button", { name: /sign in securely|sign in|log in/i }).first().click();
+    await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
+    await expect(page.getByText(/invalid login credentials/i).first()).toBeVisible({ timeout: 10_000 });
+
+    await signIn(page, { ...starter!, password: newPassword });
+    const session = await readSupabaseSession(page);
+    expect(session?.user_id).toBe(starter!.user_id);
+    starter!.password = newPassword;
+    ev.setSession(session, "recovered_fresh_login");
+    ev.note("Old credentials failed after recovery; a fresh login with the replacement password succeeded for the same user id.");
+    ev.mark({ route: new URL(page.url()).pathname });
+    await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-014
