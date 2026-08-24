@@ -1,46 +1,10 @@
 // tests/evidence/pipelines/authentication.mjs
-// EE-1: Authentication & Identity — real evidence pipeline.
+// EE-1: Authentication & Identity — evidence consumer.
 //
-// This pipeline is an EVIDENCE CONSUMER. It does not launch Playwright, k6,
-// or a browser. The execution adapter (e.g. tests/e2e/auth.spec.ts wrapped by
-// tests/evidence/adapters/auth-adapter.mjs, or a manual attester) writes a
-// results JSON that this module validates against AUTH_CONTROLS and folds
-// into the standard evidence artifact schema (see tests/evidence/lib/artifact.mjs).
-//
-// Adapter contract (JSON at $EVIDENCE_AUTH_RESULTS):
-// {
-//   "adapter": "playwright" | "manual" | ...,
-//   "collected_at": "<ISO-8601>",
-//   "environment": "preview" | "staging",
-//   "controls": {
-//     "AUTH-001": {
-//       "status": "PASS" | "FAIL" | "SKIP",
-//       "execution_time_ms": 1234,
-//       "evidence": {
-//         "route": "/login",
-//         "response_status": 200,
-//         "redirect_chain": ["/login", "/dashboard"],
-//         "session_state": { "user_id": "…", "aal": "aal1" },
-//         "auth_state": "signed_in",
-//         "console_errors": [],
-//         "network_failures": [],
-//         "screenshots": ["…/login.png"]
-//       },
-//       "error": null
-//     },
-//     ...
-//   }
-// }
-//
-// Result mapping:
-//   - Every required control PASS       → STATUS.PASS
-//   - Any critical control FAIL         → STATUS.SECURITY_FAILURE (blocking)
-//   - Only warning-tier controls FAIL   → STATUS.WARNING
-//   - Missing controls / missing file   → STATUS.FRAMEWORK_INVALID
-//
-// Failure taxonomy is preserved (see tests/evidence/lib/taxonomy.mjs); the
-// per-control semantic code (AUTH_FAILURE, PKCE_FAILURE, …) is recorded on
-// failures[].code so the certification report can render it.
+// EVIDENCE_AUTH_RESULTS must point at the execution adapter output. A critical
+// authentication control is only green when it is actually exercised and
+// passes. Missing or skipped critical controls are release-blocking because
+// "not tested" is not evidence of authentication safety.
 
 import { readFileSync, existsSync } from "node:fs";
 import { STATUS } from "../lib/taxonomy.mjs";
@@ -60,21 +24,25 @@ function loadAdapterResults(resultsPath) {
   if (!existsSync(resultsPath)) {
     return { ok: false, code: "MISSING_ADAPTER_RESULTS", message: `Adapter results file not found: ${resultsPath}` };
   }
+
   let raw;
   try {
     raw = readFileSync(resultsPath, "utf8");
-  } catch (err) {
-    return { ok: false, code: "ADAPTER_READ_ERROR", message: String(err?.message ?? err) };
+  } catch (error) {
+    return { ok: false, code: "ADAPTER_READ_ERROR", message: String(error?.message ?? error) };
   }
+
   let parsed;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
-    return { ok: false, code: "ADAPTER_PARSE_ERROR", message: String(err?.message ?? err) };
+  } catch (error) {
+    return { ok: false, code: "ADAPTER_PARSE_ERROR", message: String(error?.message ?? error) };
   }
+
   if (!parsed || typeof parsed !== "object" || !parsed.controls || typeof parsed.controls !== "object") {
     return { ok: false, code: "ADAPTER_SCHEMA_ERROR", message: "Adapter results missing controls{} object" };
   }
+
   return { ok: true, data: parsed };
 }
 
@@ -88,7 +56,6 @@ export function buildEvidence(adapterResults) {
   const warnings = [];
   const failures = [];
   const evidence_files = [];
-
   const seen = new Set();
 
   for (const control of AUTH_CONTROLS) {
@@ -104,8 +71,8 @@ export function buildEvidence(adapterResults) {
       });
       continue;
     }
-    seen.add(control.control_id);
 
+    seen.add(control.control_id);
     const status = String(raw.status || "").toUpperCase();
     if (!VALID_ADAPTER_STATUSES.has(status)) {
       failures.push({
@@ -130,56 +97,82 @@ export function buildEvidence(adapterResults) {
       recommendation: control.recommendation,
     };
 
-    // Track referenced screenshots / attachments for the artifact index.
     const screenshots = raw.evidence?.screenshots;
     if (Array.isArray(screenshots)) {
-      for (const s of screenshots) if (typeof s === "string" && s) evidence_files.push(s);
+      for (const screenshot of screenshots) {
+        if (typeof screenshot === "string" && screenshot) evidence_files.push(screenshot);
+      }
     }
 
     if (status === "PASS") {
       positive.push({ name: control.control_id, status: STATUS.PASS, detail: record });
-    } else if (status === "SKIP") {
-      warnings.push({
-        code: "CONTROL_SKIPPED",
-        control_id: control.control_id,
-        control_name: control.control_name,
-        message: raw.error?.message || raw.error || "Adapter skipped this control",
-        recommendation: control.recommendation,
-      });
-      negative.push({ name: control.control_id, status: STATUS.WARNING, detail: record });
-    } else {
-      // FAIL
-      failures.push({
-        code: control.failure_code,
-        control_id: control.control_id,
-        control_name: control.control_name,
-        blocking: control.blocking === "critical",
-        message: raw.error?.message || raw.error || "Control asserted FAIL by adapter",
-        expected_outcome: control.expected_outcome,
-        failure_condition: control.failure_condition,
-        recommendation: control.recommendation,
-        evidence: record.evidence,
-      });
-      negative.push({ name: control.control_id, status: STATUS.SECURITY_FAILURE, detail: record });
+      continue;
     }
+
+    if (status === "SKIP") {
+      if (control.blocking === "critical") {
+        failures.push({
+          code: "UNVERIFIED_CRITICAL_CONTROL",
+          control_id: control.control_id,
+          control_name: control.control_name,
+          blocking: true,
+          message: raw.error?.message || raw.error || `Critical authentication control ${control.control_id} was skipped`,
+          expected_outcome: control.expected_outcome,
+          recommendation: control.recommendation,
+          evidence: record.evidence,
+        });
+        negative.push({ name: control.control_id, status: STATUS.SECURITY_FAILURE, detail: record });
+      } else {
+        warnings.push({
+          code: "CONTROL_SKIPPED",
+          control_id: control.control_id,
+          control_name: control.control_name,
+          message: raw.error?.message || raw.error || "Adapter skipped this control",
+          recommendation: control.recommendation,
+        });
+        negative.push({ name: control.control_id, status: STATUS.WARNING, detail: record });
+      }
+      continue;
+    }
+
+    // FAIL
+    failures.push({
+      code: control.failure_code,
+      control_id: control.control_id,
+      control_name: control.control_name,
+      blocking: control.blocking === "critical",
+      message: raw.error?.message || raw.error || "Control asserted FAIL by adapter",
+      expected_outcome: control.expected_outcome,
+      failure_condition: control.failure_condition,
+      recommendation: control.recommendation,
+      evidence: record.evidence,
+    });
+    negative.push({
+      name: control.control_id,
+      status: control.blocking === "critical" ? STATUS.SECURITY_FAILURE : STATUS.WARNING,
+      detail: record,
+    });
   }
 
-  const anyBlockingFailure = failures.some((f) => f.blocking !== false);
+  const hasFrameworkFailure = failures.some(
+    (failure) => failure.code === "MISSING_CONTROL" || failure.code === "INVALID_CONTROL_STATUS",
+  );
+  const anyBlockingFailure = failures.some((failure) => failure.blocking !== false);
   const hasFailures = failures.length > 0;
-  const missingControls = REQUIRED_CONTROL_IDS.some((id) => !seen.has(id) && !failures.find((f) => f.control_id === id && f.code === "MISSING_CONTROL"));
+  const missingControls = REQUIRED_CONTROL_IDS.some(
+    (id) => !seen.has(id) && !failures.find((failure) => failure.control_id === id && failure.code === "MISSING_CONTROL"),
+  );
 
   let status;
-  if (missingControls || failures.some((f) => f.code === "MISSING_CONTROL" || f.code === "INVALID_CONTROL_STATUS")) {
+  if (missingControls || hasFrameworkFailure) {
     status = STATUS.FRAMEWORK_INVALID;
   } else if (anyBlockingFailure) {
     status = STATUS.SECURITY_FAILURE;
   } else if (hasFailures) {
-    // only warning-tier failures
     status = STATUS.WARNING;
   } else if (positive.length === 0) {
     status = STATUS.FRAMEWORK_INVALID;
-  } else if (warnings.some((w) => w.code === "CONTROL_SKIPPED")) {
-    // EE-1C: any skipped control must degrade to WARNING — never a fake PASS.
+  } else if (warnings.some((warning) => warning.code === "CONTROL_SKIPPED")) {
     status = STATUS.WARNING;
   } else {
     status = STATUS.PASS;
@@ -209,7 +202,7 @@ export async function verify(_ctx) {
         {
           code: loaded.code,
           message: loaded.message,
-          recommendation: "Run the auth execution adapter (see tests/evidence/adapters/README-auth-adapter.md) and set EVIDENCE_AUTH_RESULTS to its output path.",
+          recommendation: "Run the auth execution adapter and set EVIDENCE_AUTH_RESULTS to its output path.",
         },
       ],
       failures: [
@@ -227,6 +220,5 @@ export async function verify(_ctx) {
   return buildEvidence(loaded.data);
 }
 
-// Exported for tests / tooling.
 export const CONTROLS = AUTH_CONTROLS;
 export const CONTROLS_BY_ID = CONTROL_INDEX;
