@@ -90,6 +90,20 @@ test("failed critical control produces SECURITY_FAILURE (blocking)", () => {
   assert.equal(fail.blocking, true);
 });
 
+test("skipped critical control is unverified and release-blocking", () => {
+  const result = buildEvidence(makeAdapterResult({
+    controls: {
+      "AUTH-004": { status: "SKIP", execution_time_ms: 0, evidence: {}, error: { message: "PKCE fixture unavailable" } },
+    },
+  }));
+  assert.equal(result.status, STATUS.SECURITY_FAILURE);
+  assert.ok(isBlocking(result.status));
+  const fail = result.failures.find((f) => f.control_id === "AUTH-004");
+  assert.ok(fail, "AUTH-004 skipped critical control must be recorded as a failure");
+  assert.equal(fail.code, "UNVERIFIED_CRITICAL_CONTROL");
+  assert.equal(fail.blocking, true);
+});
+
 test("failed warning-tier control degrades to WARNING (non-blocking)", () => {
   const result = buildEvidence(makeAdapterResult({
     controls: {
@@ -98,6 +112,17 @@ test("failed warning-tier control degrades to WARNING (non-blocking)", () => {
   }));
   assert.equal(result.status, STATUS.WARNING);
   assert.equal(isBlocking(result.status), false);
+});
+
+test("skipped warning-tier control degrades to WARNING", () => {
+  const result = buildEvidence(makeAdapterResult({
+    controls: {
+      "AUTH-014": { status: "SKIP", execution_time_ms: 0, evidence: {}, error: "diagnostic unavailable" },
+    },
+  }));
+  assert.equal(result.status, STATUS.WARNING);
+  assert.equal(isBlocking(result.status), false);
+  assert.ok(result.warnings.some((w) => w.code === "CONTROL_SKIPPED" && w.control_id === "AUTH-014"));
 });
 
 test("missing control produces FRAMEWORK_INVALID", () => {
@@ -142,7 +167,6 @@ test("verify() reads adapter file and yields valid artifact", async () => {
       actor: "test",
       organization: "org_test",
     });
-    // Runner-level schema validation must accept the record.
     validateArtifact(record);
     assert.equal(record.status, STATUS.PASS);
     assert.ok(existsSync(path));
@@ -153,8 +177,6 @@ test("verify() reads adapter file and yields valid artifact", async () => {
 });
 
 test("blocked authentication prevents certification (integration with gates)", async () => {
-  // A SECURITY_FAILURE artifact must be classified as blocking by the taxonomy
-  // helper the certification engine consumes.
   const result = buildEvidence(makeAdapterResult({
     controls: {
       "AUTH-004": { status: "FAIL", execution_time_ms: 1, evidence: {}, error: "pkce double exchange" },
