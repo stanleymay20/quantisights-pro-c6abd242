@@ -34,9 +34,10 @@ function runtimeErrors(runtime: RuntimeResult): string[] {
   return [];
 }
 
-function runtimeRecords(runtime: RuntimeResult): number {
-  const value = Number(runtime.body.records ?? 0);
-  return Number.isFinite(value) && value >= 0 ? value : 0;
+function runtimeRecords(runtime: RuntimeResult): number | null {
+  if (runtime.body.records === null || runtime.body.records === undefined) return null;
+  const value = Number(runtime.body.records);
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 serve(async (req) => {
@@ -139,12 +140,15 @@ serve(async (req) => {
       try {
         runtime = await runDbConnectorAction(connectorType, body, body.organization_id, service);
       } catch (error) {
-        runtime = { status: 500, body: { records: 0, errors: [`Database sync failed: ${errorMessage(error)}`] } };
+        runtime = { status: 500, body: { errors: [`Database sync failed: ${errorMessage(error)}`] } };
       }
 
       const records = runtimeRecords(runtime);
       const errors = runtimeErrors(runtime);
-      const finalStatus = runtime.status >= 400 || (errors.length > 0 && records === 0)
+      if (records === null && errors.length === 0) {
+        errors.push("Database sync did not return a verified records count");
+      }
+      const finalStatus = runtime.status >= 400 || records === null || (errors.length > 0 && records === 0)
         ? "failed"
         : errors.length > 0
           ? "partial"
