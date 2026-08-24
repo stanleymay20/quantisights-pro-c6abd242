@@ -5,6 +5,7 @@
 
 const ALLOWED_ORIGINS = [
   "https://quantisights-pro.lovable.app",
+  "https://quantivis-insights.lovable.app",
   "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app",
   "https://28b43e06-9231-4c54-bc18-a49be01a6516.lovableproject.com",
   "https://www.quantivis.io",
@@ -13,9 +14,21 @@ const ALLOWED_ORIGINS = [
   "http://localhost:8080",
 ];
 
+const STAGING_SUPABASE_URL = "https://cmnihsbdbpubznlkmjbc.supabase.co";
+const STAGING_ONLY_ORIGINS = new Set([
+  "http://127.0.0.1:4173",
+]);
+
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  return supabaseUrl === STAGING_SUPABASE_URL && STAGING_ONLY_ORIGINS.has(origin);
+}
+
 export function getCorsHeaders(req?: Request): Record<string, string> {
   const origin = req?.headers.get("Origin") || "";
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowedOrigin = isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
