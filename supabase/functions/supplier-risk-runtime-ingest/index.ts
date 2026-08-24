@@ -1,8 +1,8 @@
 // GA-1: Supplier Risk runtime ingestion path.
 // Supplier-risk-shaped advisories/insights are routed through the RTS-1 / Agent
-// Gateway / Runtime pipeline. Unknown monetary exposure or delivery delay is
-// represented as 0 — never fabricated from priority labels. Source identity is
-// persisted so concurrent/replayed runs cannot create duplicate decisions.
+// Gateway / Runtime pipeline. Unknown monetary exposure, delivery delay, or
+// observation time remains unknown and blocks decision creation fail-closed.
+// Source identity is persisted so concurrent/replayed runs cannot create duplicate decisions.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
@@ -141,6 +141,9 @@ async function runSupplierRiskPipelineForSource(
   const impactAmount = deriveImpactAmount(source);
   const deliveryDelayHours = deriveDeliveryDelayHours(source);
   const observedAt = normalizeObservedAt(source.created_at);
+  if (impactAmount === null || deliveryDelayHours === null || observedAt === null) {
+    return { status: "INSUFFICIENT_EVIDENCE", decision_id: null };
+  }
   const idempotencyKey = sourceKey(source);
   let persistedDecisionId: string | null = null;
   let reusedExisting = false;
@@ -339,24 +342,24 @@ function sourceKey(source: SupplierRiskSource): string {
   return `${source.kind}:${source.id}`;
 }
 
-function deriveImpactAmount(source: SupplierRiskSource): number {
+function deriveImpactAmount(source: SupplierRiskSource): number | null {
   const parsed = parseImpactEstimate(source.expected_impact);
-  return typeof parsed === "number" && parsed > 0 ? parsed : 0;
+  return typeof parsed === "number" && parsed >= 0 ? parsed : null;
 }
 
-function deriveDeliveryDelayHours(source: SupplierRiskSource): number {
+function deriveDeliveryDelayHours(source: SupplierRiskSource): number | null {
   const text = `${source.title} ${source.rationale ?? ""}`;
   const hours = text.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i);
   if (hours) return Math.max(0, Number(hours[1]));
   const days = text.match(/(\d+(?:\.\d+)?)\s*days?\b/i);
   if (days) return Math.max(0, Number(days[1]) * 24);
-  return 0;
+  return null;
 }
 
-function normalizeObservedAt(createdAt: string | null): string {
-  if (!createdAt) return "1970-01-01T00:00:00.000Z";
+function normalizeObservedAt(createdAt: string | null): string | null {
+  if (!createdAt) return null;
   const parsed = new Date(createdAt);
-  return Number.isNaN(parsed.getTime()) ? "1970-01-01T00:00:00.000Z" : parsed.toISOString();
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function parseImpactEstimate(value: unknown): number | null {
