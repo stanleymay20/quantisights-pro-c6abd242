@@ -31,6 +31,8 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
       SUPABASE_FUNCTION_DEPLOY_BASE_DELAY_SECONDS: "5"
       SUPABASE_FUNCTION_DEPLOY_PACE_SECONDS: "2"
@@ -132,10 +134,35 @@ jobs:
       - name: Verify staging Edge Functions
         run: bash scripts/verify-supabase-functions.sh
 
-      # Authentication must not depend on Lovable Cloud availability or credits.
-      # Keep the custom hook deployed for future independent-provider use, but
-      # explicitly disable it so hosted Supabase SMTP handles signup, recovery,
-      # invite, magic-link, email-change and reauthentication messages.
-      # Transactional application email remains a separate queue/provider concern.
-      - name: Ensure Auth email is independent of Lovable Cloud
-        run: node scripts/configure-supabase-auth-email.mjs disable
+      # Auth delivery must remain functional even if Lovable Cloud is paused.
+      # When independent Resend credentials are available, deploy them directly
+      # to the external Supabase project and enable the native Send Email Hook +
+      # durable queue worker. Otherwise keep the custom path fully disabled so
+      # Supabase's hosted Auth mailer handles recovery/confirmation safely.
+      - name: Configure independent staging Auth email transport
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "$RESEND_API_KEY" ] || [ -z "$RESEND_FROM_EMAIL" ]; then
+            echo "::warning::RESEND_API_KEY/RESEND_FROM_EMAIL are not configured in the staging GitHub Environment; using Supabase hosted Auth mailer"
+            node scripts/configure-supabase-auth-email.mjs disable
+            exit 0
+          fi
+
+          echo "::add-mask::$RESEND_API_KEY"
+          supabase secrets set \
+            RESEND_API_KEY="$RESEND_API_KEY" \
+            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+          # Rotate the Standard Webhooks secret fail-closed: disable the old
+          # hook/worker first, install the new Edge secret, then re-enable and
+          # verify the exact active project URI and queue worker.
+          node scripts/configure-supabase-auth-email.mjs disable
+          hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
+          echo "::add-mask::$hook_secret"
+          export SEND_EMAIL_HOOK_SECRET="$hook_secret"
+          supabase secrets set \
+            SEND_EMAIL_HOOK_SECRET="$hook_secret" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+          node scripts/configure-supabase-auth-email.mjs configure
