@@ -14,6 +14,15 @@ type OAuthResult = {
   error?: Error;
 };
 
+type AuthSettings = {
+  external?: {
+    google?: boolean;
+  };
+};
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
 const normalizeOAuthError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error ?? "Unknown OAuth error");
   const lower = message.toLowerCase();
@@ -30,6 +39,37 @@ const normalizeOAuthError = (error: unknown) => {
   return error instanceof Error ? error : new Error(message);
 };
 
+const ensureGoogleProviderEnabled = async () => {
+  let response: Response;
+  try {
+    response = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+      },
+    });
+  } catch (error: unknown) {
+    throw new Error(
+      `Google sign-in availability could not be verified. Use email and password for now. (${error instanceof Error ? error.message : "network error"})`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error("Google sign-in availability could not be verified. Use email and password for now.");
+  }
+
+  let settings: AuthSettings;
+  try {
+    settings = await response.json() as AuthSettings;
+  } catch {
+    throw new Error("Google sign-in availability returned an invalid response. Use email and password for now.");
+  }
+
+  if (settings.external?.google !== true) {
+    throw new Error("Google sign-in is not enabled for this environment yet. Use email and password for now.");
+  }
+};
+
 export const lovable = {
   auth: {
     signInWithOAuth: async (
@@ -44,6 +84,8 @@ export const lovable = {
       }
 
       try {
+        await ensureGoogleProviderEnabled();
+
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "google",
           options: {
