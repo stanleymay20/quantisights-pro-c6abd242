@@ -316,21 +316,49 @@ test.describe("Authentication Flow", () => {
     );
     await page.getByRole("button", { name: /send|reset/i }).first().click();
     const response = await recoverResponse;
-    ev.mark({ route: "/forgot-password", response_status: response.status() });
-    expect(response.ok()).toBeTruthy();
+    const responseStatus = response.status();
+    let responseCode = "unknown";
+    let responseMessage = "";
 
-    await expect.poll(async () => {
-      const { count, error } = await admin!
-        .from("email_send_log")
-        .select("id", { count: "exact", head: true })
-        .eq("recipient_email", starter!.email)
-        .eq("template_name", "recovery");
-      if (error) throw error;
-      return count ?? 0;
-    }, { timeout: 20_000 }).toBeGreaterThan(beforeCount ?? 0);
+    try {
+      const responseText = await response.text();
+      if (responseText) {
+        try {
+          const payload = JSON.parse(responseText) as Record<string, unknown>;
+          responseCode = String(payload.code ?? payload.error_code ?? payload.error ?? "unknown").slice(0, 80);
+          responseMessage = String(payload.message ?? payload.msg ?? payload.error_description ?? "")
+            .replaceAll(starter!.email, "[redacted-email]")
+            .slice(0, 180);
+        } catch {
+          responseCode = "non_json_response";
+        }
+      }
+    } catch {
+      responseCode = "unreadable_response";
+    }
 
-    ev.note("Recovery request returned 2xx and auth-email-hook created a recovery email_send_log row.");
-    await ev.finalize();
+    ev.mark({ route: "/forgot-password", response_status: responseStatus });
+    ev.note(
+      `Recovery endpoint status=${responseStatus} code=${responseCode}${responseMessage ? ` message=${responseMessage}` : ""}`,
+    );
+
+    try {
+      expect(response.ok()).toBeTruthy();
+
+      await expect.poll(async () => {
+        const { count, error } = await admin!
+          .from("email_send_log")
+          .select("id", { count: "exact", head: true })
+          .eq("recipient_email", starter!.email)
+          .eq("template_name", "recovery");
+        if (error) throw error;
+        return count ?? 0;
+      }, { timeout: 20_000 }).toBeGreaterThan(beforeCount ?? 0);
+
+      ev.note("Recovery request returned 2xx and auth-email-hook created a recovery email_send_log row.");
+    } finally {
+      await ev.finalize();
+    }
   });
 
   // ------------------------------------------------------------ AUTH-012
