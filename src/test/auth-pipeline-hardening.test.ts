@@ -10,6 +10,7 @@ const mfaChallenge = readSource("src/components/auth/MFAChallenge.tsx");
 const authContext = readSource("src/contexts/AuthContext.tsx");
 const sessionTimeout = readSource("src/components/auth/SessionTimeout.tsx");
 const resetPassword = readSource("src/pages/ResetPassword.tsx");
+const login = readSource("src/pages/Login.tsx");
 
 describe("authentication pipeline production safety", () => {
   it("fails closed when organization security policy or MFA factor reads fail", () => {
@@ -63,5 +64,20 @@ describe("authentication pipeline production safety", () => {
     expect(resetPassword).toContain('supabase.auth.signOut({ scope: "local" })');
     expect(resetPassword).toContain('navigate("/login", { replace: true })');
     expect(resetPassword).not.toContain('label: "At least 8 characters"');
+  });
+
+  it("does not downgrade an unavailable SSO policy to password login", () => {
+    expect(login).toContain("const [ssoPolicyError, setSsoPolicyError]");
+    expect(login).toContain("const { data, error } = await supabase.rpc(\"resolve_sso_for_email\"");
+    expect(login).toContain("if (error) throw error");
+    expect(login).toContain("if (ssoChecking || ssoPolicyError)");
+    expect(login).toContain("Retry security check");
+    expect(login).not.toContain("SSO lookup failure is non-blocking");
+  });
+
+  it("keeps post-login MFA enforcement in the protected route rather than the credential try/catch", () => {
+    expect(login).not.toContain("supabase.auth.mfa.listFactors()");
+    expect(login).not.toContain("setShowMFA(true)");
+    expect(login).toContain("ProtectedRoute is the single authoritative MFA / organisation-policy gate");
   });
 });
