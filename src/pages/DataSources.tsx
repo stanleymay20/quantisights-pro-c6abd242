@@ -41,7 +41,7 @@ interface DataSource {
 interface SyncJob {
   id: string;
   status: string;
-  records_synced: number;
+  records_synced: number | null;
   error_message: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -67,7 +67,7 @@ const SOURCE_TYPES: { value: SourceType; label: string; icon: typeof Database; d
 
 const SyncButton = ({ source, organizationId, onComplete }: { source: DataSource; organizationId: string; onComplete: () => void }) => {
   const [syncing, setSyncing] = useState(false);
-  const [result, setResult] = useState<{ records: number; errors: string[] } | null>(null);
+  const [result, setResult] = useState<{ records: number | null; errors: string[] } | null>(null);
   const { toast } = useToast();
 
   const handleSync = async (e: React.MouseEvent) => {
@@ -111,15 +111,15 @@ const SyncButton = ({ source, organizationId, onComplete }: { source: DataSource
       onComplete();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown sync error";
-      setResult({ records: 0, errors: [message] });
+      setResult({ records: null, errors: [message] });
       toast({ title: "Sync failed", description: message, variant: "destructive" });
     } finally {
       setSyncing(false);
     }
   };
 
-  const failed = Boolean(result && result.errors.length > 0 && result.records === 0);
-  const partial = Boolean(result && result.errors.length > 0 && result.records > 0);
+  const failed = Boolean(result && (result.records === null || (result.errors.length > 0 && result.records === 0)));
+  const partial = Boolean(result && result.records !== null && result.errors.length > 0 && result.records > 0);
 
   return (
     <div className="mt-3 pt-3 border-t border-border">
@@ -134,7 +134,7 @@ const SyncButton = ({ source, organizationId, onComplete }: { source: DataSource
       {result && !syncing && (
         <div className={`mt-2 text-xs flex items-center gap-1.5 ${failed ? "text-destructive" : partial ? "text-warning" : "text-success"}`}>
           {failed ? (
-            <><XCircle className="w-3 h-3" /> {result.errors[0]}</>
+            <><XCircle className="w-3 h-3" /> {result.errors[0] ?? "Sync result unavailable"}</>
           ) : partial ? (
             <><AlertCircle className="w-3 h-3" /> {result.records} metrics synced with {result.errors.length} warning{result.errors.length === 1 ? "" : "s"}</>
           ) : (
@@ -574,7 +574,7 @@ const DataSources = () => {
                     <div key={job.id} className="flex items-center gap-3 py-2 border-b border-border/50 last:border-0">
                       {statusIcon(job.status)}
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium">{job.records_synced} records</p>
+                        <p className="text-xs font-medium">{job.records_synced === null ? "Records unknown" : `${job.records_synced} records`}</p>
                         <p className="text-xs text-muted-foreground">{new Date(job.created_at).toLocaleString()}</p>
                       </div>
                       {job.error_message && <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" aria-label={job.error_message} />}
