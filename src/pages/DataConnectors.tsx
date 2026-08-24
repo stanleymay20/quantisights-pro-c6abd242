@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { useNavigate } from "react-router-dom";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
@@ -198,18 +198,32 @@ const DataConnectors = () => {
   const [existingConnectors, setExistingConnectors] = useState<any[] | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const inventoryRequestSeq = useRef(0);
 
   useEffect(() => {
-    if (currentOrgId) fetchExisting();
+    void fetchExisting();
+    return () => {
+      inventoryRequestSeq.current += 1;
+    };
+    // fetchExisting intentionally follows the selected organization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrgId]);
 
   const fetchExisting = async () => {
-    if (!currentOrgId) return;
+    const requestSeq = ++inventoryRequestSeq.current;
+    const scopeOrgId = currentOrgId;
+    setExistingConnectors(null);
+    setInventoryError(null);
+    if (!scopeOrgId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const { data, error } = await supabase.from("connector_configs")
       .select("*, data_sources(*)")
-      .eq("organization_id", currentOrgId)
+      .eq("organization_id", scopeOrgId)
       .order("created_at", { ascending: false });
+    if (requestSeq !== inventoryRequestSeq.current) return;
     if (error || !Array.isArray(data)) {
       // UNKNOWN is not zero: never replace inventory with [] on a failed read.
       setInventoryError(error?.message || "Connector inventory is unavailable");
@@ -220,7 +234,6 @@ const DataConnectors = () => {
     setExistingConnectors(data);
     setLoading(false);
   };
-
 
   const getAuthHeaders = async () => {
     const auth = await getVerifiedAuth();
@@ -307,13 +320,15 @@ const DataConnectors = () => {
       const syncData = await readJsonObject(syncRes);
       const syncVerified = syncRes.ok && !!syncData && syncData.success === true;
 
-      fetchExisting();
+      void fetchExisting();
 
       if (syncVerified) {
-        const records = typeof syncData!.records === "number" ? syncData!.records : null;
+        const records = typeof syncData!.records === "number" && Number.isFinite(syncData!.records) && syncData!.records >= 0
+          ? syncData!.records
+          : null;
         toast({
           title: `${CONNECTORS.find(c => c.type === selectedType)?.label} connected`,
-          description: records === null ? "Initial sync completed." : `${records} records synced. Your data is ready.`,
+          description: records === null ? "Initial sync completed; record count was not reported." : `${records} records synced. Your data is ready.`,
         });
         import("@/lib/analytics").then(({ trackConnectorConnected }) =>
           trackConnectorConnected(selectedType)
@@ -560,26 +575,39 @@ const DataConnectors = () => {
         }
       );
       const syncData = await readJsonObject(res);
-      if (!res.ok || !syncData || syncData.success === false) {
+      const verifiedRecords = syncData && typeof syncData.records === "number" && Number.isFinite(syncData.records) && syncData.records >= 0
+        ? syncData.records
+        : null;
+      if (!res.ok || !syncData || syncData.success !== true || verifiedRecords === null) {
         const errors = Array.isArray(syncData?.errors)
           ? (syncData!.errors as unknown[]).map(String)
           : [
               (syncData && typeof syncData.error === "string" ? syncData.error : null) ||
-              `Initial sync could not be verified (HTTP ${res.status})`,
+              (syncData && syncData.success === true && verifiedRecords === null
+                ? "Initial sync returned no verified records count"
+                : `Initial sync could not be verified (HTTP ${res.status})`),
             ];
-        setSyncResult({ records: null, errors, status: res.ok ? "failed" : "unavailable" });
+        const status: SyncOutcome["status"] = !syncData || (res.ok && syncData.success === undefined)
+          ? "unavailable"
+          : "failed";
+        setSyncResult({ records: null, errors, status });
         setStep("done");
         return;
       }
-      setSyncResult({
-        records: typeof syncData.records === "number" ? syncData.records : null,
-        errors: Array.isArray(syncData.errors) ? (syncData.errors as unknown[]).map(String) : [],
-        status: "succeeded",
-      });
-      await supabase.from("connector_configs")
+
+      const { error: connectionStatusError } = await supabase.from("connector_configs")
         .update({ connection_status: "connected" })
         .eq("organization_id", currentOrgId)
         .eq("data_source_id", ds.id);
+      if (connectionStatusError) {
+        throw new Error(`Initial sync succeeded but connected status could not be verified: ${connectionStatusError.message}`);
+      }
+
+      setSyncResult({
+        records: verifiedRecords,
+        errors: Array.isArray(syncData.errors) ? (syncData.errors as unknown[]).map(String) : [],
+        status: "succeeded",
+      });
       setStep("done");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -1036,7 +1064,7 @@ const DataConnectors = () => {
                   </div>
                 )}
 
-                {existingConnectors && existingConnectors.length > 0 && (
+                {!loading && !inventoryError && existingConnectors && existingConnectors.length > 0 && (
                   <div className="mb-8">
                     <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Active Connections</h3>
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
