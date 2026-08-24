@@ -11,6 +11,22 @@ const hookImports = readFileSync(
   resolve(root, "supabase/functions/auth-email-hook/deno.json"),
   "utf8",
 );
+const queueWorker = readFileSync(
+  resolve(root, "supabase/functions/process-email-queue/index.ts"),
+  "utf8",
+);
+const queueWorkerImports = readFileSync(
+  resolve(root, "supabase/functions/process-email-queue/deno.json"),
+  "utf8",
+);
+const resendTransport = readFileSync(
+  resolve(root, "supabase/functions/_shared/resend.ts"),
+  "utf8",
+);
+const authEmailSetup = readFileSync(
+  resolve(root, "scripts/configure-supabase-auth-email.mjs"),
+  "utf8",
+);
 const forgotPassword = readFileSync(
   resolve(root, "src/pages/ForgotPassword.tsx"),
   "utf8",
@@ -55,6 +71,22 @@ describe("auth email delivery contract", () => {
     expect(hook).toContain(".eq('status', 'pending')");
   });
 
+  it("delivers queued mail through Resend without a Lovable runtime dependency", () => {
+    expect(queueWorker).toContain("RESEND_API_KEY");
+    expect(queueWorker).toContain("RESEND_FROM_EMAIL");
+    expect(queueWorker).toContain("sendResendEmail");
+    expect(queueWorker).toContain("provider_configuration");
+    expect(queueWorker).not.toContain("LOVABLE_API_KEY");
+    expect(queueWorker).not.toContain("LOVABLE_SEND_URL");
+    expect(queueWorker).not.toContain("sendLovableEmail");
+    expect(queueWorkerImports).not.toContain("@lovable.dev/email-js");
+
+    expect(resendTransport).toContain("https://api.resend.com/emails");
+    expect(resendTransport).toContain("Idempotency-Key");
+    expect(resendTransport).toContain("ResendDeliveryError");
+    expect(resendTransport).toContain("retry-after");
+  });
+
   it("keeps password recovery account-enumeration safe and does not claim delivery", () => {
     expect(forgotPassword).toContain("If an account exists for that email");
     expect(forgotPassword).toContain("Recovery requested for");
@@ -63,11 +95,22 @@ describe("auth email delivery contract", () => {
     expect(forgotPassword).not.toContain("Sent to{\" \"}");
   });
 
-  it("keeps staging authentication email independent of Lovable Cloud", () => {
-    expect(stagingWorkflow).toContain("Ensure Auth email is independent of Lovable Cloud");
+  it("keeps staging authentication independent when Resend credentials are absent", () => {
+    expect(stagingWorkflow).toContain("RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}");
+    expect(stagingWorkflow).toContain("RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}");
+    expect(stagingWorkflow).toContain("using Supabase hosted Auth mailer");
     expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs disable");
-    expect(stagingWorkflow).not.toContain("Rotate Auth Send Email Hook secret");
-    expect(stagingWorkflow).not.toContain("Configure and verify staging Auth email pipeline");
-    expect(stagingWorkflow).not.toContain("supabase secrets set SEND_EMAIL_HOOK_SECRET");
+    expect(stagingWorkflow).toContain("supabase secrets set \\");
+    expect(stagingWorkflow).toContain("RESEND_API_KEY=\"$RESEND_API_KEY\"");
+    expect(stagingWorkflow).toContain("SEND_EMAIL_HOOK_SECRET=\"$hook_secret\"");
+    expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs configure");
+    expect(stagingWorkflow).not.toContain("LOVABLE_API_KEY");
+  });
+
+  it("fully stops the custom email dispatcher when independent delivery is disabled", () => {
+    expect(authEmailSetup).toContain("hook_send_email_enabled: false");
+    expect(authEmailSetup).toContain("cron.unschedule(worker_job_id)");
+    expect(authEmailSetup).toContain("worker_cron_count");
+    expect(authEmailSetup).toContain("Custom Auth email hook and queue worker disabled");
   });
 });
