@@ -12,7 +12,6 @@
     "noFallthroughCasesInSwitch": false
   },
   "imports": {
-    "@lovable.dev/email-js": "npm:@lovable.dev/email-js@0.1.2",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.2"
   }
 }
