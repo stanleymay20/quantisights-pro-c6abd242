@@ -13,6 +13,9 @@ const URL = must("LOAD_SUPABASE_URL");
 const SERVICE_KEY = must("SUPABASE_SERVICE_ROLE_KEY");
 const STATE = process.env.CLIENT_ACCEPTANCE_STATE || "tests/client-acceptance/.state.json";
 const STAGING_URL = "https://cmnihsbdbpubznlkmjbc.supabase.co";
+// Resend's provider-supported test recipient simulates successful delivery
+// without sending Client Acceptance recovery mail to a real person.
+const RECOVERY_TEST_EMAIL = "delivered@resend.dev";
 
 if (TARGET !== "staging" || URL !== STAGING_URL) {
   throw new Error(`Refusing client-acceptance seeding outside approved staging (${TARGET}, ${URL})`);
@@ -40,6 +43,29 @@ async function cleanupPartial() {
   }
 }
 
+async function cleanupStaleRecoveryFixture() {
+  const perPage = 100;
+  for (let page = 1; page <= 100; page += 1) {
+    const { data, error } = await sb.auth.admin.listUsers({ page, perPage });
+    if (error) throw new Error(`Inspect stale recovery fixture: ${error.message}`);
+
+    const users = data?.users ?? [];
+    const stale = users.find((user) => user.email?.toLowerCase() === RECOVERY_TEST_EMAIL);
+    if (stale) {
+      if (stale.user_metadata?.is_client_acceptance !== true) {
+        throw new Error(`Refusing to replace non-acceptance user at ${RECOVERY_TEST_EMAIL}`);
+      }
+      const { error: deleteError } = await sb.auth.admin.deleteUser(stale.id);
+      if (deleteError) throw new Error(`Remove stale recovery fixture: ${deleteError.message}`);
+      return;
+    }
+
+    if (users.length < perPage) return;
+  }
+
+  throw new Error("Unable to prove the recovery test address is free after scanning staging Auth users");
+}
+
 async function resolveSignupOrganization(userId) {
   // auth.admin.createUser exercises the same database trigger as a real signup.
   // The trigger creates the user's canonical organization, profile and owner
@@ -59,9 +85,17 @@ async function resolveSignupOrganization(userId) {
 }
 
 try {
+  // This address is intentionally stable because Resend documents the exact
+  // mailbox as its successful-delivery test sink. Client Acceptance is
+  // serialized, and this cleanup makes a cancelled prior run recoverable
+  // without ever deleting a real staging user.
+  await cleanupStaleRecoveryFixture();
+
   for (const tier of tiers) {
     const password = randomBytes(18).toString("base64url") + "!Aa7";
-    const email = `${runTag}-${tier}@quantivis.test`;
+    const email = tier === "starter"
+      ? RECOVERY_TEST_EMAIL
+      : `${runTag}-${tier}@quantivis.test`;
     const { data: userData, error: userError } = await sb.auth.admin.createUser({
       email,
       password,

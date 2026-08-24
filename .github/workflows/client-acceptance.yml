@@ -180,10 +180,14 @@ jobs:
           set -Eeuo pipefail
           mkdir -p artifacts/authentication
           set +e
+          # Critical authentication evidence is single-attempt by design. A
+          # retry can hide a first-attempt failure and can duplicate real Auth
+          # side effects such as password-recovery email requests.
           npx playwright test e2e/auth.spec.ts \
             --config=playwright.config.ts \
             --project=chromium \
             --workers=1 \
+            --retries=0 \
             --reporter=json > artifacts/authentication/playwright.json
           rc=$?
           set -e
