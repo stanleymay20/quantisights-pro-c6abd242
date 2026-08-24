@@ -13,7 +13,9 @@ describe("Hardened data-upload cutover", () => {
 
   it("routes the compatibility export to the fail-closed implementation", () => {
     const source = read("src/pages/DataUploadHardened.tsx");
-    expect(source).toContain('status: "partial_success"');
+
+    expect(source).toContain('const finalStatus = finalFailures.length > 0 ? "partial_success" : "completed"');
+    expect(source).toContain("status: finalStatus");
     expect(source).toContain('truth_contract: "hardened_v1"');
     expect(source).toContain("Metric verification mismatch");
     expect(source).toContain('runEdgeStage("aggregates"');
