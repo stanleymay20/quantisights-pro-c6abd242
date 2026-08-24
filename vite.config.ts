@@ -4,7 +4,12 @@ import path from "path";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { componentTagger } from "lovable-tagger";
-import { resolvePublicClientConfig } from "./config/public-client-config";
+import {
+  PRODUCTION_PUBLIC_CLIENT_CONFIG,
+  STAGING_PUBLIC_CLIENT_CONFIG,
+  resolvePublicClientConfig,
+  validatePublicClientConfig,
+} from "./config/public-client-config";
 
 const packageVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version as string;
 
@@ -37,7 +42,7 @@ const deploymentId = process.env.VERCEL_DEPLOYMENT_ID
   ?? process.env.LOVABLE_DEPLOYMENT_ID
   ?? null;
 
-const releaseMetadata = {
+const baseReleaseMetadata = {
   version: packageVersion,
   gitCommit,
   buildTimestamp,
@@ -45,7 +50,7 @@ const releaseMetadata = {
   migrationVersion: "20260821230500",
 };
 
-const releaseProvenancePlugin = (): Plugin => ({
+const releaseProvenancePlugin = (releaseMetadata: Record<string, unknown>): Plugin => ({
   name: "quantivis-release-provenance",
   generateBundle() {
     this.emitFile({
@@ -59,12 +64,33 @@ const releaseProvenancePlugin = (): Plugin => ({
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, "VITE_");
+
+  // Fail-safe environment separation: only an explicit production-mode build
+  // defaults to the production Supabase project. Development, test, preview,
+  // and any custom non-production mode default to staging unless a complete
+  // VITE_SUPABASE_* pair explicitly overrides the target.
+  const defaultClientTarget = mode === "production"
+    ? PRODUCTION_PUBLIC_CLIENT_CONFIG
+    : STAGING_PUBLIC_CLIENT_CONFIG;
+
   const publicClientConfig = resolvePublicClientConfig({
     VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim(),
     VITE_SUPABASE_PUBLISHABLE_KEY:
       process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
       || env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim(),
-  });
+  }, defaultClientTarget);
+
+  const { projectRef: supabaseProjectRef } = validatePublicClientConfig(
+    publicClientConfig.supabaseUrl,
+    publicClientConfig.supabasePublishableKey,
+  );
+
+  const releaseMetadata = {
+    ...baseReleaseMetadata,
+    buildMode: mode,
+    supabaseProjectRef,
+    supabaseConfigSource: publicClientConfig.source,
+  };
 
   return ({
   server: {
@@ -74,7 +100,7 @@ export default defineConfig(({ mode }) => {
       overlay: false,
     },
   },
-  plugins: [releaseProvenancePlugin(), react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [releaseProvenancePlugin(releaseMetadata), react(), mode === "development" && componentTagger()].filter(Boolean),
   define: {
     __QUANTIVIS_RELEASE__: JSON.stringify(releaseMetadata),
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(publicClientConfig.supabaseUrl),
