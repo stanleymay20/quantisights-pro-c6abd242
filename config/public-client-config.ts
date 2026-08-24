@@ -3,9 +3,12 @@ export type PublicClientBuildEnv = {
   VITE_SUPABASE_PUBLISHABLE_KEY?: string | null;
 };
 
-export type PublicClientConfig = {
+export type PublicClientTarget = {
   supabaseUrl: string;
   supabasePublishableKey: string;
+};
+
+export type PublicClientConfig = PublicClientTarget & {
   source: "environment" | "checked-in-public-default";
 };
 
@@ -15,6 +18,11 @@ export type PublicClientConfig = {
 export const PRODUCTION_PUBLIC_CLIENT_CONFIG = Object.freeze({
   supabaseUrl: "https://izgfrekdamlgigehxoqs.supabase.co",
   supabasePublishableKey: "sb_publishable_h4JCxt31VXyaALxD-Uj1rw_y6w9_ZaY",
+});
+
+export const STAGING_PUBLIC_CLIENT_CONFIG = Object.freeze({
+  supabaseUrl: "https://cmnihsbdbpubznlkmjbc.supabase.co",
+  supabasePublishableKey: "sb_publishable_lQQB76Cc8zYj9NiD60rqPg_aeyJdnie",
 });
 
 const SUPABASE_HOST_RE = /^([a-z0-9-]+)\.supabase\.co$/i;
@@ -72,7 +80,10 @@ export const validatePublicClientConfig = (
   return { projectRef: hostMatch[1] };
 };
 
-export const resolvePublicClientConfig = (env: PublicClientBuildEnv = {}): PublicClientConfig => {
+export const resolvePublicClientConfig = (
+  env: PublicClientBuildEnv = {},
+  fallback: PublicClientTarget = PRODUCTION_PUBLIC_CLIENT_CONFIG,
+): PublicClientConfig => {
   const envUrl = env.VITE_SUPABASE_URL?.trim();
   const envKey = env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
   const hasAnyOverride = Boolean(envUrl || envKey);
@@ -83,8 +94,8 @@ export const resolvePublicClientConfig = (env: PublicClientBuildEnv = {}): Publi
     );
   }
 
-  const supabaseUrl = envUrl || PRODUCTION_PUBLIC_CLIENT_CONFIG.supabaseUrl;
-  const supabasePublishableKey = envKey || PRODUCTION_PUBLIC_CLIENT_CONFIG.supabasePublishableKey;
+  const supabaseUrl = envUrl || fallback.supabaseUrl;
+  const supabasePublishableKey = envKey || fallback.supabasePublishableKey;
 
   validatePublicClientConfig(supabaseUrl, supabasePublishableKey);
 
