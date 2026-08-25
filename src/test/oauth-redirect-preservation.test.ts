@@ -9,6 +9,10 @@ const app = readSource("src/App.tsx");
 const publicPageNav = readSource("src/components/layout/PublicPageNav.tsx");
 
 describe("OAuth redirect preservation", () => {
+  it("allows production OAuth to return to both canonical Quantivis hosts", () => {
+    expect(googleWorkflow).toContain("https://quantivis.io/**,https://www.quantivis.io/**");
+  });
+
   it("allows staging OAuth to return from stable, commit-preview, and published Lovable hosts", () => {
     expect(googleWorkflow).toContain(
       "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**",

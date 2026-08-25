@@ -23,11 +23,20 @@ describe("Google OAuth environment configuration", () => {
   it("pins staging and production to different active projects and site URLs", () => {
     expect(workflow).toContain("izgfrekdamlgigehxoqs");
     expect(workflow).toContain("cmnihsbdbpubznlkmjbc");
-    expect(workflow).toContain("https://quantivis-insights.lovable.app");
+    expect(workflow).toContain("inputs.target_environment == 'production' && 'https://quantivis.io'");
+    expect(workflow).toContain("https://quantivis.io/**,https://www.quantivis.io/**");
     expect(workflow).toContain(
       "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app",
     );
     expect(workflow).toContain("confirm_project_ref");
+  });
+
+  it("never configures the production project with a Lovable site URL", () => {
+    const productionSiteUrl = workflow.match(
+      /AUTH_SITE_URL:.*inputs\.target_environment == 'production' && '([^']+)'/,
+    );
+    expect(productionSiteUrl?.[1]).toBe("https://quantivis.io");
+    expect(productionSiteUrl?.[1]).not.toContain("lovable.app");
   });
 
   it("refuses the retired project and verifies the Management API result", () => {
