@@ -4,6 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { safeInternalNavigation } from "@/lib/safe-navigation";
 import logo from "@/assets/quantivis-logo.png";
 
+const evidenceFixtureEnabled = import.meta.env.VITE_ENABLE_AUTH_EVIDENCE_FIXTURE === "true";
+
 const consumeStoredNext = () => {
   const value = sessionStorage.getItem("quantivis_oauth_next");
   sessionStorage.removeItem("quantivis_oauth_next");
@@ -29,6 +31,45 @@ const AuthCallback = () => {
   useEffect(() => {
     let cancelled = false;
     let settled = false;
+
+    // Client Acceptance uses the real browser Supabase client to initiate a
+    // magic-link flow. This is intentionally compile-time gated: deployed
+    // staging/production builds do not set the flag, so evidence_email is
+    // ignored outside the local CI preview. Starting the flow in this browser
+    // is essential because PKCE exchange later requires its stored verifier.
+    const evidenceEmail = evidenceFixtureEnabled
+      ? searchParams.get("evidence_email")?.trim()
+      : null;
+    if (evidenceEmail) {
+      setMessage("Starting PKCE evidence flow…");
+      const redirectTo = `${window.location.origin}/auth/callback?next=/dashboard`;
+      supabase.auth.signInWithOtp({
+        email: evidenceEmail,
+        options: {
+          emailRedirectTo: redirectTo,
+          shouldCreateUser: false,
+        },
+      }).then(({ error: otpError }) => {
+        if (cancelled) return;
+        if (otpError) {
+          console.error("[AuthCallback] PKCE evidence initiation failed:", otpError.message);
+          setError(true);
+          setMessage(`PKCE evidence initiation failed: ${otpError.message}`);
+          return;
+        }
+        setMessage("PKCE evidence request queued");
+      }).catch((otpError: unknown) => {
+        if (cancelled) return;
+        const detail = otpError instanceof Error ? otpError.message : String(otpError);
+        console.error("[AuthCallback] PKCE evidence initiation failed:", detail);
+        setError(true);
+        setMessage(`PKCE evidence initiation failed: ${detail}`);
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const next = searchParams.get("next")
       ? safeInternalNavigation(searchParams.get("next"), "/onboarding")
