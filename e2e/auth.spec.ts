@@ -75,6 +75,23 @@ async function generateRecoveryLink(
   return { admin, actionLink };
 }
 
+function extractVerificationLink(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    throw new Error("Auth evidence queue returned no message object");
+  }
+
+  const record = message as Record<string, unknown>;
+  for (const field of ["html", "text"] as const) {
+    const raw = record[field];
+    if (typeof raw !== "string") continue;
+    const normalized = raw.replaceAll("&amp;", "&");
+    const match = normalized.match(/https:\/\/[^"'\s<>]+\/auth\/v1\/verify\?[^"'\s<>]+/i);
+    if (match?.[0]) return match[0];
+  }
+
+  throw new Error("Auth evidence message did not contain a Supabase verification URL");
+}
+
 async function completeRecoveryInBrowser(page: Page, actionLink: string, password: string) {
   await page.goto(actionLink);
   await page.waitForURL(/\/reset-password(?:[?#]|$)/, { timeout: 15_000 });
@@ -206,9 +223,85 @@ test.describe("Authentication Flow", () => {
   });
 
   // ------------------------------------------------------------ AUTH-004
-  test("AUTH-004 PKCE callback exchanges a real one-time authorization code", async ({ page }, testInfo) => {
-    attachAuthEvidence(page, testInfo, "AUTH-004");
-    test.skip(true, "real one-time PKCE authorization-code fixture is not wired yet; do not fake PASS with a no-code callback");
+  test("AUTH-004 PKCE callback exchanges a real one-time authorization code", async ({ page, request }, testInfo) => {
+    test.setTimeout(90_000);
+    const ev = attachAuthEvidence(page, testInfo, "AUTH-004");
+    const admin = adminClient();
+    const anonKey = process.env.LOAD_SUPABASE_ANON_KEY;
+    test.skip(!starter || !admin || !anonKey, "disposable staging user, service role and anon key are required");
+
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.evaluate(() => {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+    });
+
+    const initiatedAt = new Date(Date.now() - 3_000).toISOString();
+    await page.goto(`/auth/callback?evidence_email=${encodeURIComponent(starter!.email)}`);
+    await expect(page.getByText("PKCE evidence request queued")).toBeVisible({ timeout: 20_000 });
+
+    let queueMessage: unknown = null;
+    await expect.poll(async () => {
+      const { data, error } = await admin!.rpc("get_auth_evidence_message", {
+        p_recipient: starter!.email,
+        p_label: "magiclink",
+        p_after: initiatedAt,
+      });
+      if (error) throw error;
+      queueMessage = data;
+      return Boolean(data);
+    }, {
+      timeout: 60_000,
+      intervals: [500, 1_000, 2_000, 3_000],
+    }).toBe(true);
+
+    const verificationLink = extractVerificationLink(queueMessage);
+    const callbackRequestPromise = page.waitForRequest((candidate) => {
+      if (!candidate.isNavigationRequest()) return false;
+      const url = new URL(candidate.url());
+      return url.pathname === "/auth/callback" && Boolean(url.searchParams.get("code"));
+    }, { timeout: 20_000 });
+    const exchangeRequestPromise = page.waitForRequest((candidate) =>
+      candidate.method() === "POST" &&
+      candidate.url().includes("/auth/v1/token") &&
+      candidate.url().includes("grant_type=pkce"),
+    { timeout: 20_000 });
+
+    await page.goto(verificationLink);
+    const callbackRequest = await callbackRequestPromise;
+    const exchangeRequest = await exchangeRequestPromise;
+    const callbackUrl = new URL(callbackRequest.url());
+    const authorizationCode = callbackUrl.searchParams.get("code");
+    expect(authorizationCode).toBeTruthy();
+
+    await page.waitForURL((url) => url.pathname === "/dashboard", { timeout: 20_000 });
+    const session = await readSupabaseSession(page);
+    expect(session?.user_id).toBe(starter!.user_id);
+    ev.setSession(session, "pkce_signed_in");
+    ev.mark({ route: "/dashboard", response_status: 200 });
+
+    // Replay the exact token-exchange request, including the browser's original
+    // code_verifier. A successful second exchange would mean the authorization
+    // code was not single-use and must block release.
+    const exchangeBody = exchangeRequest.postData();
+    expect(exchangeBody).toBeTruthy();
+    const originalHeaders = exchangeRequest.headers();
+    const replayHeaders: Record<string, string> = {
+      apikey: originalHeaders.apikey || anonKey!,
+      "Content-Type": originalHeaders["content-type"] || "application/json",
+    };
+    if (originalHeaders.authorization) replayHeaders.Authorization = originalHeaders.authorization;
+    if (originalHeaders["x-client-info"]) replayHeaders["x-client-info"] = originalHeaders["x-client-info"];
+
+    const replay = await request.fetch(exchangeRequest.url(), {
+      method: "POST",
+      headers: replayHeaders,
+      data: JSON.parse(exchangeBody!),
+    });
+    expect(replay.ok()).toBeFalsy();
+    ev.note(`Real browser PKCE exchange succeeded once; exact code+verifier replay was rejected with HTTP ${replay.status()}.`);
+    await ev.finalize();
   });
 
   // ------------------------------------------------------------ AUTH-005
