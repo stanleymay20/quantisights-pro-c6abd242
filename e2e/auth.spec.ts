@@ -527,30 +527,37 @@ test.describe("Authentication Flow", () => {
   // ------------------------------------------------------------ AUTH-013
   test("AUTH-013 recovery round-trip proves new password succeeds and old password fails", async ({ page }, testInfo) => {
     const ev = attachAuthEvidence(page, testInfo, "AUTH-013");
-    test.skip(!starter || !adminClient(), "disposable staging user + service role are required");
+    const admin = adminClient();
+    test.skip(!starter || !admin, "disposable staging user + service role are required");
 
     const oldPassword = starter!.password;
     const newPassword = strongTestPassword();
     const redirectTo = `${process.env.E2E_BASE_URL || "http://127.0.0.1:4173"}/reset-password`;
     const { actionLink } = await generateRecoveryLink(starter!, redirectTo);
 
-    await completeRecoveryInBrowser(page, actionLink, newPassword);
+    try {
+      await completeRecoveryInBrowser(page, actionLink, newPassword);
 
-    await page.goto("/login");
-    await page.getByLabel(/email/i).first().fill(starter!.email);
-    await page.getByLabel(/password/i).first().fill(oldPassword);
-    await page.getByRole("button", { name: /sign in securely|sign in|log in/i }).first().click();
-    await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
-    await expect(page.getByText(/invalid login credentials/i).first()).toBeVisible({ timeout: 10_000 });
+      await page.goto("/login");
+      await page.getByLabel(/email/i).first().fill(starter!.email);
+      await page.getByLabel(/password/i).first().fill(oldPassword);
+      await page.getByRole("button", { name: /sign in securely|sign in|log in/i }).first().click();
+      await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
+      await expect(page.getByText(/invalid login credentials/i).first()).toBeVisible({ timeout: 10_000 });
 
-    await signIn(page, { ...starter!, password: newPassword });
-    const session = await readSupabaseSession(page);
-    expect(session?.user_id).toBe(starter!.user_id);
-    starter!.password = newPassword;
-    ev.setSession(session, "recovered_fresh_login");
-    ev.note("Old credentials failed after recovery; a fresh login with the replacement password succeeded for the same user id.");
-    ev.mark({ route: new URL(page.url()).pathname });
-    await ev.finalize();
+      await signIn(page, { ...starter!, password: newPassword });
+      const session = await readSupabaseSession(page);
+      expect(session?.user_id).toBe(starter!.user_id);
+      ev.setSession(session, "recovered_fresh_login");
+      ev.note("Old credentials failed after recovery; a fresh login with the replacement password succeeded for the same user id.");
+      ev.mark({ route: new URL(page.url()).pathname });
+    } finally {
+      if (starter!.user_id) {
+        const { error } = await admin!.auth.admin.updateUserById(starter!.user_id, { password: oldPassword });
+        expect(error).toBeNull();
+      }
+      await ev.finalize();
+    }
   });
 
   // ------------------------------------------------------------ AUTH-014

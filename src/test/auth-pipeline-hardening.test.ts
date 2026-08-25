@@ -11,6 +11,7 @@ const authContext = readSource("src/contexts/AuthContext.tsx");
 const sessionTimeout = readSource("src/components/auth/SessionTimeout.tsx");
 const resetPassword = readSource("src/pages/ResetPassword.tsx");
 const authEvidence = readSource("e2e/lib/auth-evidence.ts");
+const authAcceptance = readSource("e2e/auth.spec.ts");
 const login = readSource("src/pages/Login.tsx");
 
 describe("authentication pipeline production safety", () => {
@@ -76,6 +77,17 @@ describe("authentication pipeline production safety", () => {
     expect(authEvidence).toContain("sanitizedUrl(frame.url())");
     expect(authEvidence).toContain("`${url.origin}${url.pathname}`");
     expect(authEvidence).not.toContain("sidecar.redirect_chain.push(frame.url())");
+  });
+
+  it("restores the shared acceptance credential after recovery testing", () => {
+    const recoveryRoundTrip = authAcceptance.slice(
+      authAcceptance.indexOf('test("AUTH-013'),
+      authAcceptance.indexOf("// ------------------------------------------------------------ AUTH-014"),
+    );
+    expect(recoveryRoundTrip).toContain("try {");
+    expect(recoveryRoundTrip).toContain("finally {");
+    expect(recoveryRoundTrip).toContain("updateUserById(starter!.user_id, { password: oldPassword })");
+    expect(recoveryRoundTrip).not.toContain("starter!.password = newPassword");
   });
 
   it("does not downgrade an unavailable SSO policy to password login", () => {
