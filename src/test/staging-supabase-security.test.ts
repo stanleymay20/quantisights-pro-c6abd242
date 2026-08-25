@@ -6,6 +6,13 @@ const root = resolve(__dirname, "../..");
 const migrationPath =
   "supabase/migrations/20260813153935_harden_public_function_execute.sql";
 const migration = readFileSync(resolve(root, migrationPath), "utf8");
+const recentDefinerHardening = readFileSync(
+  resolve(
+    root,
+    "supabase/migrations/20260825211500_harden_recent_security_definer_execute.sql",
+  ),
+  "utf8",
+);
 const stagingWorkflow = readFileSync(
   resolve(root, ".github/workflows/deploy-supabase-staging.yml"),
   "utf8",
@@ -58,6 +65,32 @@ describe("staging Supabase security remediation", () => {
         new RegExp(
           `REVOKE EXECUTE ON FUNCTION public\\.${functionName}\\(\\)\\s+FROM PUBLIC, anon, authenticated`,
         ),
+      );
+    }
+  });
+
+  it("removes legacy anonymous grants from recently added privileged functions", () => {
+    for (const functionName of [
+      "get_decision_value_summary",
+      "list_execution_action_receipts",
+      "list_execution_compensation_requests",
+      "reconcile_execution_action_receipt",
+      "record_decision_value_attribution",
+      "request_execution_compensation",
+      "review_execution_compensation",
+    ]) {
+      expect(recentDefinerHardening).toMatch(
+        new RegExp(
+          `REVOKE ALL ON FUNCTION public\\.${functionName}\\([^;]+?\\)\\s+FROM PUBLIC, anon`,
+        ),
+      );
+    }
+    for (const triggerFunction of [
+      "augment_executive_brief_decision_value",
+      "sync_aicis_decision_value_attribution",
+    ]) {
+      expect(recentDefinerHardening).toContain(
+        `REVOKE ALL ON FUNCTION public.${triggerFunction}()\n  FROM PUBLIC, anon, authenticated, service_role`,
       );
     }
   });
