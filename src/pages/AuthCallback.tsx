@@ -4,7 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { safeInternalNavigation } from "@/lib/safe-navigation";
 import logo from "@/assets/quantivis-logo.png";
 
-const evidenceFixtureEnabled = import.meta.env.VITE_ENABLE_AUTH_EVIDENCE_FIXTURE === "true";
+const isLocalEvidenceHost = () =>
+  window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
 
 const consumeStoredNext = () => {
   const value = sessionStorage.getItem("quantivis_oauth_next");
@@ -32,12 +33,12 @@ const AuthCallback = () => {
     let cancelled = false;
     let settled = false;
 
-    // Client Acceptance uses the real browser Supabase client to initiate a
-    // magic-link flow. This is intentionally compile-time gated: deployed
-    // staging/production builds do not set the flag, so evidence_email is
-    // ignored outside the local CI preview. Starting the flow in this browser
-    // is essential because PKCE exchange later requires its stored verifier.
-    const evidenceEmail = evidenceFixtureEnabled
+    // Client Acceptance runs against a localhost preview backed by the real
+    // staging Supabase project. Only that local browser may use evidence_email
+    // to initiate a magic-link flow. Public staging/production hosts ignore the
+    // parameter entirely. Starting the flow in the browser is essential: PKCE
+    // exchange later requires the verifier stored by this exact client.
+    const evidenceEmail = isLocalEvidenceHost()
       ? searchParams.get("evidence_email")?.trim()
       : null;
     if (evidenceEmail) {
