@@ -40,14 +40,35 @@ const ResetPassword = () => {
       }
     });
 
-    // The URL fragment alone is not authorization to update a password. Wait
-    // until supabase-js has exchanged it for a recovery session so a fast user
-    // cannot submit while updateUser would still fail with a missing session.
-    void supabase.auth.getSession().then(({ data }) => {
+    void (async () => {
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const isRecoveryCallback = hash.get("type") === "recovery";
+
+      // Admin-generated and legacy recovery links carry a short-lived signed
+      // session in the fragment. A PKCE-configured client does not always
+      // consume that callback automatically, so establish the session before
+      // enabling the form and immediately remove credentials from the URL.
+      if (isRecoveryCallback) {
+        const accessToken = hash.get("access_token");
+        const refreshToken = hash.get("refresh_token");
+        if (accessToken && refreshToken) {
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+          if (!mounted) return;
+          setIsRecovery(!error && Boolean(data.session));
+          setIsCheckingRecovery(false);
+          return;
+        }
+      }
+
+      const { data } = await supabase.auth.getSession();
       if (!mounted) return;
-      setIsRecovery(window.location.hash.includes("type=recovery") && Boolean(data.session));
+      setIsRecovery(isRecoveryCallback && Boolean(data.session));
       setIsCheckingRecovery(false);
-    });
+    })();
 
     return () => {
       mounted = false;

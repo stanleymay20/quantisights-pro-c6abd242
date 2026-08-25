@@ -46,6 +46,15 @@ const IGNORED_CONSOLE = [
   /\[HMR\]/i,
 ];
 
+function sanitizedUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "[redacted-url]";
+  }
+}
+
 export function attachAuthEvidence(page: Page, testInfo: TestInfo, controlId: string): AuthEvidenceHandle {
   testInfo.annotations.push({ type: "auth-control", description: controlId });
 
@@ -67,7 +76,7 @@ export function attachAuthEvidence(page: Page, testInfo: TestInfo, controlId: st
     const loc = msg.location();
     sidecar.console_errors.push({
       message: text,
-      location: loc?.url ? `${loc.url}:${loc.lineNumber}:${loc.columnNumber}` : undefined,
+      location: loc?.url ? `${sanitizedUrl(loc.url)}:${loc.lineNumber}:${loc.columnNumber}` : undefined,
     });
   });
 
@@ -79,13 +88,13 @@ export function attachAuthEvidence(page: Page, testInfo: TestInfo, controlId: st
     const status = res.status();
     const url = res.url();
     if (status >= 400) {
-      sidecar.network_failures.push({ url, status, method: res.request().method() });
+      sidecar.network_failures.push({ url: sanitizedUrl(url), status, method: res.request().method() });
     }
   });
 
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) {
-      sidecar.redirect_chain.push(frame.url());
+      sidecar.redirect_chain.push(sanitizedUrl(frame.url()));
     }
   });
 

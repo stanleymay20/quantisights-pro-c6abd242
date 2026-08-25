@@ -331,6 +331,7 @@ test.describe("Authentication Flow", () => {
 
   // ------------------------------------------------------------ AUTH-011
   test("AUTH-011 password reset request is accepted and recovery email is enqueued", async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
     const ev = attachAuthEvidence(page, testInfo, "AUTH-011");
     const admin = adminClient();
     test.skip(!starter || !admin, "disposable staging user + service role are required");

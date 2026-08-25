@@ -10,6 +10,7 @@ const mfaChallenge = readSource("src/components/auth/MFAChallenge.tsx");
 const authContext = readSource("src/contexts/AuthContext.tsx");
 const sessionTimeout = readSource("src/components/auth/SessionTimeout.tsx");
 const resetPassword = readSource("src/pages/ResetPassword.tsx");
+const authEvidence = readSource("e2e/lib/auth-evidence.ts");
 const login = readSource("src/pages/Login.tsx");
 
 describe("authentication pipeline production safety", () => {
@@ -64,8 +65,17 @@ describe("authentication pipeline production safety", () => {
     expect(resetPassword).toContain('supabase.auth.signOut({ scope: "local" })');
     expect(resetPassword).toContain('navigate("/login", { replace: true })');
     expect(resetPassword).toContain("isCheckingRecovery");
-    expect(resetPassword).toContain('window.location.hash.includes("type=recovery") && Boolean(data.session)');
+    expect(resetPassword).toContain('hash.get("type") === "recovery"');
+    expect(resetPassword).toContain("supabase.auth.setSession({");
+    expect(resetPassword).toContain("window.history.replaceState");
     expect(resetPassword).not.toContain('label: "At least 8 characters"');
+  });
+
+  it("removes credentials from recovery URLs and authentication evidence", () => {
+    expect(resetPassword).toContain("window.history.replaceState");
+    expect(authEvidence).toContain("sanitizedUrl(frame.url())");
+    expect(authEvidence).toContain("`${url.origin}${url.pathname}`");
+    expect(authEvidence).not.toContain("sidecar.redirect_chain.push(frame.url())");
   });
 
   it("does not downgrade an unavailable SSO policy to password login", () => {
