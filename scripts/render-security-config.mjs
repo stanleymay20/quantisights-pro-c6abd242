@@ -6,7 +6,7 @@ import {
 } from "../config/security-policy.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const files = ["public/_headers", "public/_worker.js", "vercel.json"];
+const files = ["public/_headers", "public/_worker.js", "netlify.toml", "vercel.json"];
 const requiredMarkers = [
   ...POSTHOG_SCRIPT_ORIGINS,
   ...OBSERVABILITY_CONNECT_ORIGINS,

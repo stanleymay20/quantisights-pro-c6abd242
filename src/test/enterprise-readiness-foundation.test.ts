@@ -49,6 +49,7 @@ describe("enterprise readiness foundation", () => {
     const policies = [
       read("public/_headers"),
       read("public/_worker.js"),
+      read("netlify.toml"),
       read("vercel.json"),
     ];
 
@@ -62,10 +63,20 @@ describe("enterprise readiness foundation", () => {
 
   it("defines separate standard and embed framing policies", () => {
     const worker = read("public/_worker.js");
+    const netlify = read("netlify.toml");
 
     expect(worker).toContain("frame-ancestors 'none'");
     expect(worker).toContain("EMBED_ALLOWED_ORIGINS");
     expect(worker).toMatch(/pathname.*\/embed/s);
+    expect(netlify.indexOf('for = "/embed"')).toBeLessThan(
+      netlify.indexOf('for = "/*"'),
+    );
+    const netlifyEmbedPolicy = netlify.slice(
+      netlify.indexOf('for = "/embed"'),
+      netlify.indexOf('for = "/*"'),
+    );
+    expect(netlifyEmbedPolicy).toContain("frame-ancestors https:");
+    expect(netlifyEmbedPolicy).not.toContain("X-Frame-Options");
   });
 
   it("does not frame-block OAuth broker and callback routes", async () => {
