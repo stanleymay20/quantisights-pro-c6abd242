@@ -166,3 +166,9 @@ jobs:
             SEND_EMAIL_HOOK_SECRET="$hook_secret" \
             --project-ref "$SUPABASE_PROJECT_REF"
           node scripts/configure-supabase-auth-email.mjs configure
+
+          # Client Acceptance deliberately exercises a real recovery email. The
+          # staging project therefore gets a bounded, staging-only hourly email
+          # allowance high enough for repeated certification runs. Production
+          # configuration is never touched by this script.
+          node scripts/configure-staging-auth-rate-limits.mjs
