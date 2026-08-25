@@ -63,20 +63,14 @@ describe("enterprise readiness foundation", () => {
 
   it("defines separate standard and embed framing policies", () => {
     const worker = read("public/_worker.js");
-    const netlify = read("netlify.toml");
+    const netlifyEmbedHeaders = read("netlify/edge-functions/embed-headers.ts");
 
     expect(worker).toContain("frame-ancestors 'none'");
     expect(worker).toContain("EMBED_ALLOWED_ORIGINS");
     expect(worker).toMatch(/pathname.*\/embed/s);
-    expect(netlify.indexOf('for = "/embed"')).toBeLessThan(
-      netlify.indexOf('for = "/*"'),
-    );
-    const netlifyEmbedPolicy = netlify.slice(
-      netlify.indexOf('for = "/embed"'),
-      netlify.indexOf('for = "/*"'),
-    );
-    expect(netlifyEmbedPolicy).toContain("frame-ancestors https:");
-    expect(netlifyEmbedPolicy).not.toContain("X-Frame-Options");
+    expect(netlifyEmbedHeaders).toContain('path: ["/embed", "/embed/*"]');
+    expect(netlifyEmbedHeaders).toContain('"frame-ancestors https:"');
+    expect(netlifyEmbedHeaders).toContain('headers.delete("X-Frame-Options")');
   });
 
   it("does not frame-block OAuth broker and callback routes", async () => {
