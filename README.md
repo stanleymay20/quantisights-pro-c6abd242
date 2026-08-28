@@ -1,26 +1,39 @@
 # Quantivis
 
-Enterprise Decision Intelligence Platform
+**Enterprise Decision Intelligence Platform**
 
 **Website:** https://www.quantivis.io
 
-Quantivis is an AI-powered decision intelligence platform that transforms raw business data into executive insights, operational intelligence, forecasts, risk analysis, and decision support.
+Quantivis is an AI-powered decision-intelligence platform that transforms raw business data into executive insights, operational intelligence, forecasts, risk analysis and decision support.
+
+## Data & analytics engineering evidence
+
+For data and analytics roles, this repository demonstrates hands-on work across the path from raw data to decision-ready outputs:
+
+- **PostgreSQL / SQL** — database migrations, functions/RPCs, metric-processing and persistence workflows.
+- **Data ingestion** — CSV and multi-metric business datasets with schema, date, region, dimension and metric detection.
+- **Data quality** — validation, dataset diagnostics, quality scoring and ingestion hardening.
+- **Analytics** — KPI dashboards, revenue and margin analysis, operational trends, forecasting and executive reporting.
+- **Production data systems** — Supabase/PostgreSQL backend, authentication, multi-tenant application workflows and edge functions.
+- **Decision support** — turning analytical results into structured insights and recommendations rather than displaying charts alone.
+
+This is a production-oriented product codebase rather than a standalone classroom notebook, so the emphasis includes reliability, security, data contracts and maintainability alongside analytics.
 
 ## Vision
 
-Quantivis helps executives, operators, analysts, founders, governments, and enterprises move from:
+Quantivis helps executives, operators, analysts, founders, governments and enterprises move from:
 
 ```text
-Raw Data → Intelligence → Decisions → Outcomes
+Raw Data → Validated Data → Intelligence → Decisions → Outcomes
 ```
 
-The platform is designed to ingest messy real-world datasets and automatically generate actionable business intelligence.
+The platform is designed to ingest messy real-world datasets and turn them into usable business intelligence while making data quality and uncertainty visible.
 
 ---
 
-# Core Capabilities
+## Core capabilities
 
-## Data Ingestion
+### Data ingestion
 
 Supported today:
 
@@ -30,9 +43,9 @@ Supported today:
 - Manufacturing datasets
 - Revenue datasets
 - Operational datasets
-- KPI dashboards
+- KPI-oriented datasets
 
-Current ingestion engine includes:
+Current ingestion capabilities include:
 
 - Automatic schema inference
 - Metric detection
@@ -45,36 +58,34 @@ Current ingestion engine includes:
 
 Additional hardening in progress:
 
-- Excel support (.xlsx)
+- Excel support (`.xlsx`)
 - Multi-sheet imports
 - European number parsing
 - Excel serial dates
-- Large dataset streaming
+- Large-dataset streaming
 - PII detection
 - Dataset health scoring
 
 ---
 
-# Decision Intelligence Engine
+## Decision Intelligence Engine
 
-Quantivis is designed around executive decision support.
-
-Examples:
+Example analytical use cases include:
 
 - Revenue analysis
-- Margin optimization
+- Margin optimisation
 - Operational bottleneck detection
-- Supplier risk analysis
-- Customer trend analysis
+- Supplier-risk analysis
+- Customer-trend analysis
 - Forecasting
 - Executive reporting
 - Strategic planning
 
 ---
 
-# Technology Stack
+## Technology stack
 
-Frontend
+### Frontend
 
 - React
 - TypeScript
@@ -82,46 +93,46 @@ Frontend
 - Tailwind CSS
 - shadcn/ui
 
-Backend
+### Backend / data
 
 - Supabase
-- PostgreSQL
+- PostgreSQL / SQL
 - Edge Functions
 - Authentication
 - Google OAuth
 
-AI Layer
+### Intelligence layer
 
 - Decision Intelligence Engine
 - Data Profiling Engine
 - Executive Insight Generation
-- Forecasting & Recommendation Systems
+- Forecasting and Recommendation Systems
 
 ---
 
-# Development
+## Development
 
-## Install
+### Install
 
 ```bash
-git clone https://github.com/stanleymay20/quantisights-pro-ff2bbabf.git
-cd quantisights-pro-ff2bbabf
+git clone https://github.com/stanleymay20/quantisights-pro-c6abd242.git
+cd quantisights-pro-c6abd242
 npm install
 ```
 
-## Run Locally
+### Run locally
 
 ```bash
 npm run dev
 ```
 
-## Build
+### Build
 
 ```bash
 npm run build
 ```
 
-## Preview Production Build
+### Preview production build
 
 ```bash
 npm run preview
@@ -129,46 +140,48 @@ npm run preview
 
 ---
 
-# Authentication
+## Authentication
 
-Supported authentication methods:
+Supported authentication methods include:
 
-- Email / Password
+- Email / password
 - Google OAuth
-- MFA (where enabled)
-- SSO/SAML (enterprise)
-- Passkeys (future roadmap)
+- MFA where enabled
+- SSO/SAML for enterprise workflows
+
+Future roadmap items are kept separate from currently supported capabilities.
 
 ---
 
-# Enterprise Readiness Roadmap
+## Enterprise-readiness roadmap
 
-High-priority initiatives:
+High-priority initiatives include:
 
-1. Enterprise data ingestion hardening
+1. Enterprise data-ingestion hardening
 2. Dataset health scoring
-3. XLSX ingestion engine
-4. Data lineage tracking
-5. Executive reporting automation
-6. Forecasting engine
+3. XLSX ingestion
+4. Data-lineage tracking
+5. Executive-reporting automation
+6. Forecasting improvements
 7. Decision ledger
 8. Governance and audit controls
 
 ---
 
-# Repository Goals
+## Repository goals
 
-This repository serves as the production codebase for Quantivis and is focused on:
+This repository is focused on:
 
 - Enterprise-grade reliability
 - Secure authentication
 - High-quality data ingestion
+- Data-quality visibility
 - Executive intelligence workflows
-- AI-powered decision support
+- AI-assisted decision support
 - Production deployment readiness
 
 ---
 
-# License
+## License
 
 Proprietary © Quantivis. All rights reserved.
