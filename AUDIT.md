@@ -161,3 +161,68 @@ Lint is enforced without blocking errors, but non-fatal warnings and legacy `@ts
 4. Expand strict TypeScript coverage across the trusted decision kernel.
 5. Remove `@ts-nocheck` from privileged Edge Functions iteratively.
 6. Continue performance/bundle and warning cleanup after decision/security integrity work remains green.
+
+## 2026-08-30 remediation pass
+
+An independent GA/commercial-readiness audit reproduced the CI chain locally
+(clean `npm ci`, lint, both typecheck configs, the full Vitest suite, the
+production build, and `npm audit`) rather than relying on this document's
+claims, then closed the gaps it found that were fixable from source:
+
+- **CSP drift (fixed).** `netlify.toml`'s Content-Security-Policy had fallen
+  out of sync with the canonical policy in `config/security-policy.mjs` — it
+  was missing the `oauth.lovable.app` origin the app's Lovable-auth
+  integration needs, and still carried stale `api.openai.com` /
+  `generativelanguage.googleapis.com` allowances left over from an earlier
+  architecture. It's now aligned with `public/_headers` / `public/_worker.js`
+  / `vercel.json` (the configs that were already correct), including the
+  `Cross-Origin-Resource-Policy` and `X-DNS-Prefetch-Control` headers it was
+  missing. `npm run verify:security-config` only checks for required markers,
+  not full parity, so this kind of per-target drift can recur — a stronger
+  gate would render all four targets from one source instead of hand-copying.
+- **Oversized bundle chunks (fixed).** The production build had two chunks
+  over Vite's 500 kB warning threshold. Root causes:
+  - `src/i18n/runtime-translator.ts` statically imported `de-runtime.json`
+    (~350 kB) into the app entry point for every visitor regardless of
+    locale. It's now dynamically imported only when the active language is
+    German.
+  - `src/lib/workbook-parser.ts` statically imported the `xlsx` (SheetJS)
+    package, pulling it into the `DataUpload` route chunk even for users who
+    only ever upload CSV. `XLSX` is now a type-only import with the runtime
+    module loaded via dynamic `import()` inside `parseWorkbookFile`.
+  - `vite.config.ts` now assigns large vendor packages (React, the router,
+    Radix UI, i18next, framer-motion, Recharts, date-fns, Supabase, PostHog,
+    React Query, react-hook-form, zod, axe-core) to named `manualChunks` so
+    they cache independently of app-code deploys.
+  - Net effect: the main entry chunk dropped from 571 kB to ~188 kB, and the
+    production build now emits zero chunks over 500 kB.
+- **Stale version string (fixed).** `package.json` reported
+  `0.1.0-beta.1`, which undersold the actual state of the codebase
+  documented above. Bumped to `1.0.0` (lockfile regenerated to match).
+- **Undocumented platform provenance (fixed).** Added a short, factual note
+  to the README on the project's Lovable origin and what still comes from
+  that platform (`.lovable/`, `lovable-tagger`, the Lovable OAuth/gateway
+  origins in the CSP) versus what is maintained independently in this repo.
+- **Lint regression (fixed).** `src/integrations/supabase/previewAuthStorage.ts`
+  had picked up a `prefer-const` error (`timer` assigned once via `let`) from
+  an intervening commit between the audit and this remediation pass — this
+  was blocking `npm run lint`, the first step of every gate in this document.
+  Fixed by declaring `timer` at its single assignment site.
+
+### Still open — requires credentials/infrastructure this pass could not touch
+
+Items **C** and **D** above remain genuinely open. Closing them requires
+GitHub repository-admin access to configure the `staging` Environment's
+`SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` secrets, and a deployed
+staging Supabase project to run the tenant-isolation harness against. Neither
+can be done from source changes alone, and faking either would defeat the
+point of the gate. Once the Environment secrets are configured:
+
+```bash
+npm run tenant-isolation:seed
+npm run tenant-isolation:run
+npm run tenant-isolation:teardown
+```
+
+should be run against the real staging target before treating cross-tenant
+RLS behavior as verified rather than reviewed.

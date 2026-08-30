@@ -14,7 +14,9 @@
 //   • Excel serial dates are emitted as ISO yyyy-mm-dd strings so messy-data
 //     guards do not have to re-detect them.
 
-import * as XLSX from "xlsx";
+// SheetJS is loaded on demand (see parseWorkbookFile) so CSV-only uploads
+// never pay for it — it is the single largest dependency of this page.
+import type * as XLSX from "xlsx";
 import { deduplicateHeaders, normalizeCell } from "./messy-data-guards";
 
 export interface WorkbookSheet {
@@ -121,6 +123,7 @@ export async function parseWorkbookFile(
         ? await (input as File).arrayBuffer()
         : await new Response(input as Blob).arrayBuffer();
   const resolvedName = fileName ?? (input instanceof ArrayBuffer ? "workbook.xlsx" : (input as File).name);
+  const XLSX = await import("xlsx");
   const workbook = XLSX.read(buffer, {
     type: "array",
     cellDates: true,
