@@ -17,8 +17,6 @@
  *  - Also translates common English `placeholder`, `aria-label`, and `title`
  *    attributes on form controls / buttons.
  */
-import deRuntime from "./de-runtime.json";
-
 type Dict = Record<string, string>;
 
 const NON_TRANSLATABLE_TAGS = new Set([
@@ -217,13 +215,17 @@ export function applyRuntimeLocale(lang: string) {
   if (typeof document === "undefined") return;
   const primary = (lang || "en").split("-")[0].toLowerCase();
   if (primary === "de") {
-    const dict = buildDict(deRuntime as Dict);
-    // Defer to next microtask so React has flushed initial render.
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", () => start(dict), { once: true });
-    } else {
-      queueMicrotask(() => start(dict));
-    }
+    // Loaded on demand: this dictionary is ~350kB and only German-locale
+    // sessions need it.
+    import("./de-runtime.json").then(({ default: deRuntime }) => {
+      const dict = buildDict(deRuntime as Dict);
+      // Defer to next microtask so React has flushed initial render.
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => start(dict), { once: true });
+      } else {
+        queueMicrotask(() => start(dict));
+      }
+    });
   } else {
     stop();
     // Note: we do NOT reverse-translate on switch back; a full reload restores

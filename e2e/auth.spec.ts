@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Response } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -171,6 +171,40 @@ async function mutateStoredAuth(
 
 const starter = fixtureFor("starter");
 const enterprise = fixtureFor("enterprise") ?? starter;
+
+async function submitPasswordReset(page: Page, email: string): Promise<Response> {
+  await page.goto("/forgot-password");
+  await page.getByLabel(/email/i).first().fill(email);
+  const recoverResponse = page.waitForResponse(
+    (response) => response.url().includes("/auth/v1/recover") && response.request().method() === "POST",
+    { timeout: 15_000 },
+  );
+  await page.getByRole("button", { name: /send|reset/i }).first().click();
+  return recoverResponse;
+}
+
+async function parseAuthErrorBody(
+  response: Response,
+  redactEmail: string,
+): Promise<{ code: string; message: string }> {
+  try {
+    const responseText = await response.text();
+    if (!responseText) return { code: "unknown", message: "" };
+    try {
+      const payload = JSON.parse(responseText) as Record<string, unknown>;
+      return {
+        code: String(payload.code ?? payload.error_code ?? payload.error ?? "unknown").slice(0, 80),
+        message: String(payload.message ?? payload.msg ?? payload.error_description ?? "")
+          .replaceAll(redactEmail, "[redacted-email]")
+          .slice(0, 180),
+      };
+    } catch {
+      return { code: "non_json_response", message: "" };
+    }
+  } catch {
+    return { code: "unreadable_response", message: "" };
+  }
+}
 
 test.describe("Authentication Flow", () => {
   // ------------------------------------------------------------ AUTH-001
@@ -424,7 +458,7 @@ test.describe("Authentication Flow", () => {
 
   // ------------------------------------------------------------ AUTH-011
   test("AUTH-011 password reset request is accepted and recovery email is enqueued", async ({ page }, testInfo) => {
-    test.setTimeout(90_000);
+    test.setTimeout(180_000);
     const ev = attachAuthEvidence(page, testInfo, "AUTH-011");
     const admin = adminClient();
     test.skip(!starter || !admin, "disposable staging user + service role are required");
@@ -436,33 +470,23 @@ test.describe("Authentication Flow", () => {
       .eq("template_name", "recovery");
     expect(beforeError).toBeNull();
 
-    await page.goto("/forgot-password");
-    await page.getByLabel(/email/i).first().fill(starter!.email);
-    const recoverResponse = page.waitForResponse(
-      (response) => response.url().includes("/auth/v1/recover") && response.request().method() === "POST",
-      { timeout: 15_000 },
-    );
-    await page.getByRole("button", { name: /send|reset/i }).first().click();
-    const response = await recoverResponse;
-    const responseStatus = response.status();
-    let responseCode = "unknown";
-    let responseMessage = "";
+    let response = await submitPasswordReset(page, starter!.email);
+    let responseStatus = response.status();
+    let { code: responseCode, message: responseMessage } = await parseAuthErrorBody(response, starter!.email);
 
-    try {
-      const responseText = await response.text();
-      if (responseText) {
-        try {
-          const payload = JSON.parse(responseText) as Record<string, unknown>;
-          responseCode = String(payload.code ?? payload.error_code ?? payload.error ?? "unknown").slice(0, 80);
-          responseMessage = String(payload.message ?? payload.msg ?? payload.error_description ?? "")
-            .replaceAll(starter!.email, "[redacted-email]")
-            .slice(0, 180);
-        } catch {
-          responseCode = "non_json_response";
-        }
-      }
-    } catch {
-      responseCode = "unreadable_response";
+    // Supabase Auth enforces a short cooldown between consecutive
+    // email-triggering auth requests to the same address. AUTH-004 sends a
+    // magic link to this same disposable identity moments earlier in this
+    // suite, so this request can legitimately land inside that cooldown.
+    // Wait it out once and retry rather than treating the documented,
+    // security-motivated 429 as a real failure.
+    if (responseStatus === 429 && responseCode === "over_email_send_rate_limit") {
+      const waitSeconds = Number(responseMessage.match(/after (\d+) seconds/i)?.[1]) || 60;
+      ev.note(`Recovery request hit the email-send cooldown (${responseMessage || "no message"}); waiting ${waitSeconds}s and retrying once.`);
+      await page.waitForTimeout((waitSeconds + 2) * 1000);
+      response = await submitPasswordReset(page, starter!.email);
+      responseStatus = response.status();
+      ({ code: responseCode, message: responseMessage } = await parseAuthErrorBody(response, starter!.email));
     }
 
     ev.mark({ route: "/forgot-password", response_status: responseStatus });

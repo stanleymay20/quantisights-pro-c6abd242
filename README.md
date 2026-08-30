@@ -140,6 +140,18 @@ npm run preview
 
 ---
 
+## Platform provenance
+
+The project originated on [Lovable](https://lovable.dev) and keeps Lovable's
+preview/editor integration (`.lovable/`, the `lovable-tagger` dev dependency,
+and the `oauth.lovable.app` / `ai.gateway.lovable.dev` origins in the security
+policy) for that workflow. Production hosting, CI, release gates, database
+migrations, RLS policies, and the application/test code itself are maintained
+independently in this repository — see `AUDIT.md` for the current release-quality
+baseline and `.github/workflows/` for the enforced CI/CD pipeline.
+
+---
+
 ## Authentication
 
 Supported authentication methods include:
