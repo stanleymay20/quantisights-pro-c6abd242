@@ -181,7 +181,7 @@ describe("TC-1 Enterprise Trust Center — data model", () => {
 
   it("reports immutable release metadata without claiming an unverified deployment", () => {
     const overview = getPlatformOverview();
-    expect(overview.version).toBe("0.1.0-beta.1");
+    expect(overview.version).toBe("1.0.0");
     expect(overview.environment.length).toBeGreaterThan(0);
     expect(overview.buildTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(overview.gitCommit).toMatch(/^[a-f0-9]{40}$/);

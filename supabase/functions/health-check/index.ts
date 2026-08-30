@@ -24,7 +24,7 @@ const SLO = {
 };
 
 const RELEASE = {
-  app_version: Deno.env.get("QUANTIVIS_RELEASE_VERSION") ?? "0.1.0-beta.1",
+  app_version: Deno.env.get("QUANTIVIS_RELEASE_VERSION") ?? "1.0.0",
   edge_deployment_id: Deno.env.get("DENO_DEPLOYMENT_ID") ?? null,
   region: Deno.env.get("SB_REGION") ?? null,
   migration_version: "20260806044412",

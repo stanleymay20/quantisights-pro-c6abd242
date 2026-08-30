@@ -112,7 +112,7 @@ describe("release provenance and CSP release gates", () => {
     expect(vite).toContain("const resolveGitCommit");
     expect(vite).toContain('return "unknown"');
     expect(vite).toContain('stdio: ["ignore", "pipe", "ignore"]');
-    expect(JSON.parse(read("package.json")).version).toBe("0.1.0-beta.1");
+    expect(JSON.parse(read("package.json")).version).toBe("1.0.0");
     const health = read("supabase/functions/health-check/index.ts");
     expect(health).toContain("DENO_DEPLOYMENT_ID");
     expect(health).toContain("migration_version");
