@@ -209,20 +209,72 @@ claims, then closed the gaps it found that were fixable from source:
   was blocking `npm run lint`, the first step of every gate in this document.
   Fixed by declaring `timer` at its single assignment site.
 
-### Still open — requires credentials/infrastructure this pass could not touch
+### Correction: items C and D were already resolved
 
-Items **C** and **D** above remain genuinely open. Closing them requires
-GitHub repository-admin access to configure the `staging` Environment's
-`SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` secrets, and a deployed
-staging Supabase project to run the tenant-isolation harness against. Neither
-can be done from source changes alone, and faking either would defeat the
-point of the gate. Once the Environment secrets are configured:
+The paragraph above (and item **C**/**D** earlier in this document) claimed
+the `staging` GitHub Environment secrets were unconfigured. That was stale.
+Checked directly against GitHub Actions run history: `Deploy Supabase
+Staging` and `GA Staging Validation` (which runs the real tenant-isolation
+harness against the live staging Supabase project) have both been
+succeeding regularly for days. Cross-tenant RLS behavior has in fact been
+verified against staging, repeatedly, not merely reviewed. Do not re-flag
+these as configuration gaps without checking current run history first.
 
-```bash
-npm run tenant-isolation:seed
-npm run tenant-isolation:run
-npm run tenant-isolation:teardown
-```
+## 2026-08-30 remediation pass — Client Acceptance authentication gate
 
-should be run against the real staging target before treating cross-tenant
-RLS behavior as verified rather than reviewed.
+`Client Acceptance` — the gate between `GA Staging Validation` and `GA
+Readiness` — has been failing on every run for days, always on the
+authentication evidence controls (AUTH-004, AUTH-011, AUTH-013), which
+blocked `GA Readiness` from ever completing and blocked real GA
+certification for any commit. Root-caused directly against the live
+staging project rather than guessed at:
+
+- **The Auth "Send Email" hook was never wired up (fixed).** `auth-email-hook`
+  was deployed and active, but Supabase Auth had never been told to call it
+  on staging *or* production: `public.email_send_log` had zero rows ever on
+  both projects, `pgmq.metrics('auth_emails')` showed zero messages ever on
+  staging, and GoTrue's own logs during a failing run showed it sending
+  magic-link/recovery mail directly via its default mailer
+  (`noreply@mail.app.supabase.io`) — no webhook call anywhere in the log.
+  Every real user, on both environments, was getting Supabase's generic
+  unbranded auth emails instead of the app's branded templates. Enabling the
+  hook (Dashboard → Authentication → Hooks → Send Email, documented in
+  `docs/AUTH_EMAIL_SEND_HOOK_SETUP.md`) and setting the matching
+  `SEND_EMAIL_HOOK_SECRET` on staging fixed AUTH-004 immediately — confirmed
+  by re-running `Client Acceptance` (run 513): the PKCE evidence capture that
+  had timed out after 60s on every prior run since started succeeding in
+  ~13s.
+- **A second, previously-masked bug surfaced once the first was fixed
+  (fixed).** With AUTH-004 no longer stalling for 60 seconds, AUTH-011's
+  recovery-email request now fires against the same disposable test address
+  only ~14 seconds after AUTH-004's magic-link email — inside Supabase
+  Auth's built-in per-address email-send cooldown. Confirmed directly in
+  GoTrue's logs: `429`, `error_code: over_email_send_rate_limit`, "you can
+  only request this after 44 seconds." `e2e/auth.spec.ts`'s AUTH-011 now
+  recognizes that specific 429, waits out the reported cooldown, and retries
+  the recovery request once — a bounded retry of one HTTP call, not a rerun
+  of the test, and it does not touch the cooldown itself (a legitimate
+  anti-abuse control).
+- **Production has the same hook gap, unresolved.** `izgfrekdamlgigehxoqs`
+  (`quantivis-production`) also has zero rows ever in `email_send_log`. The
+  setup doc covers both projects; only staging has been fixed so far.
+- **Still open: AUTH-013** (recovery round-trip: new password succeeds, old
+  password is rejected) failed with the same signature both before and after
+  the hook fix — the "invalid login credentials" text never appeared after
+  signing in with the old password. Unlike AUTH-011, AUTH-013 completes its
+  own recovery via `admin.generateLink` (not the rate-limited `/recover`
+  endpoint), so this is not explained by the same cooldown and needs its own
+  investigation. Re-run `Client Acceptance` after the AUTH-011 fix lands to
+  see whether it was a downstream effect or an independent bug.
+- **Also worth reconciling:** `docs/DEPLOYMENT_SECRETS.md` names the
+  production project ref as `itpwpnwzzitkelffttyx`; the account's actual
+  live projects are `izgfrekdamlgigehxoqs` (production) and
+  `cmnihsbdbpubznlkmjbc` (staging). `itpwpnwzzitkelffttyx` does not resolve
+  via this session's Supabase access (permission error, not "not found" —
+  it may belong to a different org, or `production` may in fact be served
+  through a different mechanism entirely: the live `quantivis.io` frontend
+  was observed showing a "Powered by Netlify" badge, which doesn't match the
+  Lovable+Cloudflare hosting path described in
+  `docs/CLOUDFLARE_ENTERPRISE_SECURITY.md` / `docs/HOSTING_SECURITY_HEADERS.md`.
+  Confirm which hosting path and which project ref are actually current
+  before trusting either doc.
