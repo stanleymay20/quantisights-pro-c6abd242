@@ -85,9 +85,9 @@ const Register = () => {
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
     try {
-      // Lovable Cloud Managed Social Login. The Google OAuth client is registered
-      // against the /~oauth/callback broker URLs, not Supabase's /auth/callback,
-      // so we must go through the lovable broker, not supabase.auth.signInWithOAuth.
+      // Legacy module name only: the compatibility adapter delegates Google OAuth
+      // directly to Supabase Auth. Google returns to Supabase's hosted callback,
+      // then Supabase redirects the browser to this app's /auth/callback PKCE route.
       const { lovable } = await import("@/integrations/lovable");
       sessionStorage.setItem("quantivis_oauth_next", "/onboarding");
       const result = await lovable.auth.signInWithOAuth("google", {

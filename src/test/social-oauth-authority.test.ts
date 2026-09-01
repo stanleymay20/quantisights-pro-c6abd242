@@ -45,6 +45,17 @@ describe("social OAuth authority", () => {
     expect(register).toContain('signInWithOAuth("google"');
   });
 
+  it("does not reintroduce the retired Lovable OAuth broker architecture", () => {
+    for (const source of [login, register]) {
+      expect(source).not.toContain("Lovable Cloud Managed Social Login");
+      expect(source).not.toContain("/~oauth/callback");
+      expect(source).not.toContain("lovable broker");
+      expect(source).toContain("compatibility adapter delegates Google OAuth");
+      expect(source).toContain("Supabase's hosted callback");
+      expect(source).toContain("/auth/callback PKCE route");
+    }
+  });
+
   it("requires an HTTPS authorization URL before browser navigation", () => {
     expect(adapter).toContain('destination.protocol !== "https:"');
     expect(adapter).toContain("window.location.assign(destination.toString())");
