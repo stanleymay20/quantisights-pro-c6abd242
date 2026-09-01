@@ -35,6 +35,10 @@ const stagingWorkflow = readFileSync(
   resolve(root, ".github/workflows/deploy-supabase-staging.yml"),
   "utf8",
 );
+const gaStagingWorkflow = readFileSync(
+  resolve(root, ".github/workflows/ga-staging-validation.yml"),
+  "utf8",
+);
 
 describe("auth email delivery contract", () => {
   it("accepts Supabase native Send Email Hook payloads and signatures", () => {
@@ -95,16 +99,33 @@ describe("auth email delivery contract", () => {
     expect(forgotPassword).not.toContain("Sent to{\" \"}");
   });
 
-  it("keeps staging authentication independent when Resend credentials are absent", () => {
+  it("fails staging closed when independent Auth email delivery cannot be proven", () => {
     expect(stagingWorkflow).toContain("RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}");
     expect(stagingWorkflow).toContain("RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}");
-    expect(stagingWorkflow).toContain("using Supabase hosted Auth mailer");
+    expect(stagingWorkflow).toContain("preserving Supabase-managed provider secrets and verifying them fail-closed");
     expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs disable");
     expect(stagingWorkflow).toContain("supabase secrets set \\");
     expect(stagingWorkflow).toContain("RESEND_API_KEY=\"$RESEND_API_KEY\"");
     expect(stagingWorkflow).toContain("SEND_EMAIL_HOOK_SECRET=\"$hook_secret\"");
     expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs configure");
+    expect(stagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs verify");
+    expect(stagingWorkflow).not.toContain("using Supabase hosted Auth mailer");
     expect(stagingWorkflow).not.toContain("LOVABLE_API_KEY");
+  });
+
+  it("proves provider runtime and prevents anonymous queue execution without sending mail", () => {
+    expect(authEmailSetup).toContain('["disable", "configure", "verify"]');
+    expect(authEmailSetup).toContain("verifyWorkerRuntime");
+    expect(authEmailSetup).toContain("response.status !== 403");
+    expect(authEmailSetup).toContain("service-role enforcement is broken");
+    expect(authEmailSetup).toContain("runtime/provider credentials are missing or invalid");
+  });
+
+  it("makes independent Auth email transport part of GA staging validation", () => {
+    expect(gaStagingWorkflow).toContain("SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}");
+    expect(gaStagingWorkflow).toContain("SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc");
+    expect(gaStagingWorkflow).toContain("Verify independent Auth email transport");
+    expect(gaStagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs verify");
   });
 
   it("fully stops the custom email dispatcher when independent delivery is disabled", () => {
