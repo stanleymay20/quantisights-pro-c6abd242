@@ -29,14 +29,20 @@ describe("Auth email provider preflight contract", () => {
   });
 
   it("validates the real Resend key and configured sender with a controlled test send", () => {
-    expect(preflight).toContain('fetch("https://api.resend.com/emails"');
-    expect(preflight).toContain("delivered+quantivis-auth-preflight@resend.dev");
-    expect(preflight).toContain("Authorization: `Bearer ${resendApiKey}`");
-    expect(preflight).toContain("from: resendFromEmail");
-    expect(preflight).toContain('"Idempotency-Key": idempotencyKey');
-    expect(preflight).toContain("Resend provider preflight failed with HTTP");
-    expect(preflight).not.toContain("response.text()");
-    expect(preflight).not.toContain("console.log(resendApiKey");
+    const providerStart = preflight.indexOf("const verifyResendProviderCredentials");
+    const providerEnd = preflight.indexOf("const verifyWorkerRuntimeWithoutPrivilege");
+    expect(providerStart).toBeGreaterThan(-1);
+    expect(providerEnd).toBeGreaterThan(providerStart);
+    const providerSection = preflight.slice(providerStart, providerEnd);
+
+    expect(providerSection).toContain('fetch("https://api.resend.com/emails"');
+    expect(providerSection).toContain("delivered+quantivis-auth-preflight@resend.dev");
+    expect(providerSection).toContain("Authorization: `Bearer ${resendApiKey}`");
+    expect(providerSection).toContain("from: resendFromEmail");
+    expect(providerSection).toContain('"Idempotency-Key": idempotencyKey');
+    expect(providerSection).toContain("Resend provider preflight failed with HTTP");
+    expect(providerSection).not.toContain("response.text()");
+    expect(providerSection).not.toContain("console.log(resendApiKey");
   });
 
   it("proves worker runtime and in-function authorization without privileged credentials", () => {
