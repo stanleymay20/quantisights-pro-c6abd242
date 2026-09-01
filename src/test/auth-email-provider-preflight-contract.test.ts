@@ -17,14 +17,26 @@ const productionWorkflow = readFileSync(
 );
 
 describe("Auth email provider preflight contract", () => {
-  it("checks only provider secret names and fails closed when either is absent", () => {
+  it("requires protected-environment provider credentials and checks Supabase secret names", () => {
+    expect(preflight).toContain("RESEND_API_KEY must be configured in the protected GitHub Environment");
+    expect(preflight).toContain("RESEND_FROM_EMAIL must be configured in the protected GitHub Environment");
     expect(preflight).toContain("/secrets");
     expect(preflight).toContain('"RESEND_API_KEY"');
     expect(preflight).toContain('"RESEND_FROM_EMAIL"');
     expect(preflight).toContain("entry?.name");
     expect(preflight).toContain("Required Auth email provider secret name(s) missing");
     expect(preflight).not.toContain("decrypted_secret");
-    expect(preflight).not.toContain("api_key");
+  });
+
+  it("validates the real Resend key and configured sender with a controlled test send", () => {
+    expect(preflight).toContain('fetch("https://api.resend.com/emails"');
+    expect(preflight).toContain("delivered+quantivis-auth-preflight@resend.dev");
+    expect(preflight).toContain("Authorization: `Bearer ${resendApiKey}`");
+    expect(preflight).toContain("from: resendFromEmail");
+    expect(preflight).toContain('"Idempotency-Key": idempotencyKey');
+    expect(preflight).toContain("Resend provider preflight failed with HTTP");
+    expect(preflight).not.toContain("response.text()");
+    expect(preflight).not.toContain("console.log(resendApiKey");
   });
 
   it("proves worker runtime and in-function authorization without privileged credentials", () => {
