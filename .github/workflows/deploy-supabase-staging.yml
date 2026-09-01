@@ -135,11 +135,10 @@ jobs:
         run: bash scripts/verify-supabase-functions.sh
 
       # Auth delivery is a release requirement, not an optional convenience.
-      # If provider credentials are available in GitHub, rotate them into the
-      # staging Edge runtime. If they are intentionally managed only in Supabase,
-      # preserve them and prove that the deployed worker still has a valid provider
-      # configuration. Never disable the independent path and silently certify the
-      # hosted-mailer fallback as GA-ready.
+      # GitHub-managed provider credentials are validated before rotation. If the
+      # provider is intentionally managed only in Supabase, preserve those values
+      # and validate them inside the service-role-protected worker. Never disable
+      # the independent path before the replacement provider/runtime is proven.
       - name: Configure independent staging Auth email transport
         run: |
           set -Eeuo pipefail
@@ -152,6 +151,9 @@ jobs:
 
           if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
             echo "::add-mask::$RESEND_API_KEY"
+            # Prove the proposed replacement pair before it can overwrite a
+            # working Supabase-managed provider configuration.
+            node scripts/preflight-supabase-auth-email.mjs provider-input
             supabase secrets set \
               RESEND_API_KEY="$RESEND_API_KEY" \
               RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
@@ -160,14 +162,10 @@ jobs:
             echo "Provider credentials are not stored in the staging GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
           fi
 
-          # Prove the replacement provider/runtime before changing the active
-          # hook or worker schedule. This keeps the cutover fail-safe: missing
-          # provider secrets fail the deployment without disabling a working path.
-          node scripts/preflight-supabase-auth-email.mjs
+          # Prove the credentials that are actually active in Supabase plus the
+          # worker's exact service-role authorization before changing hook/cron.
+          node scripts/preflight-supabase-auth-email.mjs runtime
 
-          # Rotate the Standard Webhooks secret fail-closed only after provider
-          # readiness is proven: disable the old hook/worker, install the new Edge
-          # secret, then re-enable after the complete transport verifies.
           node scripts/configure-supabase-auth-email.mjs disable
           hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
           echo "::add-mask::$hook_secret"

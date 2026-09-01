@@ -16,11 +16,66 @@ const productionWorkflow = readFileSync(
   "utf8",
 );
 
+const expectSafeWorkflowOrdering = (workflow: string, label: string) => {
+  const sectionStart = workflow.indexOf(`Configure independent ${label} Auth email transport`);
+  expect(sectionStart).toBeGreaterThan(-1);
+  const section = workflow.slice(sectionStart);
+
+  const providerInputIndex = section.indexOf(
+    "node scripts/preflight-supabase-auth-email.mjs provider-input",
+  );
+  const providerSecretWriteIndex = section.indexOf(
+    "RESEND_API_KEY=\"$RESEND_API_KEY\"",
+  );
+  const runtimeIndex = section.indexOf(
+    "node scripts/preflight-supabase-auth-email.mjs runtime",
+  );
+  const disableIndex = section.indexOf(
+    "node scripts/configure-supabase-auth-email.mjs disable",
+  );
+
+  expect(providerInputIndex).toBeGreaterThan(-1);
+  expect(providerSecretWriteIndex).toBeGreaterThan(providerInputIndex);
+  expect(runtimeIndex).toBeGreaterThan(providerSecretWriteIndex);
+  expect(disableIndex).toBeGreaterThan(runtimeIndex);
+};
+
 describe("Auth email provider preflight contract", () => {
-  it("requires protected-environment provider credentials and checks Supabase secret names", () => {
-    expect(preflight).toContain("RESEND_API_KEY must be configured in the protected GitHub Environment");
-    expect(preflight).toContain("RESEND_FROM_EMAIL must be configured in the protected GitHub Environment");
-    expect(preflight).toContain("/secrets");
+  it("allows Supabase-managed credentials while requiring GitHub inputs to be a complete pair", () => {
+    expect(preflight).toContain(
+      "RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent",
+    );
+    expect(preflight).not.toContain(
+      "RESEND_API_KEY must be configured in the protected GitHub Environment",
+    );
+    expect(preflight).not.toContain(
+      "RESEND_FROM_EMAIL must be configured in the protected GitHub Environment",
+    );
+  });
+
+  it("validates proposed replacement credentials with Resend's documented test recipient", () => {
+    const providerStart = preflight.indexOf("const verifyProviderInput");
+    const providerEnd = preflight.indexOf("const verifySupabaseManagedProvider");
+    expect(providerStart).toBeGreaterThan(-1);
+    expect(providerEnd).toBeGreaterThan(providerStart);
+    const providerSection = preflight.slice(providerStart, providerEnd);
+
+    expect(preflight).toContain(
+      'const RESEND_TEST_RECIPIENT = "delivered@resend.dev";',
+    );
+    expect(providerSection).toContain('fetch("https://api.resend.com/emails"');
+    expect(providerSection).toContain("to: [RESEND_TEST_RECIPIENT]");
+    expect(providerSection).toContain("Authorization: `Bearer ${resendApiKey}`");
+    expect(providerSection).toContain("from: resendFromEmail");
+    expect(providerSection).toContain('"Idempotency-Key": idempotencyKey');
+    expect(providerSection).toContain(
+      "Resend provider-input preflight failed with HTTP",
+    );
+    expect(providerSection).not.toContain("response.text()");
+  });
+
+  it("checks only Supabase secret names and never requests decrypted secret values", () => {
+    expect(preflight).toContain(`/v1/projects/${"${projectRef}"}/secrets`);
     expect(preflight).toContain('"RESEND_API_KEY"');
     expect(preflight).toContain('"RESEND_FROM_EMAIL"');
     expect(preflight).toContain("entry?.name");
@@ -28,27 +83,18 @@ describe("Auth email provider preflight contract", () => {
     expect(preflight).not.toContain("decrypted_secret");
   });
 
-  it("validates the real Resend key and configured sender with a controlled test send", () => {
-    const providerStart = preflight.indexOf("const verifyResendProviderCredentials");
-    const providerEnd = preflight.indexOf("const verifyWorkerRuntimeWithoutPrivilege");
-    expect(providerStart).toBeGreaterThan(-1);
-    expect(providerEnd).toBeGreaterThan(providerStart);
-    const providerSection = preflight.slice(providerStart, providerEnd);
-
-    expect(preflight).toContain(
-      'const RESEND_TEST_RECIPIENT = "delivered+quantivis-auth-preflight@resend.dev";',
-    );
-    expect(providerSection).toContain('fetch("https://api.resend.com/emails"');
-    expect(providerSection).toContain("to: [RESEND_TEST_RECIPIENT]");
-    expect(providerSection).toContain("Authorization: `Bearer ${resendApiKey}`");
-    expect(providerSection).toContain("from: resendFromEmail");
-    expect(providerSection).toContain('"Idempotency-Key": idempotencyKey');
-    expect(providerSection).toContain("Resend provider preflight failed with HTTP");
-    expect(providerSection).not.toContain("response.text()");
-    expect(providerSection).not.toContain("console.log(resendApiKey");
+  it("uses the service-role credential only in memory to run the worker provider preflight", () => {
+    expect(preflight).toContain(`/v1/projects/${"${projectRef}"}/api-keys?reveal=true`);
+    expect(preflight).toContain("const serviceRoleKey = await getLegacyServiceRoleKey()");
+    expect(preflight).toContain("await verifySupabaseManagedProvider(serviceRoleKey)");
+    expect(preflight).toContain('body: JSON.stringify({ mode: "provider_preflight" })');
+    expect(preflight).toContain("apikey: serviceRoleKey");
+    expect(preflight).toContain("Authorization: `Bearer ${serviceRoleKey}`");
+    expect(preflight).not.toContain("console.log(serviceRoleKey");
+    expect(preflight).not.toContain("console.log(resendApiKey");
   });
 
-  it("proves worker runtime and in-function authorization without privileged credentials", () => {
+  it("still proves in-function authorization with an invalid bearer probe", () => {
     expect(preflight).toContain("quantivis-auth-email-preflight-invalid");
     expect(preflight).toContain("response.status === 403");
     expect(preflight).toContain("response.status === 500");
@@ -56,19 +102,11 @@ describe("Auth email provider preflight contract", () => {
     expect(preflight).toContain("service-role enforcement is broken");
   });
 
-  it("preflights staging before disabling the active transport", () => {
-    const preflightIndex = stagingWorkflow.indexOf("node scripts/preflight-supabase-auth-email.mjs");
-    const disableIndex = stagingWorkflow.indexOf("node scripts/configure-supabase-auth-email.mjs disable");
-    expect(preflightIndex).toBeGreaterThan(-1);
-    expect(disableIndex).toBeGreaterThan(-1);
-    expect(preflightIndex).toBeLessThan(disableIndex);
+  it("validates staging replacement input before secret rotation and runtime before disable", () => {
+    expectSafeWorkflowOrdering(stagingWorkflow, "staging");
   });
 
-  it("preflights production before disabling the active transport", () => {
-    const preflightIndex = productionWorkflow.indexOf("node scripts/preflight-supabase-auth-email.mjs");
-    const disableIndex = productionWorkflow.indexOf("node scripts/configure-supabase-auth-email.mjs disable");
-    expect(preflightIndex).toBeGreaterThan(-1);
-    expect(disableIndex).toBeGreaterThan(-1);
-    expect(preflightIndex).toBeLessThan(disableIndex);
+  it("validates production replacement input before secret rotation and runtime before disable", () => {
+    expectSafeWorkflowOrdering(productionWorkflow, "production");
   });
 });

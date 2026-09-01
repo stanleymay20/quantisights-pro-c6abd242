@@ -6,6 +6,7 @@ const DEFAULT_BATCH_SIZE = 10
 const DEFAULT_SEND_DELAY_MS = 200
 const DEFAULT_AUTH_TTL_MINUTES = 15
 const DEFAULT_TRANSACTIONAL_TTL_MINUTES = 60
+const RESEND_TEST_RECIPIENT = 'delivered@resend.dev'
 
 function providerStatus(error: unknown): number | null {
   if (error && typeof error === 'object' && 'status' in error) {
@@ -110,6 +111,47 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: 'Forbidden' }),
       { status: 403, headers: { 'Content-Type': 'application/json' } }
     )
+  }
+
+  // A service-role-only provider preflight validates the Resend credentials
+  // where Supabase-managed secrets actually live. It performs one controlled
+  // test send and returns before reading either email queue, so certification
+  // never requires copying provider secrets into GitHub and never consumes a
+  // real queued message.
+  let requestPayload: Record<string, unknown> = {}
+  try {
+    const parsed = await req.json()
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      requestPayload = parsed as Record<string, unknown>
+    }
+  } catch {
+    // Ordinary cron invocations use an empty JSON object. Invalid/non-JSON input
+    // is treated as a normal worker invocation rather than granting probe mode.
+  }
+
+  if (requestPayload.mode === 'provider_preflight') {
+    try {
+      await sendResendEmail({
+        apiKey: resendApiKey,
+        from: resendFromEmail,
+        to: RESEND_TEST_RECIPIENT,
+        subject: 'Quantivis Auth email provider preflight',
+        text: 'Controlled provider readiness probe before Auth email transport cutover.',
+        idempotencyKey: `quantivis-auth-worker-preflight-${crypto.randomUUID()}`,
+      })
+      return new Response(
+        JSON.stringify({ provider_preflight: true }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    } catch (error) {
+      console.error('Auth email provider preflight failed', {
+        provider_status: providerStatus(error),
+      })
+      return new Response(
+        JSON.stringify({ error: 'Provider preflight failed', provider_status: providerStatus(error) }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
   }
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
