@@ -2,12 +2,15 @@
 
 const accessToken = process.env.SUPABASE_ACCESS_TOKEN?.trim();
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim();
+const resendApiKey = process.env.RESEND_API_KEY?.trim();
+const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
 
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
 const PRODUCTION_REF = "izgfrekdamlgigehxoqs";
 const RETIRED_REF = "itpwpnwzzitkelffttyx";
 const ALLOWED_REFS = new Set([STAGING_REF, PRODUCTION_REF]);
 const REQUIRED_PROVIDER_SECRETS = ["RESEND_API_KEY", "RESEND_FROM_EMAIL"];
+const RESEND_TEST_RECIPIENT = "delivered+quantivis-auth-preflight@resend.dev";
 
 const fail = (message) => {
   console.error(`::error::${message}`);
@@ -16,6 +19,8 @@ const fail = (message) => {
 
 if (!accessToken) fail("SUPABASE_ACCESS_TOKEN must be set");
 if (!projectRef) fail("SUPABASE_PROJECT_REF must be set");
+if (!resendApiKey) fail("RESEND_API_KEY must be configured in the protected GitHub Environment");
+if (!resendFromEmail) fail("RESEND_FROM_EMAIL must be configured in the protected GitHub Environment");
 if (projectRef === RETIRED_REF) fail("Refusing to preflight Auth email on the retired Supabase project");
 if (!ALLOWED_REFS.has(projectRef)) fail(`Unrecognised Supabase project ref: ${projectRef}`);
 
@@ -67,6 +72,35 @@ const verifyProviderSecretPresence = async () => {
   }
 };
 
+// This is an intentional provider-level send to Resend's documented delivered
+// test address. It proves the API key is accepted and the configured From sender
+// is permitted before the active Auth hook/worker is disabled. No real user is
+// contacted and no provider response body or credential is logged.
+const verifyResendProviderCredentials = async () => {
+  const runId = process.env.GITHUB_RUN_ID?.trim() || "manual";
+  const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim() || "0";
+  const idempotencyKey = `quantivis-auth-preflight-${projectRef}-${runId}-${runAttempt}`;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      from: resendFromEmail,
+      to: [RESEND_TEST_RECIPIENT],
+      subject: "Quantivis Auth email provider preflight",
+      text: "Controlled provider readiness probe before Auth email transport cutover.",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Resend provider preflight failed with HTTP ${response.status}`);
+  }
+};
+
 const verifyWorkerRuntimeWithoutPrivilege = async () => {
   const workerUri = `https://${projectRef}.supabase.co/functions/v1/process-email-queue`;
   const response = await fetch(workerUri, {
@@ -93,9 +127,10 @@ const verifyWorkerRuntimeWithoutPrivilege = async () => {
 
 try {
   await verifyProviderSecretPresence();
+  await verifyResendProviderCredentials();
   await verifyWorkerRuntimeWithoutPrivilege();
   console.log(`Independent Auth email provider preflight passed for ${projectRef}.`);
-  console.log("Only provider secret names/presence were inspected; secret values were never requested or printed.");
+  console.log("Resend credentials and configured sender were validated using the controlled test recipient; no secret value was printed.");
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
