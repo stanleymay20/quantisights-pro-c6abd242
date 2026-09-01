@@ -243,6 +243,9 @@ jobs:
 
           if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
             echo "::add-mask::$RESEND_API_KEY"
+            # Prove the proposed replacement pair before it can overwrite a
+            # working Supabase-managed provider configuration.
+            node scripts/preflight-supabase-auth-email.mjs provider-input
             supabase secrets set \
               RESEND_API_KEY="$RESEND_API_KEY" \
               RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
@@ -251,9 +254,9 @@ jobs:
             echo "Provider credentials are not stored in the production GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
           fi
 
-          # Do not disable the currently configured production hook/worker until
-          # the replacement provider secrets and worker runtime are proven.
-          node scripts/preflight-supabase-auth-email.mjs
+          # Prove the credentials that are actually active in Supabase plus the
+          # worker's exact service-role authorization before changing hook/cron.
+          node scripts/preflight-supabase-auth-email.mjs runtime
 
           node scripts/configure-supabase-auth-email.mjs disable
           hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
