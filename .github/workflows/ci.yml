@@ -156,7 +156,7 @@ jobs:
           retention-days: 7
 
       - name: Generate dependency audit fix candidate
-        if: ${{ steps.dependency_audit.outcome == 'failure' }}
+        if: ${{ always() && steps.dependency_audit.outcome == 'failure' }}
         run: |
           set -Eeuo pipefail
           cp package-lock.json artifacts/npm-audit/package-lock.before.json
@@ -174,7 +174,7 @@ jobs:
             "$fix_status" "$post_audit_status" > artifacts/npm-audit/audit-fix-status.json
 
       - name: Upload dependency audit fix candidate
-        if: ${{ steps.dependency_audit.outcome == 'failure' }}
+        if: ${{ always() && steps.dependency_audit.outcome == 'failure' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-audit-fix-candidate-${{ github.sha }}
