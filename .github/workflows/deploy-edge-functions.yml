@@ -41,6 +41,8 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: izgfrekdamlgigehxoqs
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
       RELEASE_SHA: ${{ inputs.release_sha }}
       GA_READINESS_RUN_ID: ${{ inputs.ga_readiness_run_id }}
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
@@ -228,6 +230,37 @@ jobs:
 
       - name: Verify production Edge Functions
         run: bash scripts/verify-supabase-functions.sh
+
+      - name: Configure independent production Auth email transport
+        run: |
+          set -Eeuo pipefail
+
+          if { [ -n "$RESEND_API_KEY" ] && [ -z "$RESEND_FROM_EMAIL" ]; } || \
+             { [ -z "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; }; then
+            echo "::error::RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent"
+            exit 1
+          fi
+
+          if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
+            echo "::add-mask::$RESEND_API_KEY"
+            supabase secrets set \
+              RESEND_API_KEY="$RESEND_API_KEY" \
+              RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+              --project-ref "$SUPABASE_PROJECT_REF"
+          else
+            echo "Provider credentials are not stored in the production GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
+          fi
+
+          node scripts/configure-supabase-auth-email.mjs disable
+          hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
+          echo "::add-mask::$hook_secret"
+          export SEND_EMAIL_HOOK_SECRET="$hook_secret"
+          supabase secrets set \
+            SEND_EMAIL_HOOK_SECRET="$hook_secret" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+          node scripts/configure-supabase-auth-email.mjs configure
+          unset SEND_EMAIL_HOOK_SECRET
+          node scripts/configure-supabase-auth-email.mjs verify
 
       - name: Verify live GA security baseline
         run: node scripts/verify-live-ga-security.mjs
