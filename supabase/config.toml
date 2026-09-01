@@ -96,7 +96,7 @@ project_id = "itpwpnwzzitkelffttyx"
   [functions.prescriptive-advisory]
     verify_jwt = false
   [functions.process-email-queue]
-    verify_jwt = true
+    verify_jwt = false
   [functions.process-metric-ingest-queue]
     verify_jwt = false
   [functions.queued-metric-ingest]
