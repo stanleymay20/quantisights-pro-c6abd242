@@ -134,30 +134,35 @@ jobs:
       - name: Verify staging Edge Functions
         run: bash scripts/verify-supabase-functions.sh
 
-      # Auth delivery must remain functional even if Lovable Cloud is paused.
-      # When independent Resend credentials are available, deploy them directly
-      # to the external Supabase project and enable the native Send Email Hook +
-      # durable queue worker. Otherwise keep the custom path fully disabled so
-      # Supabase's hosted Auth mailer handles recovery/confirmation safely.
+      # Auth delivery is a release requirement, not an optional convenience.
+      # If provider credentials are available in GitHub, rotate them into the
+      # staging Edge runtime. If they are intentionally managed only in Supabase,
+      # preserve them and prove that the deployed worker still has a valid provider
+      # configuration. Never disable the independent path and silently certify the
+      # hosted-mailer fallback as GA-ready.
       - name: Configure independent staging Auth email transport
         run: |
           set -Eeuo pipefail
 
-          if [ -z "$RESEND_API_KEY" ] || [ -z "$RESEND_FROM_EMAIL" ]; then
-            echo "::warning::RESEND_API_KEY/RESEND_FROM_EMAIL are not configured in the staging GitHub Environment; using Supabase hosted Auth mailer"
-            node scripts/configure-supabase-auth-email.mjs disable
-            exit 0
+          if { [ -n "$RESEND_API_KEY" ] && [ -z "$RESEND_FROM_EMAIL" ]; } || \
+             { [ -z "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; }; then
+            echo "::error::RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent"
+            exit 1
           fi
 
-          echo "::add-mask::$RESEND_API_KEY"
-          supabase secrets set \
-            RESEND_API_KEY="$RESEND_API_KEY" \
-            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
-            --project-ref "$SUPABASE_PROJECT_REF"
+          if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
+            echo "::add-mask::$RESEND_API_KEY"
+            supabase secrets set \
+              RESEND_API_KEY="$RESEND_API_KEY" \
+              RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+              --project-ref "$SUPABASE_PROJECT_REF"
+          else
+            echo "Provider credentials are not stored in the staging GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
+          fi
 
           # Rotate the Standard Webhooks secret fail-closed: disable the old
-          # hook/worker first, install the new Edge secret, then re-enable and
-          # verify the exact active project URI and queue worker.
+          # hook/worker first, install the new Edge secret, then re-enable only
+          # after the worker proves its provider/runtime configuration.
           node scripts/configure-supabase-auth-email.mjs disable
           hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
           echo "::add-mask::$hook_secret"
@@ -166,6 +171,8 @@ jobs:
             SEND_EMAIL_HOOK_SECRET="$hook_secret" \
             --project-ref "$SUPABASE_PROJECT_REF"
           node scripts/configure-supabase-auth-email.mjs configure
+          unset SEND_EMAIL_HOOK_SECRET
+          node scripts/configure-supabase-auth-email.mjs verify
 
           # Client Acceptance deliberately exercises a real recovery email. The
           # staging project therefore gets a bounded, staging-only hourly email
