@@ -13,8 +13,11 @@ concurrency:
   group: ci-${{ github.sha }}
   cancel-in-progress: false
 
+# TEMPORARY PR-only write scope: the owner-gated step below commits npm's
+# verified lockfile-only audit repair back to this same-repository PR branch.
+# This permission and the commit step are removed before the PR is merged.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   quality:
@@ -156,22 +159,22 @@ jobs:
           retention-days: 7
 
       - name: Generate dependency audit fix candidate
+        id: dependency_audit_fix
         if: ${{ always() && steps.dependency_audit.outcome == 'failure' }}
         run: |
           set -Eeuo pipefail
           cp package-lock.json artifacts/npm-audit/package-lock.before.json
 
-          set +e
           npm audit fix --package-lock-only --ignore-scripts --audit-level=moderate
-          fix_status=$?
           npm audit --audit-level=moderate --json > artifacts/npm-audit/npm-audit-after-fix.json
-          post_audit_status=$?
-          set -e
 
           cp package-lock.json artifacts/npm-audit/package-lock.candidate.json
           git diff -- package.json package-lock.json > artifacts/npm-audit/audit-fix.patch || true
-          printf '{"audit_fix_exit_code":%s,"post_fix_audit_exit_code":%s}\n' \
-            "$fix_status" "$post_audit_status" > artifacts/npm-audit/audit-fix-status.json
+          git diff --exit-code -- package.json
+          if git diff --quiet -- package-lock.json; then
+            echo "::error::npm audit fix produced no lockfile repair"
+            exit 1
+          fi
 
       - name: Upload dependency audit fix candidate
         if: ${{ always() && steps.dependency_audit.outcome == 'failure' }}
@@ -183,6 +186,29 @@ jobs:
             artifacts/npm-audit/package-lock.candidate.json
             artifacts/npm-audit/npm-audit-after-fix.json
             artifacts/npm-audit/audit-fix.patch
-            artifacts/npm-audit/audit-fix-status.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Commit verified dependency audit lock repair
+        if: >-
+          ${{ always() &&
+              steps.dependency_audit.outcome == 'failure' &&
+              steps.dependency_audit_fix.outcome == 'success' &&
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == 'stanleymay20' }}
+        run: |
+          set -Eeuo pipefail
+          npm audit --audit-level=moderate
+          git diff --exit-code -- package.json
+          changed="$(git diff --name-only)"
+          if [ "$changed" != "package-lock.json" ]; then
+            echo "::error::Refusing to commit audit repair because changed files are not exactly package-lock.json"
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "Fix audited dependency vulnerabilities"
+          git push origin "HEAD:${{ github.head_ref }}"
