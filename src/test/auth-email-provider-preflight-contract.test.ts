@@ -35,8 +35,11 @@ describe("Auth email provider preflight contract", () => {
     expect(providerEnd).toBeGreaterThan(providerStart);
     const providerSection = preflight.slice(providerStart, providerEnd);
 
+    expect(preflight).toContain(
+      'const RESEND_TEST_RECIPIENT = "delivered+quantivis-auth-preflight@resend.dev";',
+    );
     expect(providerSection).toContain('fetch("https://api.resend.com/emails"');
-    expect(providerSection).toContain("delivered+quantivis-auth-preflight@resend.dev");
+    expect(providerSection).toContain("to: [RESEND_TEST_RECIPIENT]");
     expect(providerSection).toContain("Authorization: `Bearer ${resendApiKey}`");
     expect(providerSection).toContain("from: resendFromEmail");
     expect(providerSection).toContain('"Idempotency-Key": idempotencyKey');
