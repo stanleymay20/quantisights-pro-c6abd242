@@ -176,7 +176,7 @@ const Login = () => {
         description: isUnconfirmed
           ? "Please verify your email address before signing in. Check your inbox for the confirmation link."
           : isCredentialError
-            ? "Incorrect email or password. Please try again."
+            ? "Invalid login credentials. Incorrect email or password. Please try again."
             : message,
         variant: "destructive",
       });
