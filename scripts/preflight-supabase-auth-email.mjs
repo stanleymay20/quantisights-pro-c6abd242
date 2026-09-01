@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const action = process.argv[2] || "runtime";
 const accessToken = process.env.SUPABASE_ACCESS_TOKEN?.trim();
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim();
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
@@ -10,7 +11,8 @@ const PRODUCTION_REF = "izgfrekdamlgigehxoqs";
 const RETIRED_REF = "itpwpnwzzitkelffttyx";
 const ALLOWED_REFS = new Set([STAGING_REF, PRODUCTION_REF]);
 const REQUIRED_PROVIDER_SECRETS = ["RESEND_API_KEY", "RESEND_FROM_EMAIL"];
-const RESEND_TEST_RECIPIENT = "delivered+quantivis-auth-preflight@resend.dev";
+const RESEND_TEST_RECIPIENT = "delivered@resend.dev";
+const ALLOWED_ACTIONS = new Set(["provider-input", "runtime"]);
 
 const fail = (message) => {
   console.error(`::error::${message}`);
@@ -19,10 +21,12 @@ const fail = (message) => {
 
 if (!accessToken) fail("SUPABASE_ACCESS_TOKEN must be set");
 if (!projectRef) fail("SUPABASE_PROJECT_REF must be set");
-if (!resendApiKey) fail("RESEND_API_KEY must be configured in the protected GitHub Environment");
-if (!resendFromEmail) fail("RESEND_FROM_EMAIL must be configured in the protected GitHub Environment");
 if (projectRef === RETIRED_REF) fail("Refusing to preflight Auth email on the retired Supabase project");
 if (!ALLOWED_REFS.has(projectRef)) fail(`Unrecognised Supabase project ref: ${projectRef}`);
+if (!ALLOWED_ACTIONS.has(action)) fail(`Unsupported Auth email preflight action: ${action}`);
+if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {
+  fail("RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent");
+}
 
 const managementHeaders = {
   Authorization: `Bearer ${accessToken}`,
@@ -72,14 +76,35 @@ const verifyProviderSecretPresence = async () => {
   }
 };
 
-// This is an intentional provider-level send to Resend's documented delivered
-// test address. It proves the API key is accepted and the configured From sender
-// is permitted before the active Auth hook/worker is disabled. No real user is
-// contacted and no provider response body or credential is logged.
-const verifyResendProviderCredentials = async () => {
+const getLegacyServiceRoleKey = async () => {
+  const payload = await managementRequest(`/v1/projects/${projectRef}/api-keys?reveal=true`);
+  const keys = Array.isArray(payload) ? payload : payload?.keys;
+  if (!Array.isArray(keys)) {
+    throw new Error("Supabase API-key response has an unexpected shape");
+  }
+
+  const candidate = keys.find((key) =>
+    key?.name === "service_role" || key?.id === "service_role" || key?.role === "service_role"
+  );
+  const value = candidate?.api_key || candidate?.key || candidate?.value;
+  if (typeof value !== "string" || !value.startsWith("eyJ")) {
+    throw new Error("Legacy service_role JWT could not be resolved for Auth email runtime preflight");
+  }
+  return value;
+};
+
+// Validate a replacement credential pair before it is written into Supabase.
+// This prevents a revoked API key or invalid sender from overwriting a working
+// provider configuration. Resend's documented delivered@resend.dev address is
+// used so no real user is contacted and domain reputation is not affected.
+const verifyProviderInput = async () => {
+  if (!resendApiKey || !resendFromEmail) {
+    throw new Error("provider-input preflight requires RESEND_API_KEY and RESEND_FROM_EMAIL");
+  }
+
   const runId = process.env.GITHUB_RUN_ID?.trim() || "manual";
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim() || "0";
-  const idempotencyKey = `quantivis-auth-preflight-${projectRef}-${runId}-${runAttempt}`;
+  const idempotencyKey = `quantivis-auth-preflight-input-${projectRef}-${runId}-${runAttempt}`;
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -97,8 +122,34 @@ const verifyResendProviderCredentials = async () => {
   });
 
   if (!response.ok) {
-    throw new Error(`Resend provider preflight failed with HTTP ${response.status}`);
+    throw new Error(`Resend provider-input preflight failed with HTTP ${response.status}`);
   }
+};
+
+// When provider credentials are intentionally managed only in Supabase, validate
+// them where they actually live. A service-role-authenticated worker preflight
+// performs one controlled Resend test send and returns only status metadata; the
+// credential values never leave the Edge runtime and are never printed.
+const verifySupabaseManagedProvider = async (serviceRoleKey) => {
+  const workerUri = `https://${projectRef}.supabase.co/functions/v1/process-email-queue`;
+  const response = await fetch(workerUri, {
+    method: "POST",
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode: "provider_preflight" }),
+  });
+
+  if (response.status === 200) return;
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(`process-email-queue provider preflight authorization failed with HTTP ${response.status}`);
+  }
+  if (response.status === 500 || response.status === 503) {
+    throw new Error(`process-email-queue provider preflight failed with HTTP ${response.status}`);
+  }
+  throw new Error(`process-email-queue provider preflight returned unexpected HTTP ${response.status}`);
 };
 
 const verifyWorkerRuntimeWithoutPrivilege = async () => {
@@ -126,11 +177,19 @@ const verifyWorkerRuntimeWithoutPrivilege = async () => {
 };
 
 try {
+  if (action === "provider-input") {
+    await verifyProviderInput();
+    console.log(`Replacement Auth email provider input validated for ${projectRef}.`);
+    console.log("Resend credential values and provider response bodies were never printed.");
+    process.exit(0);
+  }
+
   await verifyProviderSecretPresence();
-  await verifyResendProviderCredentials();
+  const serviceRoleKey = await getLegacyServiceRoleKey();
+  await verifySupabaseManagedProvider(serviceRoleKey);
   await verifyWorkerRuntimeWithoutPrivilege();
-  console.log(`Independent Auth email provider preflight passed for ${projectRef}.`);
-  console.log("Resend credentials and configured sender were validated using the controlled test recipient; no secret value was printed.");
+  console.log(`Independent Auth email runtime preflight passed for ${projectRef}.`);
+  console.log("Supabase-managed Resend credentials were validated in the worker; no secret value was printed.");
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
