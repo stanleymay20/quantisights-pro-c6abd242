@@ -154,3 +154,35 @@ jobs:
           path: artifacts/npm-audit/npm-audit.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Generate dependency audit fix candidate
+        if: ${{ steps.dependency_audit.outcome == 'failure' }}
+        run: |
+          set -Eeuo pipefail
+          cp package-lock.json artifacts/npm-audit/package-lock.before.json
+
+          set +e
+          npm audit fix --package-lock-only --ignore-scripts --audit-level=moderate
+          fix_status=$?
+          npm audit --audit-level=moderate --json > artifacts/npm-audit/npm-audit-after-fix.json
+          post_audit_status=$?
+          set -e
+
+          cp package-lock.json artifacts/npm-audit/package-lock.candidate.json
+          git diff -- package.json package-lock.json > artifacts/npm-audit/audit-fix.patch || true
+          printf '{"audit_fix_exit_code":%s,"post_fix_audit_exit_code":%s}\n' \
+            "$fix_status" "$post_audit_status" > artifacts/npm-audit/audit-fix-status.json
+
+      - name: Upload dependency audit fix candidate
+        if: ${{ steps.dependency_audit.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-audit-fix-candidate-${{ github.sha }}
+          path: |
+            artifacts/npm-audit/package-lock.before.json
+            artifacts/npm-audit/package-lock.candidate.json
+            artifacts/npm-audit/npm-audit-after-fix.json
+            artifacts/npm-audit/audit-fix.patch
+            artifacts/npm-audit/audit-fix-status.json
+          if-no-files-found: error
+          retention-days: 7
