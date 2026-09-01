@@ -39,6 +39,10 @@ const gaStagingWorkflow = readFileSync(
   resolve(root, ".github/workflows/ga-staging-validation.yml"),
   "utf8",
 );
+const productionWorkflow = readFileSync(
+  resolve(root, ".github/workflows/deploy-edge-functions.yml"),
+  "utf8",
+);
 
 describe("auth email delivery contract", () => {
   it("accepts Supabase native Send Email Hook payloads and signatures", () => {
@@ -126,6 +130,16 @@ describe("auth email delivery contract", () => {
     expect(gaStagingWorkflow).toContain("SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc");
     expect(gaStagingWorkflow).toContain("Verify independent Auth email transport");
     expect(gaStagingWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs verify");
+  });
+
+  it("makes independent Auth email transport mandatory during production promotion", () => {
+    expect(productionWorkflow).toContain("SUPABASE_PROJECT_REF: izgfrekdamlgigehxoqs");
+    expect(productionWorkflow).toContain("RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}");
+    expect(productionWorkflow).toContain("RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}");
+    expect(productionWorkflow).toContain("Configure independent production Auth email transport");
+    expect(productionWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs configure");
+    expect(productionWorkflow).toContain("node scripts/configure-supabase-auth-email.mjs verify");
+    expect(productionWorkflow).not.toContain("using Supabase hosted Auth mailer");
   });
 
   it("fully stops the custom email dispatcher when independent delivery is disabled", () => {
