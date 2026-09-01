@@ -251,6 +251,10 @@ jobs:
             echo "Provider credentials are not stored in the production GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
           fi
 
+          # Do not disable the currently configured production hook/worker until
+          # the replacement provider secrets and worker runtime are proven.
+          node scripts/preflight-supabase-auth-email.mjs
+
           node scripts/configure-supabase-auth-email.mjs disable
           hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
           echo "::add-mask::$hook_secret"
