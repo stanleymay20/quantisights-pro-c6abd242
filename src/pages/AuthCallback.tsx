@@ -13,6 +13,12 @@ const consumeStoredNext = () => {
   return safeInternalNavigation(value, "/onboarding");
 };
 
+const consumeGoogleSignupIntent = () => {
+  const isSignup = sessionStorage.getItem("quantivis_oauth_signup") === "1";
+  sessionStorage.removeItem("quantivis_oauth_signup");
+  return isSignup;
+};
+
 const readOAuthError = (url: URL) => {
   const queryError = url.searchParams.get("error_description") || url.searchParams.get("error");
   if (queryError) return queryError;
@@ -75,11 +81,30 @@ const AuthCallback = () => {
     const next = searchParams.get("next")
       ? safeInternalNavigation(searchParams.get("next"), "/onboarding")
       : consumeStoredNext();
+    const googleSignupIntent = consumeGoogleSignupIntent();
 
-    const finish = (ok: boolean) => {
+    const finish = async (ok: boolean) => {
       if (settled || cancelled) return;
       settled = true;
       if (ok) {
+        if (googleSignupIntent && next === "/onboarding") {
+          // Only a successful Google signup callback may grant the temporary
+          // authority that lets onboarding create the user's first tenant.
+          const { error: metadataError } = await supabase.auth.updateUser({
+            data: { quantivis_onboarding_started: true },
+          });
+          if (metadataError) {
+            console.error("[AuthCallback] Failed to record signup provenance:", metadataError.message);
+            await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+            if (cancelled) return;
+            setError(true);
+            setMessage("We could not verify workspace setup intent. Please start registration again.");
+            window.setTimeout(() => !cancelled && navigate("/register", { replace: true }), 1800);
+            return;
+          }
+        }
+
+        if (cancelled) return;
         // Remove OAuth query/hash material from browser history after the
         // Supabase client has completed the PKCE exchange.
         window.history.replaceState({}, document.title, window.location.pathname);
@@ -87,7 +112,7 @@ const AuthCallback = () => {
       } else {
         setError(true);
         setMessage("We could not confirm your session. Redirecting to sign in…");
-        setTimeout(() => !cancelled && navigate("/login", { replace: true }), 1500);
+        window.setTimeout(() => !cancelled && navigate("/login", { replace: true }), 1500);
       }
     };
 
@@ -97,7 +122,7 @@ const AuthCallback = () => {
     const providerError = readOAuthError(url);
     if (providerError) {
       console.error("[AuthCallback] OAuth provider error:", providerError);
-      finish(false);
+      void finish(false);
       return;
     }
 
@@ -106,7 +131,7 @@ const AuthCallback = () => {
     // resulting authenticated session so the authorization code is never
     // exchanged twice.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) finish(true);
+      if (session?.user) void finish(true);
     });
 
     // The exchange can finish before this component mounts.
@@ -115,7 +140,7 @@ const AuthCallback = () => {
         console.error("[AuthCallback] Failed to read OAuth session:", sessionError.message);
         return;
       }
-      if (data.session) finish(true);
+      if (data.session) void finish(true);
     }).catch((sessionReadError: unknown) => {
       console.error(
         "[AuthCallback] OAuth session read failed:",
@@ -129,16 +154,16 @@ const AuthCallback = () => {
         const { data, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) {
           console.error("[AuthCallback] OAuth session timeout check failed:", sessionError.message);
-          finish(false);
+          await finish(false);
           return;
         }
-        finish(Boolean(data.session));
+        await finish(Boolean(data.session));
       } catch (sessionReadError: unknown) {
         console.error(
           "[AuthCallback] OAuth timeout session read failed:",
           sessionReadError instanceof Error ? sessionReadError.message : sessionReadError,
         );
-        finish(false);
+        await finish(false);
       }
     }, 6000);
 
