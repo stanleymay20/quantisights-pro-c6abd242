@@ -39,6 +39,16 @@ const normalizeOAuthError = (error: unknown) => {
   return error instanceof Error ? error : new Error(message);
 };
 
+const isEmbeddedBrowserContext = () => {
+  try {
+    return window.self !== window.top;
+  } catch {
+    // A cross-origin parent that prevents frame inspection is still an
+    // embedded context and must not receive an external OAuth navigation.
+    return true;
+  }
+};
+
 const ensureGoogleProviderEnabled = async () => {
   let response: Response;
   try {
@@ -80,6 +90,15 @@ export const lovable = {
         return {
           redirected: false,
           error: new Error(`Unsupported social sign-in provider: ${provider}`),
+        };
+      }
+
+      if (isEmbeddedBrowserContext()) {
+        return {
+          redirected: false,
+          error: new Error(
+            "Google sign-in cannot run inside an embedded preview. Open this preview in a full browser tab and try again.",
+          ),
         };
       }
 
