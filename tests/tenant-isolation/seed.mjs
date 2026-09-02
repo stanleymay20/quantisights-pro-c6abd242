@@ -1,13 +1,15 @@
 // tests/tenant-isolation/seed.mjs
-// Creates two isolated orgs, one admin user each, and mandatory canary rows.
-// Staging/preview ONLY (allow-list enforced by lib/guard.mjs).
+// Creates two isolated orgs, one admin user each, an unassigned membership
+// subject, and mandatory canary rows. Staging/preview ONLY (allow-list enforced
+// by lib/guard.mjs).
 //
 // Role choice: 'admin'.
 //   - decision_ledger SELECT policy allows owner|admin|executive
 //   - decision_ledger INSERT policy allows owner|admin
 //   - audit_log SELECT policy allows owner|admin
-//   'admin' is the minimum role that can exercise every policy this suite
-//   probes (both positive controls and cross-tenant negatives).
+//   - organization_members INSERT allows owner|admin, with admin unable to grant owner
+//   'admin' is the minimum role that can exercise every positive and negative
+//   control-plane probe in this suite.
 //
 // Evidence surface: public.evidence_sources does NOT exist in this schema.
 // Evidence is stored as decision_ledger.evidence_sources (JSONB). The canary
@@ -39,7 +41,7 @@ async function upsertOrg(name) {
   return data;
 }
 
-async function seedUser(orgTag, orgId) {
+async function createAuthUser(orgTag) {
   const email = `${runTag}-${orgTag}@quantivis.test`;
   const password = pw();
   const { data, error } = await sb.auth.admin.createUser({
@@ -47,11 +49,15 @@ async function seedUser(orgTag, orgId) {
     user_metadata: { is_demo: true, is_loadtest: true, org_tag: orgTag, run_tag: runTag },
   });
   if (error) { console.error(`FATAL user ${email}: ${error.message}`); process.exit(1); }
-  const userId = data.user.id;
+  return { email, password, user_id: data.user.id };
+}
+
+async function seedUser(orgTag, orgId) {
+  const user = await createAuthUser(orgTag);
   const { error: mErr } = await sb.from("organization_members")
-    .upsert({ organization_id: orgId, user_id: userId, role: SEEDED_ROLE });
-  if (mErr) { console.error(`FATAL member ${email}: ${mErr.message}`); process.exit(1); }
-  return { email, password, user_id: userId, role: SEEDED_ROLE };
+    .upsert({ organization_id: orgId, user_id: user.user_id, role: SEEDED_ROLE });
+  if (mErr) { console.error(`FATAL member ${user.email}: ${mErr.message}`); process.exit(1); }
+  return { ...user, role: SEEDED_ROLE };
 }
 
 // Canary rows are MANDATORY. Any failure exits non-zero and no .state.json
@@ -104,6 +110,9 @@ const orgB = await upsertOrg(`org_loadtest_b_${runTag}`);
 
 const userA = await seedUser("a", orgA.id);
 const userB = await seedUser("b", orgB.id);
+// User C deliberately has no tenant membership. It proves an existing admin can
+// add a least-privileged member without relying on any self-enrolment bypass.
+const userC = await createAuthUser("c-unassigned");
 
 const rowsA = await seedRows(orgA.id, userA.user_id, "a");
 const rowsB = await seedRows(orgB.id, userB.user_id, "b");
@@ -115,7 +124,7 @@ const artifact = {
   evidence_surface: "decision_ledger.evidence_sources (jsonb)",
   created_at: new Date().toISOString(),
   orgs: { a: orgA, b: orgB },
-  users: { a: userA, b: userB },
+  users: { a: userA, b: userB, c: userC },
   seeded_rows: { a: rowsA, b: rowsB },
 };
 
@@ -123,6 +132,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 mkdirSync(__dirname, { recursive: true });
 writeFileSync(`${__dirname}/.state.json`, JSON.stringify(artifact, null, 2));
 console.log(
-  `Seeded orgs A=${orgA.id} B=${orgB.id} role=${SEEDED_ROLE}. ` +
+  `Seeded orgs A=${orgA.id} B=${orgB.id} role=${SEEDED_ROLE}, plus unassigned membership subject. ` +
   `State → tests/tenant-isolation/.state.json`,
 );
