@@ -102,6 +102,57 @@ describe("Auth email provider preflight contract", () => {
     expect(preflight).toContain("service-role enforcement is broken");
   });
 
+  it("classifies every runtime sub-gate with bounded secret-safe codes", () => {
+    for (const code of [
+      "management-secret-list-failed",
+      "provider-secret-names-missing",
+      "management-api-keys-failed",
+      "legacy-service-role-unresolved",
+      "worker-provider-auth-failed",
+      "worker-provider-runtime-failed",
+      "worker-provider-unexpected",
+      "invalid-probe-privilege-bypass",
+      "invalid-probe-runtime-failed",
+      "invalid-probe-gateway-intercept",
+      "invalid-probe-unexpected",
+    ]) {
+      expect(preflight).toContain(`"${code}"`);
+    }
+
+    expect(preflight).toContain("AUTH_EMAIL_PREFLIGHT_DIAGNOSTIC_PATH");
+    expect(preflight).toContain('writeDiagnostic("failure", safeError.code, safeError.httpStatus)');
+    expect(preflight).toContain('writeDiagnostic("success", "runtime-ok")');
+
+    const diagnosticStart = preflight.indexOf("const writeDiagnostic =");
+    const diagnosticEnd = preflight.indexOf("const fail =", diagnosticStart);
+    expect(diagnosticStart).toBeGreaterThan(-1);
+    expect(diagnosticEnd).toBeGreaterThan(diagnosticStart);
+    const diagnosticSection = preflight.slice(diagnosticStart, diagnosticEnd);
+
+    expect(diagnosticSection).toContain("action: safeAction");
+    expect(diagnosticSection).toContain("status,");
+    expect(diagnosticSection).toContain("code,");
+    expect(diagnosticSection).toContain("http_status:");
+    expect(diagnosticSection).toContain("project_ref: safeProjectRef");
+    expect(diagnosticSection).not.toContain("message:");
+    expect(diagnosticSection).not.toContain("resendApiKey");
+    expect(diagnosticSection).not.toContain("resendFromEmail");
+    expect(diagnosticSection).not.toContain("serviceRoleKey");
+    expect(diagnosticSection).not.toContain("response");
+  });
+
+  it("does not copy remote response bodies into management failure diagnostics", () => {
+    const managementStart = preflight.indexOf("const managementRequest =");
+    const managementEnd = preflight.indexOf("const readConfiguredSecretNames", managementStart);
+    expect(managementStart).toBeGreaterThan(-1);
+    expect(managementEnd).toBeGreaterThan(managementStart);
+    const managementSection = preflight.slice(managementStart, managementEnd);
+
+    expect(managementSection).not.toContain("payload?.message");
+    expect(managementSection).not.toContain("payload?.error");
+    expect(managementSection).not.toContain("response body");
+  });
+
   it("validates staging replacement input before secret rotation and runtime before disable", () => {
     expectSafeWorkflowOrdering(stagingWorkflow, "staging");
   });
@@ -110,11 +161,14 @@ describe("Auth email provider preflight contract", () => {
     expectSafeWorkflowOrdering(productionWorkflow, "production");
   });
 
-  it("persists a secret-safe phase diagnostic for the staging Auth transport gate", () => {
+  it("persists secret-safe shell and preflight diagnostics for the staging Auth transport gate", () => {
     expect(stagingWorkflow).toContain("id: auth_email");
     expect(stagingWorkflow).toContain("trap on_error ERR");
     expect(stagingWorkflow).toContain('write_diagnostic "failure" "$exit_code"');
     expect(stagingWorkflow).toContain('write_diagnostic "success" "0"');
+    expect(stagingWorkflow).toContain(
+      'export AUTH_EMAIL_PREFLIGHT_DIAGNOSTIC_PATH="$diagnostic_dir/preflight.json"',
+    );
     expect(stagingWorkflow).toContain('phase="provider-input-preflight"');
     expect(stagingWorkflow).toContain('phase="provider-secret-rotation"');
     expect(stagingWorkflow).toContain('phase="runtime-provider-preflight"');
@@ -147,7 +201,7 @@ describe("Auth email provider preflight contract", () => {
       "if: ${{ always() && steps.auth_email.outcome != 'skipped' }}",
     );
     expect(stagingWorkflow).toContain(
-      "path: artifacts/auth-email-transport/diagnostic.json",
+      "path: artifacts/auth-email-transport/",
     );
     expect(stagingWorkflow).toContain("if-no-files-found: error");
   });

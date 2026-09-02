@@ -149,6 +149,7 @@ jobs:
           diagnostic_dir="artifacts/auth-email-transport"
           diagnostic_path="$diagnostic_dir/diagnostic.json"
           mkdir -p "$diagnostic_dir"
+          export AUTH_EMAIL_PREFLIGHT_DIAGNOSTIC_PATH="$diagnostic_dir/preflight.json"
           phase="initialise"
 
           write_diagnostic() {
@@ -226,6 +227,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: staging-auth-email-transport-diagnostic-${{ steps.release.outputs.sha }}
-          path: artifacts/auth-email-transport/diagnostic.json
+          path: artifacts/auth-email-transport/
           if-no-files-found: error
           retention-days: 14
