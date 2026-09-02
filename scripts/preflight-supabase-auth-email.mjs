@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
 const action = process.argv[2] || "runtime";
 const accessToken = process.env.SUPABASE_ACCESS_TOKEN?.trim();
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim();
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
 const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
+const diagnosticPath = process.env.AUTH_EMAIL_PREFLIGHT_DIAGNOSTIC_PATH?.trim();
 
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
 const PRODUCTION_REF = "izgfrekdamlgigehxoqs";
@@ -14,51 +18,119 @@ const REQUIRED_PROVIDER_SECRETS = ["RESEND_API_KEY", "RESEND_FROM_EMAIL"];
 const RESEND_TEST_RECIPIENT = "delivered@resend.dev";
 const ALLOWED_ACTIONS = new Set(["provider-input", "runtime"]);
 
-const fail = (message) => {
-  console.error(`::error::${message}`);
+class PreflightError extends Error {
+  constructor(code, message, httpStatus = null) {
+    super(message);
+    this.name = "PreflightError";
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
+const raise = (code, message, httpStatus = null) => {
+  throw new PreflightError(code, message, httpStatus);
+};
+
+const writeDiagnostic = (status, code, httpStatus = null) => {
+  if (!diagnosticPath) return;
+
+  const safeAction = ALLOWED_ACTIONS.has(action) ? action : "unsupported";
+  const safeProjectRef = ALLOWED_REFS.has(projectRef) ? projectRef : null;
+  const payload = {
+    action: safeAction,
+    status,
+    code,
+    http_status: Number.isInteger(httpStatus) ? httpStatus : null,
+    project_ref: safeProjectRef,
+  };
+
+  mkdirSync(dirname(diagnosticPath), { recursive: true });
+  writeFileSync(diagnosticPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+};
+
+const fail = (error) => {
+  const safeError = error instanceof PreflightError
+    ? error
+    : new PreflightError(
+        "unexpected-preflight-failure",
+        "Auth email preflight failed unexpectedly",
+      );
+
+  try {
+    writeDiagnostic("failure", safeError.code, safeError.httpStatus);
+  } catch {
+    console.error("::error::Auth email preflight diagnostic could not be written");
+  }
+
+  console.error(`::error::${safeError.message}`);
   process.exit(1);
 };
 
-if (!accessToken) fail("SUPABASE_ACCESS_TOKEN must be set");
-if (!projectRef) fail("SUPABASE_PROJECT_REF must be set");
-if (projectRef === RETIRED_REF) fail("Refusing to preflight Auth email on the retired Supabase project");
-if (!ALLOWED_REFS.has(projectRef)) fail(`Unrecognised Supabase project ref: ${projectRef}`);
-if (!ALLOWED_ACTIONS.has(action)) fail(`Unsupported Auth email preflight action: ${action}`);
-if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {
-  fail("RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent");
-}
+const validateInputs = () => {
+  if (!accessToken) raise("missing-access-token", "SUPABASE_ACCESS_TOKEN must be set");
+  if (!projectRef) raise("missing-project-ref", "SUPABASE_PROJECT_REF must be set");
+  if (projectRef === RETIRED_REF) {
+    raise("retired-project-ref", "Refusing to preflight Auth email on the retired Supabase project");
+  }
+  if (!ALLOWED_REFS.has(projectRef)) {
+    raise("unrecognised-project-ref", "Unrecognised Supabase project ref");
+  }
+  if (!ALLOWED_ACTIONS.has(action)) {
+    raise("unsupported-action", "Unsupported Auth email preflight action");
+  }
+  if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {
+    raise(
+      "provider-input-pair-mismatch",
+      "RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent",
+    );
+  }
+};
 
 const managementHeaders = {
   Authorization: `Bearer ${accessToken}`,
   "Content-Type": "application/json",
 };
 
-const managementRequest = async (path) => {
-  const response = await fetch(`https://api.supabase.com${path}`, {
-    method: "GET",
-    headers: managementHeaders,
-  });
-  const text = await response.text();
-  let payload = null;
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = { message: "Management API returned non-JSON content" };
-    }
+const managementRequest = async (path, failureCode, requestLabel) => {
+  let response;
+  try {
+    response = await fetch(`https://api.supabase.com${path}`, {
+      method: "GET",
+      headers: managementHeaders,
+    });
+  } catch {
+    raise(failureCode, `${requestLabel} request failed`);
   }
+
   if (!response.ok) {
-    const detail = payload?.message || payload?.error || `HTTP ${response.status}`;
-    throw new Error(`GET ${path} failed: ${detail}`);
+    raise(failureCode, `${requestLabel} request failed with HTTP ${response.status}`, response.status);
   }
-  return payload ?? {};
+
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    raise(failureCode, `${requestLabel} returned an invalid response`, response.status);
+  }
 };
 
 const readConfiguredSecretNames = async () => {
-  const payload = await managementRequest(`/v1/projects/${projectRef}/secrets`);
+  const payload = await managementRequest(
+    `/v1/projects/${projectRef}/secrets`,
+    "management-secret-list-failed",
+    "Supabase Auth email secret-list",
+  );
   const entries = Array.isArray(payload) ? payload : payload?.secrets;
   if (!Array.isArray(entries)) {
-    throw new Error("Supabase secret-list response has an unexpected shape");
+    raise(
+      "management-secret-list-failed",
+      "Supabase secret-list response has an unexpected shape",
+    );
   }
 
   return new Set(
@@ -72,15 +144,25 @@ const verifyProviderSecretPresence = async () => {
   const configuredNames = await readConfiguredSecretNames();
   const missing = REQUIRED_PROVIDER_SECRETS.filter((name) => !configuredNames.has(name));
   if (missing.length > 0) {
-    throw new Error(`Required Auth email provider secret name(s) missing: ${missing.join(", ")}`);
+    raise(
+      "provider-secret-names-missing",
+      `Required Auth email provider secret name(s) missing: ${missing.join(", ")}`,
+    );
   }
 };
 
 const getLegacyServiceRoleKey = async () => {
-  const payload = await managementRequest(`/v1/projects/${projectRef}/api-keys?reveal=true`);
+  const payload = await managementRequest(
+    `/v1/projects/${projectRef}/api-keys?reveal=true`,
+    "management-api-keys-failed",
+    "Supabase service-role key lookup",
+  );
   const keys = Array.isArray(payload) ? payload : payload?.keys;
   if (!Array.isArray(keys)) {
-    throw new Error("Supabase API-key response has an unexpected shape");
+    raise(
+      "management-api-keys-failed",
+      "Supabase API-key response has an unexpected shape",
+    );
   }
 
   const candidate = keys.find((key) =>
@@ -88,7 +170,10 @@ const getLegacyServiceRoleKey = async () => {
   );
   const value = candidate?.api_key || candidate?.key || candidate?.value;
   if (typeof value !== "string" || !value.startsWith("eyJ")) {
-    throw new Error("Legacy service_role JWT could not be resolved for Auth email runtime preflight");
+    raise(
+      "legacy-service-role-unresolved",
+      "Legacy service_role JWT could not be resolved for Auth email runtime preflight",
+    );
   }
   return value;
 };
@@ -99,30 +184,42 @@ const getLegacyServiceRoleKey = async () => {
 // used so no real user is contacted and domain reputation is not affected.
 const verifyProviderInput = async () => {
   if (!resendApiKey || !resendFromEmail) {
-    throw new Error("provider-input preflight requires RESEND_API_KEY and RESEND_FROM_EMAIL");
+    raise(
+      "provider-input-missing",
+      "provider-input preflight requires RESEND_API_KEY and RESEND_FROM_EMAIL",
+    );
   }
 
   const runId = process.env.GITHUB_RUN_ID?.trim() || "manual";
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim() || "0";
   const idempotencyKey = `quantivis-auth-preflight-input-${projectRef}-${runId}-${runAttempt}`;
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": idempotencyKey,
-    },
-    body: JSON.stringify({
-      from: resendFromEmail,
-      to: [RESEND_TEST_RECIPIENT],
-      subject: "Quantivis Auth email provider preflight",
-      text: "Controlled provider readiness probe before Auth email transport cutover.",
-    }),
-  });
+  let response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        from: resendFromEmail,
+        to: [RESEND_TEST_RECIPIENT],
+        subject: "Quantivis Auth email provider preflight",
+        text: "Controlled provider readiness probe before Auth email transport cutover.",
+      }),
+    });
+  } catch {
+    raise("provider-input-network-failed", "Resend provider-input preflight request failed");
+  }
 
   if (!response.ok) {
-    throw new Error(`Resend provider-input preflight failed with HTTP ${response.status}`);
+    raise(
+      "provider-input-rejected",
+      `Resend provider-input preflight failed with HTTP ${response.status}`,
+      response.status,
+    );
   }
 };
 
@@ -132,64 +229,105 @@ const verifyProviderInput = async () => {
 // credential values never leave the Edge runtime and are never printed.
 const verifySupabaseManagedProvider = async (serviceRoleKey) => {
   const workerUri = `https://${projectRef}.supabase.co/functions/v1/process-email-queue`;
-  const response = await fetch(workerUri, {
-    method: "POST",
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ mode: "provider_preflight" }),
-  });
+  let response;
+  try {
+    response = await fetch(workerUri, {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode: "provider_preflight" }),
+    });
+  } catch {
+    raise("worker-provider-runtime-failed", "process-email-queue provider preflight request failed");
+  }
 
   if (response.status === 200) return;
   if (response.status === 401 || response.status === 403) {
-    throw new Error(`process-email-queue provider preflight authorization failed with HTTP ${response.status}`);
+    raise(
+      "worker-provider-auth-failed",
+      `process-email-queue provider preflight authorization failed with HTTP ${response.status}`,
+      response.status,
+    );
   }
   if (response.status === 500 || response.status === 503) {
-    throw new Error(`process-email-queue provider preflight failed with HTTP ${response.status}`);
+    raise(
+      "worker-provider-runtime-failed",
+      `process-email-queue provider preflight failed with HTTP ${response.status}`,
+      response.status,
+    );
   }
-  throw new Error(`process-email-queue provider preflight returned unexpected HTTP ${response.status}`);
+  raise(
+    "worker-provider-unexpected",
+    `process-email-queue provider preflight returned unexpected HTTP ${response.status}`,
+    response.status,
+  );
 };
 
 const verifyWorkerRuntimeWithoutPrivilege = async () => {
   const workerUri = `https://${projectRef}.supabase.co/functions/v1/process-email-queue`;
-  const response = await fetch(workerUri, {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer quantivis-auth-email-preflight-invalid",
-      "Content-Type": "application/json",
-    },
-    body: "{}",
-  });
+  let response;
+  try {
+    response = await fetch(workerUri, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer quantivis-auth-email-preflight-invalid",
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+  } catch {
+    raise("invalid-probe-unexpected", "process-email-queue invalid-credential probe request failed");
+  }
 
   if (response.status === 403) return;
   if (response.status >= 200 && response.status < 300) {
-    throw new Error("process-email-queue accepted a non-service credential; service-role enforcement is broken");
+    raise(
+      "invalid-probe-privilege-bypass",
+      "process-email-queue accepted a non-service credential; service-role enforcement is broken",
+      response.status,
+    );
   }
   if (response.status === 500) {
-    throw new Error("process-email-queue runtime/provider credentials are missing or invalid");
+    raise(
+      "invalid-probe-runtime-failed",
+      "process-email-queue runtime/provider credentials are missing or invalid",
+      response.status,
+    );
   }
   if (response.status === 401) {
-    throw new Error("process-email-queue did not reach the expected in-function authorization path (HTTP 401, expected 403)");
+    raise(
+      "invalid-probe-gateway-intercept",
+      "process-email-queue did not reach the expected in-function authorization path (HTTP 401, expected 403)",
+      response.status,
+    );
   }
-  throw new Error(`process-email-queue preflight returned HTTP ${response.status}, expected 403`);
+  raise(
+    "invalid-probe-unexpected",
+    `process-email-queue preflight returned HTTP ${response.status}, expected 403`,
+    response.status,
+  );
 };
 
 try {
+  validateInputs();
+
   if (action === "provider-input") {
     await verifyProviderInput();
+    writeDiagnostic("success", "provider-input-ok");
     console.log(`Replacement Auth email provider input validated for ${projectRef}.`);
     console.log("Resend credential values and provider response bodies were never printed.");
-    process.exit(0);
+  } else {
+    await verifyProviderSecretPresence();
+    const serviceRoleKey = await getLegacyServiceRoleKey();
+    await verifySupabaseManagedProvider(serviceRoleKey);
+    await verifyWorkerRuntimeWithoutPrivilege();
+    writeDiagnostic("success", "runtime-ok");
+    console.log(`Independent Auth email runtime preflight passed for ${projectRef}.`);
+    console.log("Supabase-managed Resend credentials were validated in the worker; no secret value was printed.");
   }
-
-  await verifyProviderSecretPresence();
-  const serviceRoleKey = await getLegacyServiceRoleKey();
-  await verifySupabaseManagedProvider(serviceRoleKey);
-  await verifyWorkerRuntimeWithoutPrivilege();
-  console.log(`Independent Auth email runtime preflight passed for ${projectRef}.`);
-  console.log("Supabase-managed Resend credentials were validated in the worker; no secret value was printed.");
 } catch (error) {
-  fail(error instanceof Error ? error.message : String(error));
+  fail(error);
 }
