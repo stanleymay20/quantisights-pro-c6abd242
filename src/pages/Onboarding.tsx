@@ -24,9 +24,14 @@ const Onboarding = () => {
   const [status, setStatus] = useState<GateStatus>("checking");
   const [detail, setDetail] = useState<string | null>(null);
   const provisioningAttempted = useRef(false);
+  const refreshOrganizationsRef = useRef(refreshOrganizations);
 
   const onboardingStarted = user?.user_metadata?.quantivis_onboarding_started === true;
   const onboardingProvisioned = user?.user_metadata?.quantivis_onboarding_provisioned === true;
+
+  useEffect(() => {
+    refreshOrganizationsRef.current = refreshOrganizations;
+  }, [refreshOrganizations]);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +62,7 @@ const Onboarding = () => {
         setStatus("checking");
         sessionStorage.setItem(ONBOARDING_PROVISION_KEY, "allowed");
         try {
-          await refreshOrganizations();
+          await refreshOrganizationsRef.current();
         } catch (refreshError: unknown) {
           if (cancelled) return;
           setStatus("blocked");
@@ -109,7 +114,6 @@ const Onboarding = () => {
     onboardingStarted,
     orgError,
     orgLoading,
-    refreshOrganizations,
     user,
   ]);
 
@@ -149,7 +153,7 @@ const Onboarding = () => {
                 provisioningAttempted.current = false;
                 setStatus("checking");
                 setDetail(null);
-                void refreshOrganizations();
+                void refreshOrganizationsRef.current();
               }}
             >
               Retry verification
