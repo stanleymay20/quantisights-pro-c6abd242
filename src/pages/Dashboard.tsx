@@ -247,7 +247,7 @@ const Dashboard = () => {
           )}
 
           {decisionStatsError && (
-            <section className="rounded-xl border border-destructive/30 bg-card p-8 text-center" role="alert">
+            <section className="rounded-xl border border-destructive/30 bg-destructive/[0.04] px-4 py-3" role="alert">
               <p className="text-sm font-semibold text-foreground">Pending decisions cannot currently be verified</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Quantivis will not convert this query failure into “0 awaiting review.” Refresh the page or retry after the data service recovers.
