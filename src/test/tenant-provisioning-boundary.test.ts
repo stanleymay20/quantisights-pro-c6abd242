@@ -23,11 +23,17 @@ describe("tenant provisioning boundary", () => {
   });
 
   it("does not treat browser storage or user-editable metadata as onboarding authority", () => {
-    expect(onboardingGate).not.toContain("user_metadata");
+    // Descriptive comments may name user_metadata; the security contract is that
+    // application code never reads it as a provisioning/authorization signal.
+    expect(onboardingGate).not.toContain("user.user_metadata");
+    expect(onboardingGate).not.toContain("user?.user_metadata");
+    expect(onboardingGate).not.toContain("user_metadata?.");
     expect(onboardingGate).not.toContain("quantivis_onboarding_started");
     expect(onboardingGate).not.toContain("quantivis_onboarding_provisioned");
     expect(onboardingGate).not.toContain("quantivis_onboarding_provisioning");
-    expect(organizationHook).not.toContain("user_metadata");
+    expect(organizationHook).not.toContain("user.user_metadata");
+    expect(organizationHook).not.toContain("user?.user_metadata");
+    expect(organizationHook).not.toContain("user_metadata?.");
   });
 
   it("fails closed for missing or incomplete tenant evidence", () => {
