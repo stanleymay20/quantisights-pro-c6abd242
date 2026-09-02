@@ -32,7 +32,7 @@ jobs:
       GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
       SUPABASE_PROJECT_REF: ${{ inputs.target_environment == 'production' && 'izgfrekdamlgigehxoqs' || 'cmnihsbdbpubznlkmjbc' }}
       AUTH_SITE_URL: ${{ inputs.target_environment == 'production' && 'https://quantivis.io' || 'https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app' }}
-      AUTH_URI_ALLOW_LIST: ${{ inputs.target_environment == 'production' && 'https://quantivis.io/**,https://www.quantivis.io/**' || 'https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://**--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://quantivis-insights.lovable.app/**' }}
+      AUTH_URI_ALLOW_LIST: ${{ inputs.target_environment == 'production' && 'https://quantivis.io/**,https://www.quantivis.io/**' || 'https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/auth/callback,https://quantivis-insights.lovable.app/auth/callback,https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://**--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://quantivis-insights.lovable.app/**' }}
     steps:
       - name: Confirm target
         env:

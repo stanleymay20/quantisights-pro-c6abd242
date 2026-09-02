@@ -31,6 +31,8 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      AUTH_SITE_URL: https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app
+      AUTH_URI_ALLOW_LIST: https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/auth/callback,https://quantivis-insights.lovable.app/auth/callback,https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://**--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://quantivis-insights.lovable.app/**
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
@@ -104,6 +106,9 @@ jobs:
 
       - name: Verify security configuration
         run: npm run verify:security-config
+
+      - name: Ensure staging Auth redirect contract
+        run: node scripts/configure-supabase-google-oauth.mjs redirects-only
 
       - name: Build staging client
         run: npm run build -- --mode staging
