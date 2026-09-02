@@ -13,7 +13,7 @@ const pinnedSpecifier = "npm:@supabase/supabase-js@2.57.2";
 
 describe("auto-create-decisions Edge dependency pin", () => {
   it("maps the function's Supabase client import to the repository's known-good npm pin", () => {
-    expect(source).toContain(`from \"${legacySpecifier}\"`);
+    expect(source).toContain(`from "${legacySpecifier}"`);
     expect(config.imports?.[legacySpecifier]).toBe(pinnedSpecifier);
   });
 
