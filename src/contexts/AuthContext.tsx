@@ -226,7 +226,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       email,
       password,
       options: {
-        data: { full_name: fullName },
+        data: {
+          full_name: fullName,
+          quantivis_onboarding_started: true,
+        },
         emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
       },
     });
