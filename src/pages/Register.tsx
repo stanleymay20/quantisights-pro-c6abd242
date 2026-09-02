@@ -85,9 +85,10 @@ const Register = () => {
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
     try {
-      // Lovable Cloud Managed Social Login. The Google OAuth client is registered
-      // against the /~oauth/callback broker URLs, not Supabase's /auth/callback,
-      // so we must go through the lovable broker, not supabase.auth.signInWithOAuth.
+      // Preserve an explicit signup provenance marker across the provider round
+      // trip. AuthCallback converts this one-shot browser intent into durable
+      // user metadata before onboarding can authorize tenant provisioning.
+      sessionStorage.setItem("quantivis_oauth_signup", "1");
       const { lovable } = await import("@/integrations/lovable");
       sessionStorage.setItem("quantivis_oauth_next", "/onboarding");
       const result = await lovable.auth.signInWithOAuth("google", {
@@ -102,6 +103,7 @@ const Register = () => {
       }
       navigate("/onboarding", { replace: true });
     } catch (err: unknown) {
+      sessionStorage.removeItem("quantivis_oauth_signup");
       toast({ title: "Google sign-up failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
       setGoogleLoading(false);
     }
