@@ -101,8 +101,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [user?.id, fetchProfile]);
 
   useEffect(() => {
-    // Flag to prevent duplicate profile fetches from race between getSession and onAuthStateChange
+    // Supabase may finish a PKCE exchange before the initial getSession() read
+    // resolves. Keep a real early SIGNED_IN session instead of dropping it; the
+    // explicit hydration path below still validates it against /user before the
+    // initial auth state is committed.
     let initialSessionResolved = false;
+    let earlySignedInSession: Session | null = null;
     let cancelled = false;
 
     const resetAuthState = () => {
@@ -112,9 +116,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearSentryUser();
     };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      // Skip if this is the initial event that duplicates getSession
-      if (!initialSessionResolved || cancelled) return;
+    const applyAuthChange = (_event: string, nextSession: Session | null) => {
+      if (cancelled) return;
       // A SIGNED_OUT event the user didn't trigger via the Sign Out button
       // (e.g. the refresh token expired without a successful renewal) was
       // previously silent — no banner, navigation state just vanished. Say
@@ -124,13 +127,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         toast.error("Your session ended", { description: "Please sign in again to continue." });
       }
       deliberateSignOutRef.current = false;
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setSentryUser(session.user.id, session.user.email);
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
+      if (nextSession?.user) {
+        setSentryUser(nextSession.user.id, nextSession.user.email);
         setTimeout(() => {
           if (!cancelled) {
-            fetchProfile(session.user.id).catch((error: unknown) => {
+            fetchProfile(nextSession.user.id).catch((error: unknown) => {
               console.error("[AuthContext] Failed to refresh profile after auth change:", error instanceof Error ? error.message : error);
             });
           }
@@ -140,32 +143,63 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         clearSentryUser();
       }
       setLoading(false);
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (cancelled) return;
+
+      if (!initialSessionResolved) {
+        if (_event === "SIGNED_IN" && nextSession?.user) {
+          earlySignedInSession = nextSession;
+        }
+        return;
+      }
+
+      applyAuthChange(_event, nextSession);
     });
+
+    const validateSession = async (candidate: Session) => {
+      const { data: userData, error: userError } = await supabase.auth.getUser(candidate.access_token);
+      if (userError) throw userError;
+      if (!userData.user?.id) throw new Error("bad_jwt: invalid claim: missing sub claim");
+    };
 
     const hydrateSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        initialSessionResolved = true;
-
+        const { data: { session: storedSession }, error } = await supabase.auth.getSession();
         if (error) throw error;
 
+        let resolvedSession = earlySignedInSession ?? storedSession;
+
         // Some stale/corrupt local sessions pass getSession() but fail server validation.
-        if (session) {
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          if (userError) throw userError;
-          if (!userData.user?.id) throw new Error("bad_jwt: invalid claim: missing sub claim");
+        // Validate the buffered OAuth session explicitly too, so fixing the PKCE race
+        // never weakens the existing server-side session check.
+        if (resolvedSession) {
+          await validateSession(resolvedSession);
+        }
+
+        // A PKCE SIGNED_IN event can arrive while /user validation is in flight.
+        // Prefer and validate that newer session before committing initial state.
+        if (earlySignedInSession && earlySignedInSession.access_token !== resolvedSession?.access_token) {
+          resolvedSession = earlySignedInSession;
+          await validateSession(resolvedSession);
         }
 
         if (cancelled) return;
-        setSession(session);
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-          setSentryUser(session.user.id, session.user.email);
+        setSession(resolvedSession);
+        setUser(resolvedSession?.user ?? null);
+        if (resolvedSession?.user) {
+          await fetchProfile(resolvedSession.user.id);
+          setSentryUser(resolvedSession.user.id, resolvedSession.user.email);
         } else {
           clearSentryUser();
         }
+
+        initialSessionResolved = true;
+        earlySignedInSession = null;
       } catch (error) {
+        initialSessionResolved = true;
+        earlySignedInSession = null;
         if (isBadJwtError(error)) {
           console.warn("[AuthContext] Clearing stale Supabase auth token after bad JWT:", error instanceof Error ? error.message : error);
           clearSupabaseAuthStorage();
