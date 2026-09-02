@@ -109,4 +109,46 @@ describe("Auth email provider preflight contract", () => {
   it("validates production replacement input before secret rotation and runtime before disable", () => {
     expectSafeWorkflowOrdering(productionWorkflow, "production");
   });
+
+  it("persists a secret-safe phase diagnostic for the staging Auth transport gate", () => {
+    expect(stagingWorkflow).toContain("id: auth_email");
+    expect(stagingWorkflow).toContain("trap on_error ERR");
+    expect(stagingWorkflow).toContain('write_diagnostic "failure" "$exit_code"');
+    expect(stagingWorkflow).toContain('write_diagnostic "success" "0"');
+    expect(stagingWorkflow).toContain('phase="provider-input-preflight"');
+    expect(stagingWorkflow).toContain('phase="provider-secret-rotation"');
+    expect(stagingWorkflow).toContain('phase="runtime-provider-preflight"');
+    expect(stagingWorkflow).toContain('phase="disable-existing-transport"');
+    expect(stagingWorkflow).toContain('phase="hook-secret-rotation"');
+    expect(stagingWorkflow).toContain('phase="configure-transport"');
+    expect(stagingWorkflow).toContain('phase="verify-transport"');
+    expect(stagingWorkflow).toContain('phase="configure-staging-rate-limits"');
+
+    const diagnosticStart = stagingWorkflow.indexOf("write_diagnostic() {");
+    const diagnosticEnd = stagingWorkflow.indexOf("trap on_error ERR", diagnosticStart);
+    expect(diagnosticStart).toBeGreaterThan(-1);
+    expect(diagnosticEnd).toBeGreaterThan(diagnosticStart);
+    const diagnosticSection = stagingWorkflow.slice(diagnosticStart, diagnosticEnd);
+
+    expect(diagnosticSection).toContain('"status": "%s"');
+    expect(diagnosticSection).toContain('"phase": "%s"');
+    expect(diagnosticSection).toContain('"exit_code": %s');
+    expect(diagnosticSection).toContain('"project_ref": "%s"');
+    expect(diagnosticSection).toContain('"certified_sha": "%s"');
+    expect(diagnosticSection).not.toContain("RESEND_API_KEY");
+    expect(diagnosticSection).not.toContain("RESEND_FROM_EMAIL");
+    expect(diagnosticSection).not.toContain("SEND_EMAIL_HOOK_SECRET");
+    expect(diagnosticSection).not.toContain("BASH_COMMAND");
+
+    expect(stagingWorkflow).toContain(
+      "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    );
+    expect(stagingWorkflow).toContain(
+      "if: ${{ always() && steps.auth_email.outcome != 'skipped' }}",
+    );
+    expect(stagingWorkflow).toContain(
+      "path: artifacts/auth-email-transport/diagnostic.json",
+    );
+    expect(stagingWorkflow).toContain("if-no-files-found: error");
+  });
 });
