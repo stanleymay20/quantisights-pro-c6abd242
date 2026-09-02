@@ -30,6 +30,17 @@ describe("social OAuth authority", () => {
     );
   });
 
+  it("refuses Google OAuth inside an embedded preview before contacting the provider", () => {
+    expect(adapter).toContain("const isEmbeddedBrowserContext");
+    expect(adapter).toContain("window.self !== window.top");
+    expect(adapter).toContain("Google sign-in cannot run inside an embedded preview");
+
+    const guardIndex = adapter.indexOf("if (isEmbeddedBrowserContext())");
+    const providerPreflightIndex = adapter.indexOf("await ensureGoogleProviderEnabled()");
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(providerPreflightIndex);
+  });
+
   it("does not advertise an unverified Google provider as available", () => {
     expect(googleButton).toContain("/auth/v1/settings");
     expect(googleButton).toContain('type ProviderState = "checking" | "available" | "unavailable"');
