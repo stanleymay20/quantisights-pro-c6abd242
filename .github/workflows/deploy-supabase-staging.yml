@@ -140,20 +140,47 @@ jobs:
       # and validate them inside the service-role-protected worker. Never disable
       # the independent path before the replacement provider/runtime is proven.
       - name: Configure independent staging Auth email transport
+        id: auth_email
+        env:
+          CERTIFIED_SHA: ${{ steps.release.outputs.sha }}
         run: |
           set -Eeuo pipefail
 
+          diagnostic_dir="artifacts/auth-email-transport"
+          diagnostic_path="$diagnostic_dir/diagnostic.json"
+          mkdir -p "$diagnostic_dir"
+          phase="initialise"
+
+          write_diagnostic() {
+            local status="$1"
+            local exit_code="$2"
+            printf '{\n  "status": "%s",\n  "phase": "%s",\n  "exit_code": %s,\n  "project_ref": "%s",\n  "certified_sha": "%s"\n}\n' \
+              "$status" "$phase" "$exit_code" "$SUPABASE_PROJECT_REF" "$CERTIFIED_SHA" > "$diagnostic_path"
+          }
+
+          on_error() {
+            local exit_code="$?"
+            trap - ERR
+            write_diagnostic "failure" "$exit_code"
+            exit "$exit_code"
+          }
+
+          trap on_error ERR
+
+          phase="validate-provider-input-pair"
           if { [ -n "$RESEND_API_KEY" ] && [ -z "$RESEND_FROM_EMAIL" ]; } || \
              { [ -z "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; }; then
             echo "::error::RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent"
-            exit 1
+            false
           fi
 
           if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
             echo "::add-mask::$RESEND_API_KEY"
             # Prove the proposed replacement pair before it can overwrite a
             # working Supabase-managed provider configuration.
+            phase="provider-input-preflight"
             node scripts/preflight-supabase-auth-email.mjs provider-input
+            phase="provider-secret-rotation"
             supabase secrets set \
               RESEND_API_KEY="$RESEND_API_KEY" \
               RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
@@ -164,21 +191,41 @@ jobs:
 
           # Prove the credentials that are actually active in Supabase plus the
           # worker's exact service-role authorization before changing hook/cron.
+          phase="runtime-provider-preflight"
           node scripts/preflight-supabase-auth-email.mjs runtime
 
+          phase="disable-existing-transport"
           node scripts/configure-supabase-auth-email.mjs disable
+          phase="generate-hook-secret"
           hook_secret="v1,whsec_$(openssl rand -base64 32 | tr -d '\n')"
           echo "::add-mask::$hook_secret"
           export SEND_EMAIL_HOOK_SECRET="$hook_secret"
+          phase="hook-secret-rotation"
           supabase secrets set \
             SEND_EMAIL_HOOK_SECRET="$hook_secret" \
             --project-ref "$SUPABASE_PROJECT_REF"
+          phase="configure-transport"
           node scripts/configure-supabase-auth-email.mjs configure
           unset SEND_EMAIL_HOOK_SECRET
+          phase="verify-transport"
           node scripts/configure-supabase-auth-email.mjs verify
 
           # Client Acceptance deliberately exercises a real recovery email. The
           # staging project therefore gets a bounded, staging-only hourly email
           # allowance high enough for repeated certification runs. Production
           # configuration is never touched by this script.
+          phase="configure-staging-rate-limits"
           node scripts/configure-staging-auth-rate-limits.mjs
+
+          phase="complete"
+          write_diagnostic "success" "0"
+          trap - ERR
+
+      - name: Publish staging Auth email transport diagnostic
+        if: ${{ always() && steps.auth_email.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-auth-email-transport-diagnostic-${{ steps.release.outputs.sha }}
+          path: artifacts/auth-email-transport/diagnostic.json
+          if-no-files-found: error
+          retention-days: 14
