@@ -4,6 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { safeInternalNavigation } from "@/lib/safe-navigation";
 import logo from "@/assets/quantivis-logo.png";
 
+const GOOGLE_SIGNUP_FRESHNESS_MS = 30 * 60 * 1000;
+
 const isLocalEvidenceHost = () =>
   window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
 
@@ -17,6 +19,14 @@ const consumeGoogleSignupIntent = () => {
   const isSignup = sessionStorage.getItem("quantivis_oauth_signup") === "1";
   sessionStorage.removeItem("quantivis_oauth_signup");
   return isSignup;
+};
+
+const isFreshGoogleSignup = (createdAt: string | undefined) => {
+  if (!createdAt) return false;
+  const createdMs = Date.parse(createdAt);
+  if (!Number.isFinite(createdMs)) return false;
+  const ageMs = Date.now() - createdMs;
+  return ageMs >= 0 && ageMs <= GOOGLE_SIGNUP_FRESHNESS_MS;
 };
 
 const readOAuthError = (url: URL) => {
@@ -88,19 +98,36 @@ const AuthCallback = () => {
       settled = true;
       if (ok) {
         if (googleSignupIntent && next === "/onboarding") {
-          // Only a successful Google signup callback may grant the temporary
-          // authority that lets onboarding create the user's first tenant.
-          const { error: metadataError } = await supabase.auth.updateUser({
-            data: { quantivis_onboarding_started: true },
-          });
-          if (metadataError) {
-            console.error("[AuthCallback] Failed to record signup provenance:", metadataError.message);
+          // A browser-side "sign up" click is not sufficient provenance for an
+          // existing account. Re-read the authenticated user from Auth and only
+          // grant onboarding authority when this account itself was freshly
+          // created in the current environment.
+          const { data: verifiedUserData, error: verifiedUserError } = await supabase.auth.getUser();
+          if (verifiedUserError || !verifiedUserData.user) {
+            console.error("[AuthCallback] Failed to verify Google signup identity:", verifiedUserError?.message || "missing user");
             await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
             if (cancelled) return;
             setError(true);
             setMessage("We could not verify workspace setup intent. Please start registration again.");
             window.setTimeout(() => !cancelled && navigate("/register", { replace: true }), 1800);
             return;
+          }
+
+          if (isFreshGoogleSignup(verifiedUserData.user.created_at)) {
+            const { error: metadataError } = await supabase.auth.updateUser({
+              data: { quantivis_onboarding_started: true },
+            });
+            if (metadataError) {
+              console.error("[AuthCallback] Failed to record signup provenance:", metadataError.message);
+              await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+              if (cancelled) return;
+              setError(true);
+              setMessage("We could not verify workspace setup intent. Please start registration again.");
+              window.setTimeout(() => !cancelled && navigate("/register", { replace: true }), 1800);
+              return;
+            }
+          } else {
+            console.info("[AuthCallback] Existing Google account cannot acquire new-tenant signup provenance.");
           }
         }
 
