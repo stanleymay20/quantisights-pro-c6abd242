@@ -56,6 +56,16 @@ describe("tenant provisioning boundary", () => {
     expect(controlPlaneMigration).not.toContain("CREATE POLICY \"Users can create organizations\"");
   });
 
+  it("preserves verified invitations without restoring generic tenant auto-provisioning", () => {
+    expect(controlPlaneMigration).toContain("CREATE OR REPLACE FUNCTION public.accept_invitation(_token uuid)");
+    expect(controlPlaneMigration).toContain("IF auth.uid() IS NULL THEN");
+    expect(controlPlaneMigration).toContain("lower(current_email) <> lower(inv.email)");
+    expect(controlPlaneMigration).toContain("INSERT INTO public.profiles (user_id, full_name, organization_id)");
+    expect(controlPlaneMigration).toContain("ON CONFLICT (user_id) DO NOTHING");
+    expect(controlPlaneMigration).toContain("VALUES (inv.organization_id, auth.uid(), inv.role)");
+    expect(controlPlaneMigration).toContain("GRANT EXECUTE ON FUNCTION public.accept_invitation(uuid) TO authenticated");
+  });
+
   it("removes self-enrolment and admin-to-owner membership escalation", () => {
     expect(controlPlaneMigration).toContain('DROP POLICY IF EXISTS "Owners/admins can insert members"');
     expect(controlPlaneMigration).toContain('DROP POLICY IF EXISTS "Owners/admins can update members"');
