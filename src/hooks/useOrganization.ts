@@ -21,6 +21,7 @@ interface OrganizationSwitchDetail {
 
 const ORG_STORAGE_KEY = "quantivis_org_id";
 const ORG_SWITCH_EVENT = "quantivis:org-switch";
+const ONBOARDING_PROVISION_KEY = "quantivis_onboarding_provisioning";
 
 // Deduplicate organization discovery per authenticated user. Failed promises are
 // evicted so retry can actually re-read membership rather than replay an error.
@@ -60,6 +61,24 @@ export const useOrganization = () => {
 
   const ensurePersonalTenant = useCallback(async (): Promise<Organization | null> => {
     if (!user) return null;
+
+    const provisioningAuthorized =
+      typeof window !== "undefined" &&
+      sessionStorage.getItem(ONBOARDING_PROVISION_KEY) === "allowed" &&
+      user.user_metadata?.quantivis_onboarding_started === true;
+
+    if (!provisioningAuthorized) {
+      throw new Error("Tenant provisioning is restricted to an explicitly verified signup onboarding flow.");
+    }
+
+    // Consume the one-shot browser authorization before any write. A retry must
+    // be explicitly re-authorized by the onboarding boundary.
+    sessionStorage.removeItem(ONBOARDING_PROVISION_KEY);
+
+    // Re-read membership immediately before provisioning so a concurrent
+    // restore/invite cannot race us into creating a duplicate tenant.
+    const existing = await fetchMembershipOrgs();
+    if (existing.length > 0) return existing[0];
 
     const displayName = (
       user.user_metadata?.full_name
@@ -116,18 +135,36 @@ export const useOrganization = () => {
       console.error("[useOrganization] Default workspace quota provisioning failed:", quotaError.message);
     }
 
+    // Once a tenant exists, remove the authority to create another one. Keep a
+    // durable non-authorizing marker so legitimate incomplete onboarding can be
+    // resumed later without treating a returning user as a migration failure.
+    const { error: metadataError } = await supabase.auth.updateUser({
+      data: {
+        quantivis_onboarding_started: false,
+        quantivis_onboarding_provisioned: true,
+      },
+    });
+    if (metadataError) {
+      throw new Error(`Tenant created but onboarding provenance could not be recorded: ${metadataError.message}`);
+    }
+
     await refreshProfile();
     return { id: org.id, name: org.name, role: "owner", industry: null };
-  }, [refreshProfile, user]);
+  }, [fetchMembershipOrgs, refreshProfile, user]);
 
   const fetchOrCreateOrgs = useCallback(async (): Promise<Organization[]> => {
     let orgs = await fetchMembershipOrgs();
-    if (orgs.length === 0) {
+    const provisioningAuthorized =
+      typeof window !== "undefined" &&
+      sessionStorage.getItem(ONBOARDING_PROVISION_KEY) === "allowed" &&
+      user?.user_metadata?.quantivis_onboarding_started === true;
+
+    if (orgs.length === 0 && provisioningAuthorized) {
       const fallbackOrg = await ensurePersonalTenant();
       orgs = fallbackOrg ? [fallbackOrg] : [];
     }
     return orgs;
-  }, [ensurePersonalTenant, fetchMembershipOrgs]);
+  }, [ensurePersonalTenant, fetchMembershipOrgs, user]);
 
   const resolveOrganizations = useCallback(async (force = false) => {
     const seq = ++requestSeq.current;
