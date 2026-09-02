@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const organizationHook = readFileSync(resolve(root, "src/hooks/useOrganization.ts"), "utf8");
 const onboardingGate = readFileSync(resolve(root, "src/pages/Onboarding.tsx"), "utf8");
+const stagingDeploy = readFileSync(resolve(root, ".github/workflows/deploy-supabase-staging.yml"), "utf8");
 const controlPlaneMigration = readFileSync(
   resolve(root, "supabase/migrations/20260902153000_fail_closed_tenant_control_plane.sql"),
   "utf8",
@@ -55,5 +56,21 @@ describe("tenant provisioning boundary", () => {
     expect(controlPlaneMigration).not.toContain("OR user_id = auth.uid()");
     expect(controlPlaneMigration).toContain("AND role <> 'owner'::public.org_role");
     expect(controlPlaneMigration).toContain("WITH CHECK (");
+  });
+
+  it("proves the tenant control plane on exact-SHA staging before the independent email gate", () => {
+    const migrationApply = stagingDeploy.indexOf("- name: Apply staging migrations");
+    const edgeVerify = stagingDeploy.indexOf("- name: Verify staging Edge Functions");
+    const tenantProof = stagingDeploy.indexOf("- name: Prove staging tenant control plane");
+    const emailGate = stagingDeploy.indexOf("- name: Configure independent staging Auth email transport");
+
+    expect(stagingDeploy).toContain("LOAD_TARGET: staging");
+    expect(stagingDeploy).toContain("LOAD_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    expect(stagingDeploy).toContain("SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}");
+    expect(stagingDeploy).toContain("staging-tenant-control-plane-${{ steps.release.outputs.sha }}");
+    expect(migrationApply).toBeGreaterThan(-1);
+    expect(edgeVerify).toBeGreaterThan(migrationApply);
+    expect(tenantProof).toBeGreaterThan(edgeVerify);
+    expect(emailGate).toBeGreaterThan(tenantProof);
   });
 });
