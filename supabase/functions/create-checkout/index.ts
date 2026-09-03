@@ -87,6 +87,14 @@ serve(async (req) => {
       });
     }
 
+    const { data: organization, error: organizationError } = await supabaseClient
+      .from("organizations")
+      .select("onboarding_completed")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (organizationError) throw organizationError;
+    if (!organization) throw new Error("Verified organization could not be loaded");
+
     // Billing history is organization-scoped. Never discover a reusable Stripe
     // customer merely by the purchaser's email address.
     const { data: subscriptionHistory, error: historyError } = await supabaseClient
@@ -162,9 +170,18 @@ serve(async (req) => {
     const hadRecordedTrial = history.some((row: any) => row.is_trial === true);
     const trialAlreadyUsed = Boolean(pilotRecord) || hadRecordedTrial || hadTrustedStripeTrial;
 
+    const successPath = organization.onboarding_completed
+      ? "/dashboard?checkout=success"
+      : "/onboarding?checkout=success&session_id={CHECKOUT_SESSION_ID}";
+
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : user.email,
+      client_reference_id: organizationId,
+      metadata: {
+        organization_id: organizationId,
+        purchaser_user_id: user.id,
+      },
       line_items: [{ price: priceId, quantity: 1 }],
       mode: "subscription",
       automatic_tax: { enabled: true },
@@ -183,7 +200,7 @@ serve(async (req) => {
         },
       },
       allow_promotion_codes: true,
-      success_url: `${allowedOrigin}/dashboard?checkout=success`,
+      success_url: `${allowedOrigin}${successPath}`,
       cancel_url: `${allowedOrigin}/pricing`,
       billing_address_collection: "required",
     });
