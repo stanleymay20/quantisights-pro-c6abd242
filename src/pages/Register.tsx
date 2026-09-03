@@ -9,6 +9,12 @@ import GoogleButton from "@/components/auth/GoogleButton";
 import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { beginVerifiedSignupIntent, clearVerifiedSignupIntent } from "@/lib/signup-intent";
+import {
+  clearCommercialSignupIntent,
+  isCommercialPlan,
+  readCommercialSignupIntent,
+  saveCommercialSignupIntent,
+} from "@/lib/commercial-intent";
 
 const PASSWORD_RULES = [
   { label: "At least 12 characters", test: (p: string) => p.length >= 12 },
@@ -29,6 +35,8 @@ const Register = () => {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   const planParam = params.get("plan");
+  const selectedPlan = isCommercialPlan(planParam) ? planParam : null;
+  const selectedBillingInterval = params.get("annual") === "1" ? "year" : "month";
   const pilotParam = params.get("pilot") === "1";
   const PLAN_LABELS: Record<string, string> = {
     starter: `${TIERS.starter.name} — ${TIERS.starter.currency}${TIERS.starter.price}/mo`,
@@ -36,6 +44,17 @@ const Register = () => {
   };
   const { toast } = useToast();
   const throttle = useAuthThrottle(3, 120_000);
+
+  const captureCommercialIntent = () => {
+    if (pilotParam) {
+      clearCommercialSignupIntent();
+      return null;
+    }
+    if (selectedPlan) {
+      return saveCommercialSignupIntent(selectedPlan, selectedBillingInterval);
+    }
+    return readCommercialSignupIntent();
+  };
 
   const passedRules = useMemo(() => PASSWORD_RULES.map(r => r.test(password)), [password]);
   const allPassed = passedRules.every(Boolean);
@@ -56,9 +75,15 @@ const Register = () => {
     }
     setIsLoading(true);
     try {
+      captureCommercialIntent();
       await beginVerifiedSignupIntent();
       await signUp(email, password, fullName);
-      toast({ title: "Verification email sent", description: "Confirm your email to continue setting up your Quantivis workspace." });
+      toast({
+        title: "Verification email sent",
+        description: selectedPlan
+          ? "Confirm your email to create your workspace and continue to secure checkout."
+          : "Confirm your email to continue setting up your Quantivis workspace.",
+      });
       navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
       clearVerifiedSignupIntent();
@@ -88,9 +113,10 @@ const Register = () => {
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
     try {
+      captureCommercialIntent();
       await beginVerifiedSignupIntent();
-      // The opaque server-issued signup intent is the authorization evidence.
       // This browser marker only preserves navigation intent across OAuth.
+      // Tenant authority remains the opaque server-issued signup intent.
       sessionStorage.setItem("quantivis_oauth_signup", "1");
       const { lovable } = await import("@/integrations/lovable");
       sessionStorage.setItem("quantivis_oauth_next", "/onboarding");
@@ -116,7 +142,9 @@ const Register = () => {
   return (
     <AuthLayout
       title="Create your workspace"
-      subtitle={`Set up Quantivis and evaluate the real workflow with a ${PILOT_TERMS.days}-day ${PILOT_TERMS.tierLabel} pilot. No card required and no automatic renewal.`}
+      subtitle={selectedPlan
+        ? "Create your account to continue to secure checkout. Your selected plan is preserved through verification."
+        : `Set up Quantivis and evaluate the real workflow with a ${PILOT_TERMS.days}-day ${PILOT_TERMS.tierLabel} pilot. No card required and no automatic renewal.`}
       ribbon={
         pilotParam ? (
           <div className="mb-6 -mt-1 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/20 text-center">
@@ -128,16 +156,16 @@ const Register = () => {
               No payment card · No automatic renewal · Starts after workspace setup
             </p>
           </div>
-        ) : planParam && PLAN_LABELS[planParam] ? (
+        ) : selectedPlan ? (
           <div className="mb-6 -mt-1 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/20 text-center">
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               Paid plan selected
             </p>
             <p className="text-sm font-semibold text-primary mt-0.5">
-              {PLAN_LABELS[planParam]}
+              {PLAN_LABELS[selectedPlan]}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Evaluate with the no-card pilot first, or choose checkout later · Paid checkout includes a {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility}
+              Continue to secure checkout after email verification · Paid checkout includes a {COMMERCIAL_TERMS.trialDays}-day trial for {COMMERCIAL_TERMS.trialEligibility}
             </p>
           </div>
         ) : null
