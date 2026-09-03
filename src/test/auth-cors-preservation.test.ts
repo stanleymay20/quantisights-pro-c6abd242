@@ -4,12 +4,13 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("authentication CORS preservation", () => {
-  it("keeps the client-acceptance browser origin staging-only", () => {
+  it("keeps client-acceptance and Netlify preview origins staging-only", () => {
     const cors = read("supabase/functions/_shared/cors.ts");
 
     expect(cors).toContain('const STAGING_SUPABASE_URL = "https://cmnihsbdbpubznlkmjbc.supabase.co";');
     expect(cors).toContain('"http://127.0.0.1:4173"');
-    expect(cors).toContain("supabaseUrl === STAGING_SUPABASE_URL && STAGING_ONLY_ORIGINS.has(origin)");
+    expect(cors).toContain('if (supabaseUrl !== STAGING_SUPABASE_URL) return false;');
+    expect(cors).toContain("STAGING_ONLY_ORIGINS.has(origin) || STAGING_NETLIFY_PREVIEW.test(origin)");
     expect(cors).toContain('"https://quantivis-insights.lovable.app"');
   });
 
