@@ -99,7 +99,8 @@ describe("first paying customer readiness", () => {
 
   it("manages billing by organization subscription rather than email-only lookup", () => {
     expect(portal).toContain('.from("subscriptions")');
-    expect(portal).toContain('.eq("organization_id", profile.organization_id)');
+    expect(portal).toContain("const organizationId = profile.organization_id");
+    expect(portal).toContain('.eq("organization_id", organizationId)');
     expect(portal).toContain('.not("stripe_subscription_id", "like", "pilot_%")');
     expect(portal).not.toContain("stripe.customers.list({ email:");
   });
