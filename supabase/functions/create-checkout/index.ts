@@ -10,6 +10,16 @@ const PRICE_CATALOG = new Map<string, { tier: "starter" | "growth"; interval: "m
   ["price_1TiqiLJYFIBeCvef3CEFlzIL", { tier: "growth", interval: "year" }],
 ]);
 
+const isBlockingSubscription = (subscription: {
+  status?: string | null;
+  trial_end?: string | null;
+}): boolean => {
+  if (subscription.status === "active" || subscription.status === "past_due") return true;
+  if (subscription.status !== "trialing") return false;
+  if (!subscription.trial_end) return true;
+  return new Date(subscription.trial_end).getTime() > Date.now();
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
@@ -37,7 +47,7 @@ serve(async (req) => {
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) throw new Error(`Auth error: ${userError.message}`);
     const user = userData.user;
-    if (!user?.email) throw new Error("User not authenticated");
+    if (!user?.id || !user.email) throw new Error("User not authenticated");
 
     const body = await req.json();
     const { priceId } = body as { priceId?: string };
@@ -61,11 +71,12 @@ serve(async (req) => {
         status: 403,
       });
     }
+    const organizationId = profile.organization_id;
 
     const { data: membership, error: membershipError } = await supabaseClient
       .from("organization_members")
       .select("role")
-      .eq("organization_id", profile.organization_id)
+      .eq("organization_id", organizationId)
       .eq("user_id", user.id)
       .maybeSingle();
     if (membershipError) throw membershipError;
@@ -76,40 +87,81 @@ serve(async (req) => {
       });
     }
 
-    // The no-card product pilot already gives the customer time to evaluate.
-    // Once it has been used, conversion to a paid plan must not silently stack
-    // another Stripe trial and postpone the first charge again.
-    const { data: pilotRecord, error: pilotError } = await supabaseClient
+    // Billing history is organization-scoped. Never discover a reusable Stripe
+    // customer merely by the purchaser's email address.
+    const { data: subscriptionHistory, error: historyError } = await supabaseClient
       .from("subscriptions")
-      .select("id")
-      .eq("organization_id", profile.organization_id)
-      .eq("stripe_subscription_id", `pilot_${profile.organization_id}`)
-      .maybeSingle();
-    if (pilotError) throw pilotError;
+      .select("stripe_customer_id,stripe_subscription_id,status,is_trial,trial_end,created_at")
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (historyError) throw historyError;
+
+    const history = subscriptionHistory ?? [];
+    const pilotRecord = history.find((row: any) => row.stripe_subscription_id === `pilot_${organizationId}`);
+    const blockingStoredSubscription = history.find(
+      (row: any) => !String(row.stripe_subscription_id ?? "").startsWith("pilot_") && isBlockingSubscription(row),
+    );
+    if (blockingStoredSubscription) {
+      return new Response(JSON.stringify({ error: "An active subscription already exists. Manage it from Billing." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 409,
+      });
+    }
 
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "";
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
-    const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     let customerId: string | undefined;
-    let hadStripeTrial = false;
-    if (customers.data.length > 0) {
-      customerId = customers.data[0].id;
-      const existingSubs = await stripe.subscriptions.list({ customer: customerId, limit: 10 });
-      const activeSubscription = existingSubs.data.find(
-        (s: any) => s.status === "active" || s.status === "trialing" || s.status === "past_due",
+    const linkedCustomer = history.find(
+      (row: any) =>
+        !String(row.stripe_subscription_id ?? "").startsWith("pilot_")
+        && typeof row.stripe_customer_id === "string"
+        && row.stripe_customer_id.startsWith("cus_"),
+    );
+
+    if (linkedCustomer?.stripe_customer_id) {
+      try {
+        const customer = await stripe.customers.retrieve(linkedCustomer.stripe_customer_id);
+        if (!("deleted" in customer && customer.deleted)) {
+          customerId = customer.id;
+        }
+      } catch (error) {
+        console.error("[create-checkout] linked Stripe customer could not be retrieved:", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // Defense against webhook lag: when a trusted organization-linked customer
+    // exists, Stripe itself must not already contain a live subscription for this org.
+    let hadTrustedStripeTrial = false;
+    if (customerId) {
+      const existingSubs = await stripe.subscriptions.list({ customer: customerId, limit: 100 });
+      const trustedOrgSubs = existingSubs.data.filter(
+        (subscription: any) => subscription.metadata?.organization_id === organizationId,
       );
+      const activeSubscription = trustedOrgSubs.find((subscription: any) => {
+        if (subscription.status === "active" || subscription.status === "past_due") return true;
+        if (subscription.status !== "trialing") return false;
+        return !subscription.trial_end || subscription.trial_end * 1000 > Date.now();
+      });
       if (activeSubscription) {
         return new Response(JSON.stringify({ error: "An active subscription already exists. Manage it from Billing." }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 409,
         });
       }
-      hadStripeTrial = existingSubs.data.some((s: any) => s.trial_start !== null || s.status === "trialing");
+      hadTrustedStripeTrial = trustedOrgSubs.some(
+        (subscription: any) => subscription.trial_start !== null || subscription.trial_end !== null,
+      );
     }
 
-    const trialAlreadyUsed = Boolean(pilotRecord) || hadStripeTrial;
+    // Quantivis offers one evaluation path per organization. A prior no-card
+    // pilot or paid-checkout trial means the next checkout starts paid access
+    // immediately rather than silently stacking another trial.
+    const hadRecordedTrial = history.some((row: any) => row.is_trial === true);
+    const trialAlreadyUsed = Boolean(pilotRecord) || hadRecordedTrial || hadTrustedStripeTrial;
+
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : user.email,
@@ -124,8 +176,10 @@ serve(async (req) => {
           billing_interval: catalogEntry.interval,
           tier: catalogEntry.tier,
           source: "quantivis_web",
-          organization_id: profile.organization_id,
+          organization_id: organizationId,
+          purchaser_user_id: user.id,
           prior_pilot_used: pilotRecord ? "true" : "false",
+          prior_evaluation_used: trialAlreadyUsed ? "true" : "false",
         },
       },
       allow_promotion_codes: true,
