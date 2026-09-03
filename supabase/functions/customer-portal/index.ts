@@ -46,11 +46,12 @@ serve(async (req) => {
         status: 403,
       });
     }
+    const organizationId = profile.organization_id;
 
     const { data: membership, error: membershipError } = await supabaseClient
       .from("organization_members")
       .select("role")
-      .eq("organization_id", profile.organization_id)
+      .eq("organization_id", organizationId)
       .eq("user_id", user.id)
       .maybeSingle();
     if (membershipError) throw membershipError;
@@ -61,26 +62,66 @@ serve(async (req) => {
       });
     }
 
-    const { data: subscription, error: subscriptionError } = await supabaseClient
+    const { data: subscriptions, error: subscriptionError } = await supabaseClient
       .from("subscriptions")
-      .select("stripe_customer_id, stripe_subscription_id, created_at")
-      .eq("organization_id", profile.organization_id)
+      .select("stripe_customer_id, stripe_subscription_id, status, trial_end, grace_period_end, created_at")
+      .eq("organization_id", organizationId)
       .not("stripe_subscription_id", "like", "pilot_%")
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(50);
     if (subscriptionError) throw subscriptionError;
 
-    if (!subscription?.stripe_customer_id) {
-      return new Response(JSON.stringify({ error: "No paid Stripe subscription is linked to this organization" }), {
+    const now = Date.now();
+    const ranked = [...(subscriptions ?? [])].sort((a: any, b: any) => {
+      const rank = (row: any) => {
+        if (row.status === "active") return 0;
+        const trialEnd = row.trial_end ? Date.parse(row.trial_end) : 0;
+        if (row.status === "trialing" && Number.isFinite(trialEnd) && trialEnd > now) return 1;
+        if (row.status === "past_due") return 2;
+        return 3;
+      };
+      const rankDelta = rank(a) - rank(b);
+      if (rankDelta !== 0) return rankDelta;
+      return Date.parse(b.created_at) - Date.parse(a.created_at);
+    });
+
+    if (!ranked.length) {
+      return new Response(JSON.stringify({ error: "No paid Stripe billing relationship is linked to this organization" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 404,
       });
     }
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    let customerId: string | null = null;
+
+    // A stale/deleted historical Stripe customer must not mask another valid
+    // organization-linked billing relationship.
+    for (const row of ranked) {
+      if (typeof row.stripe_customer_id !== "string" || !row.stripe_customer_id.startsWith("cus_")) continue;
+      try {
+        const customer = await stripe.customers.retrieve(row.stripe_customer_id);
+        if (!("deleted" in customer && customer.deleted)) {
+          customerId = customer.id;
+          break;
+        }
+      } catch (error) {
+        console.error(
+          "[customer-portal] linked Stripe customer lookup failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    if (!customerId) {
+      return new Response(JSON.stringify({ error: "No usable Stripe customer is linked to this organization" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 404,
+      });
+    }
+
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer: subscription.stripe_customer_id,
+      customer: customerId,
       return_url: `${allowedOrigin}/billing`,
     });
 
