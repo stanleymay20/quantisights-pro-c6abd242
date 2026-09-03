@@ -68,6 +68,7 @@ jobs:
           check_edge supabase/functions/deno.json supabase/functions/auth-rate-limiter/index.ts
           check_edge supabase/functions/deno.json supabase/functions/delete-account/index.ts
           check_edge supabase/functions/deno.json supabase/functions/create-checkout/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/confirm-checkout/index.ts
           check_edge supabase/functions/deno.json supabase/functions/check-subscription/index.ts
           check_edge supabase/functions/deno.json supabase/functions/customer-portal/index.ts
           check_edge supabase/functions/deno.json supabase/functions/stripe-webhook/index.ts
