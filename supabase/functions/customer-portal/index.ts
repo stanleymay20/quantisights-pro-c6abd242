@@ -1,20 +1,28 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
+import { corsPreflightResponse, getAllowedRequestOrigin, getCorsHeaders } from "../_shared/cors.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
   try {
+    const allowedOrigin = getAllowedRequestOrigin(req);
+    if (!allowedOrigin) {
+      return new Response(JSON.stringify({ error: "Billing portal is not available from this origin" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403,
+      });
+    }
+
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
 
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
 
     const authHeader = req.headers.get("Authorization");
@@ -24,15 +32,56 @@ serve(async (req) => {
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) throw new Error(`Auth error: ${userError.message}`);
     const user = userData.user;
-    if (!user?.email) throw new Error("User not authenticated");
+    if (!user?.id) throw new Error("User not authenticated");
+
+    const { data: profile, error: profileError } = await supabaseClient
+      .from("profiles")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile?.organization_id) {
+      return new Response(JSON.stringify({ error: "Verified organization required" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403,
+      });
+    }
+
+    const { data: membership, error: membershipError } = await supabaseClient
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", profile.organization_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership || !["owner", "admin"].includes(membership.role)) {
+      return new Response(JSON.stringify({ error: "Only an organization owner or admin can manage billing" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403,
+      });
+    }
+
+    const { data: subscription, error: subscriptionError } = await supabaseClient
+      .from("subscriptions")
+      .select("stripe_customer_id, stripe_subscription_id, created_at")
+      .eq("organization_id", profile.organization_id)
+      .not("stripe_subscription_id", "like", "pilot_%")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (subscriptionError) throw subscriptionError;
+
+    if (!subscription?.stripe_customer_id) {
+      return new Response(JSON.stringify({ error: "No paid Stripe subscription is linked to this organization" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 404,
+      });
+    }
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-    const customers = await stripe.customers.list({ email: user.email, limit: 1 });
-    if (customers.data.length === 0) throw new Error("No Stripe customer found");
-
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer: customers.data[0].id,
-      return_url: `${req.headers.get("origin") || "http://localhost:3000"}/dashboard`,
+      customer: subscription.stripe_customer_id,
+      return_url: `${allowedOrigin}/billing`,
     });
 
     return new Response(JSON.stringify({ url: portalSession.url }), {
