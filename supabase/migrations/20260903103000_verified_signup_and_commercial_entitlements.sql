@@ -180,6 +180,28 @@ $$;
 REVOKE ALL ON FUNCTION public.provision_verified_signup(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.provision_verified_signup(uuid) TO authenticated;
 
+-- Read-only proof used by /onboarding after tenant discovery refreshes. It never
+-- accepts browser metadata as evidence; the private consumed intent is the proof.
+CREATE OR REPLACE FUNCTION public.has_verified_signup_provenance(p_organization_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, tenant_control
+AS $$
+  SELECT auth.uid() IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+         FROM tenant_control.signup_intents si
+        WHERE si.organization_id = p_organization_id
+          AND si.consumed_by = auth.uid()
+          AND si.consumed_at IS NOT NULL
+     );
+$$;
+
+REVOKE ALL ON FUNCTION public.has_verified_signup_provenance(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.has_verified_signup_provenance(uuid) TO authenticated;
+
 -- Keep operational workspace limits aligned with the paid/pilot tier. Only the
 -- fields that are explicitly sold in the product are changed here; unadvertised
 -- ingestion/API limits keep their existing values.
@@ -251,3 +273,5 @@ COMMENT ON FUNCTION public.begin_signup_intent() IS
   'Issues a short-lived server capability for a prospective self-serve signup; it does not create tenant state.';
 COMMENT ON FUNCTION public.provision_verified_signup(uuid) IS
   'Creates one tenant only when Auth identity creation is proven to post-date a valid signup intent.';
+COMMENT ON FUNCTION public.has_verified_signup_provenance(uuid) IS
+  'Returns whether the current authenticated user owns server-side verified fresh-signup provenance for the organization.';
