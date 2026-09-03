@@ -49,9 +49,6 @@ serve(async (req) => {
       });
     }
 
-    // Billing authority is organization-scoped. A normal member cannot create a
-    // paid subscription for the tenant, and an identity with no verified tenant
-    // cannot reach checkout at all.
     const { data: profile, error: profileError } = await supabaseClient
       .from("profiles")
       .select("organization_id")
@@ -79,13 +76,24 @@ serve(async (req) => {
       });
     }
 
+    // The no-card product pilot already gives the customer time to evaluate.
+    // Once it has been used, conversion to a paid plan must not silently stack
+    // another Stripe trial and postpone the first charge again.
+    const { data: pilotRecord, error: pilotError } = await supabaseClient
+      .from("subscriptions")
+      .select("id")
+      .eq("organization_id", profile.organization_id)
+      .eq("stripe_subscription_id", `pilot_${profile.organization_id}`)
+      .maybeSingle();
+    if (pilotError) throw pilotError;
+
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "";
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     let customerId: string | undefined;
-    let hadTrial = false;
+    let hadStripeTrial = false;
     if (customers.data.length > 0) {
       customerId = customers.data[0].id;
       const existingSubs = await stripe.subscriptions.list({ customer: customerId, limit: 10 });
@@ -98,9 +106,10 @@ serve(async (req) => {
           status: 409,
         });
       }
-      hadTrial = existingSubs.data.some((s: any) => s.trial_start !== null || s.status === "trialing");
+      hadStripeTrial = existingSubs.data.some((s: any) => s.trial_start !== null || s.status === "trialing");
     }
 
+    const trialAlreadyUsed = Boolean(pilotRecord) || hadStripeTrial;
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : user.email,
@@ -110,12 +119,13 @@ serve(async (req) => {
       customer_update: customerId ? { address: "auto" } : undefined,
       payment_method_collection: "if_required",
       subscription_data: {
-        ...(hadTrial ? {} : { trial_period_days: 14 }),
+        ...(trialAlreadyUsed ? {} : { trial_period_days: 14 }),
         metadata: {
           billing_interval: catalogEntry.interval,
           tier: catalogEntry.tier,
           source: "quantivis_web",
           organization_id: profile.organization_id,
+          prior_pilot_used: pilotRecord ? "true" : "false",
         },
       },
       allow_promotion_codes: true,
