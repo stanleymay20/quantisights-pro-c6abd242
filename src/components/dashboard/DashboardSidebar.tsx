@@ -56,7 +56,7 @@ import { cn } from "@/lib/utils";
 const SIDEBAR_LABEL_KEYS: Record<string, string> = {
   "Dashboard": "sidebar.dashboard",
   "Decisions": "sidebar.decisions",
-  "Operations": "sidebar.operations",
+  "Outcomes": "sidebar.outcomes",
   "Reports": "sidebar.reports",
   "Governance": "sidebar.governance",
   "Settings": "sidebar.settings",
@@ -176,7 +176,7 @@ const navSections: NavSection[] = [
   },
   {
     icon: Target,
-    label: "Operations",
+    label: "Outcomes",
     path: "/outcomes",
     subItems: [
       { icon: Target,         label: "Outcome Tracking",  path: "/outcomes" },

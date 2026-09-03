@@ -13,7 +13,8 @@ export interface FeatureAccessResult {
 
 /**
  * Server-side gate. Returns 402 Payment Required on denial.
- * Demo users (auth metadata is_demo=true) always pass.
+ * Demo bypass is accepted only from server-owned app_metadata. Never trust
+ * user_metadata for authorization because authenticated users may edit it.
  */
 export async function requireFeatureAccess(
   supabaseUrl: string,
@@ -36,26 +37,36 @@ export async function requireFeatureAccess(
   }
   const user = userData.user;
 
-  // Demo bypass
-  if (user.user_metadata?.is_demo) {
-    const { data: profile } = await supabase
+  // Demo authority is stamped into app_metadata only by trusted server-side
+  // provisioning. A normal user setting user_metadata.is_demo cannot bypass paywalls.
+  if (user.app_metadata?.is_demo === true) {
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("organization_id")
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (profileError || !profile?.organization_id) {
+      return { ok: false, status: 403, body: { error: "Demo organization unavailable" } };
+    }
+
     return {
       ok: true,
       userId: user.id,
-      orgId: profile?.organization_id ?? "",
+      orgId: profile.organization_id,
       tier: "demo",
     };
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("organization_id")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (profileError) {
+    return { ok: false, status: 500, body: { error: "Organization lookup failed" } };
+  }
 
   if (!profile?.organization_id) {
     return { ok: false, status: 403, body: { error: "No organization" } };

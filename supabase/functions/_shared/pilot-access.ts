@@ -20,18 +20,9 @@ export interface PilotGrantResult {
 /**
  * Grants one self-serve, no-card evaluation pilot to an organization.
  *
- * The existing subscriptions table remains the billing/access source of truth,
- * so every server-side feature gate that calls check_feature_access honors the
- * pilot exactly like a Growth trial. Synthetic Stripe identifiers keep pilot
- * rows isolated from real Stripe lifecycle events.
- *
- * A pilot is intentionally one-time: an expired pilot row is never extended by
- * this helper. Conversion to a paid Stripe subscription is the only path after
- * expiry.
- *
- * This shared helper is part of the staging deployment inventory so entitlement
- * changes are exercised by the same migration/function parity gate as the rest
- * of the Supabase runtime before any production promotion.
+ * An organization gets one evaluation path total. A prior no-card pilot or a
+ * prior Stripe checkout trial consumes that opportunity; the two cannot be
+ * stacked in either order.
  */
 export async function grantPilotAccess(
   supabase: SupabaseClient,
@@ -65,7 +56,7 @@ export async function grantPilotAccess(
     .from("subscriptions")
     .select("tier, status, trial_end, current_period_end")
     .eq("organization_id", organizationId)
-    .in("status", ["active", "trialing"])
+    .in("status", ["active", "trialing", "past_due"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -77,6 +68,7 @@ export async function grantPilotAccess(
       ? new Date(candidateSubscription.trial_end).getTime()
       : 0;
     const actuallyActive = candidateSubscription.status === "active"
+      || candidateSubscription.status === "past_due"
       || (candidateSubscription.status === "trialing" && candidateTrialEndMs > now);
 
     if (actuallyActive) {
@@ -90,9 +82,30 @@ export async function grantPilotAccess(
         reason: "already_active",
       };
     }
-    // An expired Stripe checkout trial is not an active entitlement and should
-    // not prevent an organization that never used the no-card pilot from
-    // evaluating the product through the pilot path.
+  }
+
+  // Reverse stacking guard: an expired/cancelled Stripe trial still counts as
+  // the organization's evaluation period even though it no longer grants access.
+  const { data: priorStripeTrial, error: priorTrialError } = await supabase
+    .from("subscriptions")
+    .select("tier, trial_end")
+    .eq("organization_id", organizationId)
+    .eq("is_trial", true)
+    .not("stripe_subscription_id", "like", `${PILOT_PREFIX}%`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (priorTrialError) throw priorTrialError;
+  if (priorStripeTrial) {
+    return {
+      granted: false,
+      active: false,
+      alreadyUsed: true,
+      tier: priorStripeTrial.tier ?? PILOT_TIER,
+      trialEnd: priorStripeTrial.trial_end ?? null,
+      reason: "pilot_already_used",
+    };
   }
 
   const trialEnd = new Date(now + PILOT_DAYS * 24 * 60 * 60 * 1000).toISOString();

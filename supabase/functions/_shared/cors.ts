@@ -18,12 +18,20 @@ const STAGING_SUPABASE_URL = "https://cmnihsbdbpubznlkmjbc.supabase.co";
 const STAGING_ONLY_ORIGINS = new Set([
   "http://127.0.0.1:4173",
 ]);
+const STAGING_NETLIFY_PREVIEW = /^https:\/\/deploy-preview-\d+--quantivis\.netlify\.app$/;
 
 function isAllowedOrigin(origin: string): boolean {
   if (ALLOWED_ORIGINS.includes(origin)) return true;
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-  return supabaseUrl === STAGING_SUPABASE_URL && STAGING_ONLY_ORIGINS.has(origin);
+  if (supabaseUrl !== STAGING_SUPABASE_URL) return false;
+
+  return STAGING_ONLY_ORIGINS.has(origin) || STAGING_NETLIFY_PREVIEW.test(origin);
+}
+
+export function getAllowedRequestOrigin(req: Request): string | null {
+  const origin = req.headers.get("Origin") || "";
+  return isAllowedOrigin(origin) ? origin : null;
 }
 
 export function getCorsHeaders(req?: Request): Record<string, string> {

@@ -1,19 +1,16 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Loader2, Crown, X, Minus } from "lucide-react";
+import { Check, Loader2, Crown, Minus } from "lucide-react";
 import { COMMERCIAL_TERMS, TIERS, TierKey, FEATURE_MATRIX } from "@/lib/stripe-tiers";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/hooks/useSubscription";
-import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/landing/Navbar";
 import Footer from "@/components/landing/Footer";
 import ComparisonSection from "@/components/landing/ComparisonSection";
-import { CONTACT } from "@/lib/contact-config";
 import { useSeoHead } from "@/lib/useSeoHead";
 
 const renderCellValue = (value: boolean | string) => {
@@ -43,7 +40,7 @@ const Pricing = () => {
     }
 
     if (subscribed) {
-      navigate("/onboarding");
+      navigate(isPilot ? "/onboarding" : "/executive");
       return;
     }
 
@@ -86,12 +83,10 @@ const Pricing = () => {
     const tier = TIERS[tierKey];
     const priceId = annual && tier.price_id_annual ? tier.price_id_annual : tier.price_id;
 
-    // If annual toggle selected but no annual price ID yet, show toast and continue
-    // with monthly — tagging the session so sales team can follow up on annual billing
     if (annual && !tier.price_id_annual) {
       toast({
         title: "Annual billing — our team will follow up",
-        description: "Starting your checkout trial now. We'll contact you within 24 hours to set up annual billing at the discounted rate.",
+        description: "Starting checkout now. We'll contact you within 24 hours to set up annual billing at the discounted rate.",
         variant: "default",
       });
     }
@@ -146,7 +141,6 @@ const Pricing = () => {
             </p>
           </motion.div>
 
-          {/* Evaluation-first entry: let users reach value before asking for payment. */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -191,7 +185,6 @@ const Pricing = () => {
             </div>
           </motion.div>
 
-          {/* Billing interval toggle */}
           <div className="flex justify-center mb-10">
             <div className="inline-flex items-center gap-1 p-1 rounded-full border border-border bg-card/40">
               <button
@@ -209,11 +202,12 @@ const Pricing = () => {
             </div>
           </div>
 
-          {/* Tier Cards */}
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto mb-10">
             {(Object.entries(TIERS) as [TierKey, (typeof TIERS)[TierKey]][]).map(
               ([key, tier], i) => {
-                const isActive = subscribed && currentTier === key;
+                const isCurrentTier = subscribed && currentTier === key;
+                const isPaidActive = isCurrentTier && !isPilot;
+                const isPilotTier = isCurrentTier && isPilot;
                 const isPopular = "popular" in tier && tier.popular;
                 const displayPrice = annual && tier.price_annual !== null ? tier.price_annual : tier.price;
                 const displayInterval = annual ? "mo, billed yearly" : tier.interval;
@@ -226,16 +220,16 @@ const Pricing = () => {
                     transition={{ delay: i * 0.1 }}
                     className={`glass-card p-8 flex flex-col relative ${
                       isPopular ? "border-primary/40 shadow-lg shadow-primary/10" : ""
-                    } ${isActive ? "ring-2 ring-primary" : ""}`}
+                    } ${isCurrentTier ? "ring-2 ring-primary" : ""}`}
                   >
                     {isPopular && (
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-primary text-primary-foreground text-xs font-semibold">
                         Most Popular
                       </div>
                     )}
-                    {isActive && (
+                    {isCurrentTier && (
                       <div className="absolute -top-3 right-4 px-3 py-1 rounded-full bg-success/20 text-success text-xs font-semibold flex items-center gap-1">
-                        <Crown className="w-3 h-3" /> {isPilot ? "Pilot Access" : "Your Plan"}
+                        <Crown className="w-3 h-3" /> {isPilotTier ? "Pilot Access" : "Your Plan"}
                       </div>
                     )}
 
@@ -275,22 +269,13 @@ const Pricing = () => {
                       >
                         Contact Sales
                       </button>
-                    ) : isActive ? (
-                      isPilot ? (
-                        <button
-                          onClick={() => navigate("/executive")}
-                          className="w-full py-3 rounded-lg border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors"
-                        >
-                          Continue Pilot
-                        </button>
-                      ) : (
-                        <button
-                          onClick={handleManage}
-                          className="w-full py-3 rounded-lg border border-border text-sm font-semibold hover:bg-secondary transition-colors"
-                        >
-                          Manage Subscription
-                        </button>
-                      )
+                    ) : isPaidActive ? (
+                      <button
+                        onClick={handleManage}
+                        className="w-full py-3 rounded-lg border border-border text-sm font-semibold hover:bg-secondary transition-colors"
+                      >
+                        Manage Subscription
+                      </button>
                     ) : (
                       <>
                         <button
@@ -327,7 +312,6 @@ const Pricing = () => {
             )}
           </div>
 
-          {/* Value context — avoid unverifiable competitor-price claims. */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -341,10 +325,8 @@ const Pricing = () => {
             </div>
           </motion.div>
 
-          {/* Competitive Comparison — directly below pricing */}
           <ComparisonSection inline />
 
-          {/* Full Feature Comparison Matrix */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -400,7 +382,6 @@ const Pricing = () => {
         </div>
       </section>
 
-      {/* FAQ Section */}
       <section className="py-20 border-t border-border">
         <div className="container mx-auto px-6 max-w-3xl">
           <div className="text-center mb-12">
@@ -425,7 +406,7 @@ const Pricing = () => {
               },
               {
                 q: `How is the ${COMMERCIAL_TERMS.trialDays}-day checkout trial different?`,
-                a: `The checkout trial is attached to a paid Stripe subscription and is available to ${COMMERCIAL_TERMS.trialEligibility}. ${COMMERCIAL_TERMS.trialCheckoutDisclosure} The no-card pilot above is separate and never auto-renews.`,
+                a: `The checkout trial is attached to a paid Stripe subscription and is available to ${COMMERCIAL_TERMS.trialEligibility}. ${COMMERCIAL_TERMS.trialCheckoutDisclosure} Each organisation receives one evaluation period: using the no-card pilot means a later paid checkout starts without another free trial, and a prior checkout trial prevents a later no-card pilot.`,
               },
               {
                 q: "Can I change plans at any time?",
@@ -461,7 +442,6 @@ const Pricing = () => {
         </div>
       </section>
 
-      {/* Bottom CTA */}
       <section className="py-16 border-t border-border bg-card/20">
         <div className="container mx-auto px-6 text-center max-w-2xl">
           <h2 className="text-[18px] font-semibold tracking-tight mb-3">Ready to Evaluate Quantivis?</h2>

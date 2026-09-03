@@ -7,7 +7,7 @@
  * Phase 5 — IA v1.1 Section 7: Mobile Navigation Strategy.
  *
  * Tab layout:
- *   Dashboard · Decisions · Operations · Reports · More
+ *   Dashboard · Ask · Decisions · Outcomes · More
  *
  * "More" opens a slide-up drawer containing:
  *   Reports · Monitor · Governance · Team · Settings
@@ -39,13 +39,14 @@ interface TabItem {
 // UX-1 primary tabs aligned with desktop executive sidebar
 const PRIMARY_TABS: TabItem[] = [
   { icon: LayoutDashboard,   label: "Dashboard", path: "/dashboard" },
+  { icon: MessageSquareText, label: "Ask",       path: "/app/copilot" },
   { icon: ClipboardList,     label: "Decisions", path: "/decisions" },
-  { icon: Target,            label: "Operations",path: "/outcomes" },
-  { icon: FileText,          label: "Reports",   path: "/reports" },
+  { icon: Target,            label: "Outcomes",  path: "/outcomes" },
 ];
 
 // "More" reveals settings, governed AI help, and power-user pages
 const MORE_ITEMS: TabItem[] = [
+  { icon: FileText,  label: "Reports",     path: "/reports" },
   { icon: Settings,  label: "Settings",    path: "/settings" },
   { icon: MessageSquareText, label: "Ask Quantivis", path: "/app/copilot" },
   { icon: Users,     label: "Team",        path: "/team" },
@@ -67,7 +68,9 @@ const MobileTabBar = () => {
 
   // Primary tabs filter by role's allowedPaths; MORE items always shown
   // (route-level guards enforce access). Viewer keeps a clean shell anyway.
-  const visibleTabs = PRIMARY_TABS.filter(t => allowedPaths.has(t.path));
+  const visibleTabs = PRIMARY_TABS.filter((t) =>
+    t.path === "/app/copilot" ? orgRole !== "viewer" : allowedPaths.has(t.path),
+  );
   const visibleMore = orgRole === "viewer" ? [] : MORE_ITEMS;
   const showMore = visibleMore.length > 0;
 

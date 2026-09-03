@@ -35,6 +35,8 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = false
   [functions.create-checkout]
     verify_jwt = false
+  [functions.confirm-checkout]
+    verify_jwt = false
   [functions.create-demo-session]
     verify_jwt = false
   [functions.customer-portal]

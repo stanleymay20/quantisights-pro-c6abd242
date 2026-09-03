@@ -16,6 +16,7 @@ interface QuotaCheck {
   quota_limit: number;
   allowed: boolean;
   remaining: number;
+  reason?: string;
 }
 
 const DEFAULT_LIMITS: QuotaLimits = {
@@ -27,76 +28,103 @@ const DEFAULT_LIMITS: QuotaLimits = {
   max_team_seats: 2,
 };
 
+const DENIED_QUOTA: QuotaCheck = {
+  current_usage: 0,
+  quota_limit: 0,
+  allowed: false,
+  remaining: 0,
+  reason: "quota_verification_unavailable",
+};
+
 export const useWorkspaceQuota = () => {
   const { currentWorkspaceId } = useWorkspace();
   const [limits, setLimits] = useState<QuotaLimits>(DEFAULT_LIMITS);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!currentWorkspaceId) {
       setLimits(DEFAULT_LIMITS);
       setLoading(false);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
-    const fetch = async () => {
-      const { data } = await supabase
+    setLoading(true);
+    const fetchLimits = async () => {
+      const { data, error } = await supabase
         .from("workspace_quotas")
-        .select("*")
+        .select("max_datasets,max_rows_per_day,max_api_calls_per_day,max_simulations_per_day,max_copilot_queries_per_day,max_team_seats")
         .eq("workspace_id", currentWorkspaceId)
         .maybeSingle();
 
-      if (data) {
-        setLimits({
-          max_datasets: data.max_datasets,
-          max_rows_per_day: data.max_rows_per_day,
-          max_api_calls_per_day: data.max_api_calls_per_day,
-          max_simulations_per_day: data.max_simulations_per_day,
-          max_copilot_queries_per_day: data.max_copilot_queries_per_day,
-          max_team_seats: data.max_team_seats,
-        });
+      if (cancelled) return;
+
+      if (error || !data) {
+        // Display conservative defaults while the authoritative quota RPC remains
+        // fail-closed. Never manufacture an "unlimited" state from missing data.
+        setLimits(DEFAULT_LIMITS);
+        setLoading(false);
+        return;
       }
+
+      setLimits({
+        max_datasets: data.max_datasets,
+        max_rows_per_day: data.max_rows_per_day,
+        max_api_calls_per_day: data.max_api_calls_per_day,
+        max_simulations_per_day: data.max_simulations_per_day,
+        max_copilot_queries_per_day: data.max_copilot_queries_per_day,
+        max_team_seats: data.max_team_seats,
+      });
       setLoading(false);
     };
 
-    fetch();
+    void fetchLimits();
+    return () => {
+      cancelled = true;
+    };
   }, [currentWorkspaceId]);
 
   const checkQuota = useCallback(async (metricName: string): Promise<QuotaCheck> => {
-    if (!currentWorkspaceId) {
-      return { current_usage: 0, quota_limit: 0, allowed: false, remaining: 0 };
-    }
+    if (!currentWorkspaceId) return DENIED_QUOTA;
 
     const { data, error } = await supabase.rpc("check_workspace_quota", {
       _workspace_id: currentWorkspaceId,
       _metric_name: metricName,
     });
 
-    if (error || !data) {
-      return { current_usage: 0, quota_limit: 999999, allowed: true, remaining: 999999 };
-    }
+    if (error || !data) return DENIED_QUOTA;
 
-    return data as unknown as QuotaCheck;
+    const result = data as unknown as QuotaCheck;
+    if (typeof result.allowed !== "boolean" || typeof result.quota_limit !== "number") {
+      return DENIED_QUOTA;
+    }
+    return result;
   }, [currentWorkspaceId]);
 
   const incrementUsage = useCallback(async (metricName: string, increment: number = 1) => {
-    if (!currentWorkspaceId) return;
+    if (!currentWorkspaceId || !Number.isFinite(increment) || increment <= 0) return;
 
-    // Get org_id from workspace
-    const { data: ws } = await supabase
+    const { data: ws, error: workspaceError } = await supabase
       .from("workspaces")
       .select("organization_id")
       .eq("id", currentWorkspaceId)
-      .single();
+      .maybeSingle();
 
-    if (!ws) return;
+    if (workspaceError || !ws?.organization_id) return;
 
-    await supabase.rpc("increment_workspace_usage", {
+    const { error } = await supabase.rpc("increment_workspace_usage", {
       _workspace_id: currentWorkspaceId,
       _org_id: ws.organization_id,
       _metric_name: metricName,
-      _increment: increment,
+      _increment: Math.trunc(increment),
     });
+
+    if (error) {
+      console.error("[useWorkspaceQuota] Failed to record usage:", error.message);
+    }
   }, [currentWorkspaceId]);
 
   return { limits, loading, checkQuota, incrementUsage };

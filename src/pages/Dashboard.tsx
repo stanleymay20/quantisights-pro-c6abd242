@@ -52,7 +52,7 @@ const Dashboard = () => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
   const displayName = profile?.full_name || formattedEmailName || "User";
-  const isDemoUser = Boolean(user?.user_metadata?.is_demo);
+  const isDemoUser = user?.app_metadata?.is_demo === true;
 
   // `null` means the value is unknown because the query failed. Zero is only
   // used after a successful query proving that no governed decisions are
@@ -213,7 +213,7 @@ const Dashboard = () => {
 
       {isDemoUser && hasData && <DemoBanner />}
 
-      <main id="main-content" className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto">
         <div className="p-4 sm:p-6 md:p-8 space-y-4">
           {(metricsStale || metricsError) && (
             <section className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3" role="status" aria-live="polite">
@@ -286,7 +286,7 @@ const Dashboard = () => {
             </SectionErrorBoundary>
           )}
         </div>
-      </main>
+      </div>
     </>
   );
 };

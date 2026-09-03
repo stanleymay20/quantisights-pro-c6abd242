@@ -8,7 +8,12 @@ const ci = readFileSync(
 );
 
 describe("privileged Edge CI coverage", () => {
-  it("Deno-checks security-sensitive data, database/connector, ingestion, aggregation, orchestration, execution, forecasting, contradiction, advisory, trust, automatic-decision, outcome, and decision-value functions", () => {
+  it("runs pull-request CI even when controlled work is stacked on a non-main base", () => {
+    expect(ci).toContain("pull_request:\n");
+    expect(ci).not.toContain("pull_request:\n    branches: [main]");
+  });
+
+  it("Deno-checks security-sensitive commercial, demo, data, connector, orchestration and decision functions", () => {
     expect(ci).toContain("check_edge() {");
     expect(ci).toContain('config="$1"');
     expect(ci).toContain('file="$2"');
@@ -16,6 +21,13 @@ describe("privileged Edge CI coverage", () => {
 
     for (const path of [
       "supabase/functions/delete-account/index.ts",
+      "supabase/functions/create-checkout/index.ts",
+      "supabase/functions/confirm-checkout/index.ts",
+      "supabase/functions/check-subscription/index.ts",
+      "supabase/functions/customer-portal/index.ts",
+      "supabase/functions/stripe-webhook/index.ts",
+      "supabase/functions/create-demo-session/index.ts",
+      "supabase/functions/seed-demo-data/index.ts",
       "supabase/functions/api-ingest/index.ts",
       "supabase/functions/webhook-ingest/index.ts",
       "supabase/functions/event-stream/index.ts",

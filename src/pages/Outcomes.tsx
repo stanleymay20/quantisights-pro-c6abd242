@@ -107,7 +107,7 @@ const Outcomes = () => {
   }
 
   return (
-    <main className="flex-1 p-4 sm:p-6 md:p-8 overflow-auto">
+    <div className="flex-1 p-4 sm:p-6 md:p-8 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-8">
         <div className="flex items-center gap-2">
           <SidebarMobileToggle />
@@ -302,7 +302,7 @@ const Outcomes = () => {
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 };
 

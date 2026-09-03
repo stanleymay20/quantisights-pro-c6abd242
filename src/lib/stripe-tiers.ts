@@ -107,9 +107,9 @@ export const COMMERCIAL_TERMS = {
   trialEligibility: "eligible new subscribers",
   trialCheckoutDisclosure: "Billing and renewal terms are shown before checkout confirmation.",
   entryMonthly: TIERS.starter.price,
-  entryAnnual: TIERS.starter.price * 12,
+  entryAnnual: TIERS.starter.price_annual * 12,
   governanceMonthly: TIERS.growth.price,
-  governanceAnnual: TIERS.growth.price * 12,
+  governanceAnnual: TIERS.growth.price_annual * 12,
 } as const;
 
 export const formatEuro = (amount: number) => `€${amount.toLocaleString("en-US")}`;

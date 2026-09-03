@@ -13,10 +13,16 @@ describe("commercial source of truth", () => {
     expect(COMMERCIAL_TERMS.trialDays).toBe(14);
   });
 
-  it("keeps the paid Stripe checkout trial separate from the no-card pilot", () => {
+  it("offers distinct pilot/checkout mechanics without allowing their free periods to stack", () => {
     const checkout = read("supabase/functions/create-checkout/index.ts");
+    const pilotAccess = read("supabase/functions/_shared/pilot-access.ts");
+
     expect(checkout).toContain(`trial_period_days: ${COMMERCIAL_TERMS.trialDays}`);
-    expect(checkout).toContain("hadTrial ? {} :");
+    expect(checkout).toContain("const trialAlreadyUsed = Boolean(pilotRecord) || hadRecordedTrial || hadTrustedStripeTrial");
+    expect(checkout).toContain("...(trialAlreadyUsed ? {} : { trial_period_days: 14 })");
+    expect(pilotAccess).toContain('.eq("is_trial", true)');
+    expect(pilotAccess).toContain('.not("stripe_subscription_id", "like", `${PILOT_PREFIX}%`)');
+    expect(pilotAccess).toContain("Reverse stacking guard");
 
     expect(PILOT_TERMS.days).toBe(30);
     expect(PILOT_TERMS.tier).toBe("growth");
