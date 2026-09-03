@@ -22,8 +22,9 @@ describe("subscription reconciliation boundary", () => {
   });
 
   it("keeps unlinked past_due recovery fail-closed", () => {
-    expect(reconcile).toContain("past_due is intentionally excluded here");
+    expect(reconcile).toMatch(/past_due[\s\S]*intentionally excluded here because grace-period authority lives in[\s\S]*the tenant subscription ledger/);
     expect(reconcile).toContain('return (s.status === "active" || trialActive)');
+    expect(reconcile).not.toMatch(/return \(s\.status === "active" \|\| trialActive \|\| s\.status === "past_due"\)/);
   });
 
   it("opens billing portal against the effective tenant billing customer first", () => {
