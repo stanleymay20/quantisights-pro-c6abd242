@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS restore_quarantine.batches (
   batch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source_project_ref text NOT NULL,
   source_organization_id uuid NOT NULL,
+  source_snapshot_at timestamptz NOT NULL,
   destination_project_ref text NOT NULL,
   destination_shell_organization_id uuid,
   source_identity_email text,
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS restore_quarantine.batches (
 CREATE TABLE IF NOT EXISTS restore_quarantine.table_manifest (
   batch_id uuid NOT NULL REFERENCES restore_quarantine.batches(batch_id) ON DELETE CASCADE,
   source_table text NOT NULL,
+  snapshot_filter_column text NOT NULL CHECK (length(btrim(snapshot_filter_column)) > 0),
   schema_signature text NOT NULL,
   expected_row_count bigint NOT NULL CHECK (expected_row_count >= 0),
   received_row_count bigint NOT NULL DEFAULT 0 CHECK (received_row_count >= 0),
@@ -101,5 +103,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA restore_quarantine REVOKE ALL ON TABLES FROM 
 
 COMMENT ON SCHEMA restore_quarantine IS
   'Private staging area for historical tenant restoration. No automatic promotion into public tenant tables.';
+COMMENT ON COLUMN restore_quarantine.batches.source_snapshot_at IS
+  'Immutable source cutoff. Every table count and transferred row must be evaluated at or before this timestamp using its manifest snapshot_filter_column.';
 COMMENT ON TABLE restore_quarantine.rows IS
   'Canonical JSONB copies of historical source rows. Promotion is deliberately implemented separately after reconciliation.';
