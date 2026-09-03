@@ -8,6 +8,7 @@ import AuthLayout from "@/components/auth/AuthLayout";
 import GoogleButton from "@/components/auth/GoogleButton";
 import { COMMERCIAL_TERMS, TIERS } from "@/lib/stripe-tiers";
 import { PILOT_TERMS } from "@/lib/pilot-terms";
+import { beginVerifiedSignupIntent, clearVerifiedSignupIntent } from "@/lib/signup-intent";
 
 const PASSWORD_RULES = [
   { label: "At least 12 characters", test: (p: string) => p.length >= 12 },
@@ -55,10 +56,12 @@ const Register = () => {
     }
     setIsLoading(true);
     try {
+      await beginVerifiedSignupIntent();
       await signUp(email, password, fullName);
       toast({ title: "Verification email sent", description: "Confirm your email to continue setting up your Quantivis workspace." });
       navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
+      clearVerifiedSignupIntent();
       const message = err instanceof Error ? err.message : "Unknown error";
       const lower = message.toLowerCase();
       const isPasswordIssue =
@@ -85,9 +88,9 @@ const Register = () => {
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
     try {
-      // Preserve an explicit signup provenance marker across the provider round
-      // trip. AuthCallback converts this one-shot browser intent into durable
-      // user metadata before onboarding can authorize tenant provisioning.
+      await beginVerifiedSignupIntent();
+      // The opaque server-issued signup intent is the authorization evidence.
+      // This browser marker only preserves navigation intent across OAuth.
       sessionStorage.setItem("quantivis_oauth_signup", "1");
       const { lovable } = await import("@/integrations/lovable");
       sessionStorage.setItem("quantivis_oauth_next", "/onboarding");
@@ -104,6 +107,7 @@ const Register = () => {
       navigate("/onboarding", { replace: true });
     } catch (err: unknown) {
       sessionStorage.removeItem("quantivis_oauth_signup");
+      clearVerifiedSignupIntent();
       toast({ title: "Google sign-up failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
       setGoogleLoading(false);
     }
