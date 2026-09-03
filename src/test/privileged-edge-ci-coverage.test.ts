@@ -17,6 +17,7 @@ describe("privileged Edge CI coverage", () => {
     for (const path of [
       "supabase/functions/delete-account/index.ts",
       "supabase/functions/create-checkout/index.ts",
+      "supabase/functions/confirm-checkout/index.ts",
       "supabase/functions/check-subscription/index.ts",
       "supabase/functions/customer-portal/index.ts",
       "supabase/functions/stripe-webhook/index.ts",
