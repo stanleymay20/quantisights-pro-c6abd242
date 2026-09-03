@@ -4,6 +4,7 @@ import GlobalContextBar from "@/components/layout/GlobalContextBar";
 import MobileTabBar from "@/components/layout/MobileTabBar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export { SidebarMobileToggle };
 
@@ -18,10 +19,13 @@ export { SidebarMobileToggle };
  *   GlobalContextBar still shown at top.
  *   Page content gets pb-16 to clear the tab bar.
  *
- * Phase 5 — IA v1.1 Section 7: Mobile Navigation Strategy.
+ * Navigation fails closed until organization role and permission evidence are
+ * verified. Route guards remain authoritative; this prevents unresolved auth
+ * state from briefly exposing owner/admin navigation.
  */
 const ProtectedShell = ({ children }: { children: ReactNode }) => {
   const isMobile = useIsMobile();
+  const { evidenceReady } = usePermissions();
   useIdleTimeout(); // enforces org-configured idle timeout → auto signOut
 
   return (
@@ -34,11 +38,8 @@ const ProtectedShell = ({ children }: { children: ReactNode }) => {
         Skip to main content
       </a>
 
-      {/* Sidebar — desktop only */}
-      {!isMobile && <DashboardSidebar />}
-
-      {/* Mobile sidebar overlay (hamburger-triggered) — still available */}
-      {isMobile && <DashboardSidebar />}
+      {/* Navigation is withheld until authorization evidence is verified. */}
+      {evidenceReady && <DashboardSidebar />}
 
       <div className="flex-1 flex flex-col min-h-dvh overflow-hidden">
         <GlobalContextBar />
@@ -52,7 +53,7 @@ const ProtectedShell = ({ children }: { children: ReactNode }) => {
       </div>
 
       {/* Mobile bottom tab bar */}
-      <MobileTabBar />
+      {evidenceReady && <MobileTabBar />}
     </div>
   );
 };

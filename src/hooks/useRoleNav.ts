@@ -2,7 +2,7 @@
  * useRoleNav
  *
  * Returns the set of top-level sidebar paths visible to the current user
- * based on their org role.
+ * based on their verified org role.
  *
  * UX-1 — Executive IA collapse:
  *   Dashboard · Decisions · Operations · Reports · Governance · Settings
@@ -31,6 +31,8 @@ const ALL_PATHS = new Set([
   "/settings",
 ]);
 
+const NO_PATHS = new Set<string>();
+
 const ROLE_PATHS: Record<NonNullable<Exclude<OrgRole, null | undefined>>, Set<string>> = {
   owner: ALL_PATHS,
   admin: ALL_PATHS,
@@ -48,8 +50,10 @@ const ROLE_PATHS: Record<NonNullable<Exclude<OrgRole, null | undefined>>, Set<st
 };
 
 export function getAllowedPaths(role: OrgRole): Set<string> {
-  if (!role) return ALL_PATHS;
-  return ROLE_PATHS[role] ?? ALL_PATHS;
+  // Unknown role means authorization evidence is not ready. Navigation must
+  // fail closed rather than briefly exposing the complete product surface.
+  if (!role) return NO_PATHS;
+  return ROLE_PATHS[role] ?? NO_PATHS;
 }
 
 export function useRoleNav(orgRole: OrgRole): Set<string> {

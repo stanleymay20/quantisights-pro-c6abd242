@@ -9,8 +9,8 @@
  * Tab layout:
  *   Dashboard · Decisions · Operations · Reports · More
  *
- * "More" opens a slide-up drawer containing:
- *   Reports · Monitor · Governance · Team · Settings
+ * "More" opens a slide-up drawer containing secondary destinations such as
+ * Settings, Ask Quantivis, Team, Data, Governance and Executive Intel.
  *
  * The bar is hidden on desktop (>= 768px).
  * It respects the safe-area-inset-bottom for notched devices.
@@ -23,7 +23,7 @@ import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, MessageSquareText, ClipboardList,
   Target, MoreHorizontal, X,
-  FileText, BarChart2, Shield, Users, Settings, Upload, Plug, Activity,
+  FileText, BarChart2, Shield, Users, Settings, Upload, Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -44,15 +44,15 @@ const PRIMARY_TABS: TabItem[] = [
   { icon: FileText,          label: "Reports",   path: "/reports" },
 ];
 
-// "More" reveals settings, governed AI help, and power-user pages
+// "More" reveals settings, governed AI help, and secondary destinations.
 const MORE_ITEMS: TabItem[] = [
-  { icon: Settings,  label: "Settings",    path: "/settings" },
+  { icon: Settings,  label: "Settings",       path: "/settings" },
   { icon: MessageSquareText, label: "Ask Quantivis", path: "/app/copilot" },
-  { icon: Users,     label: "Team",        path: "/team" },
-  { icon: Upload,    label: "Data",        path: "/data-upload" },
-  { icon: Shield,    label: "Governance",  path: "/governance" },
-  { icon: BarChart2, label: "Monitor",     path: "/executive-intelligence" },
-  { icon: Activity,  label: "System Health",path: "/system-health" },
+  { icon: Users,     label: "Team",           path: "/team" },
+  { icon: Upload,    label: "Data",           path: "/data-upload" },
+  { icon: Shield,    label: "Governance",     path: "/governance" },
+  { icon: BarChart2, label: "Executive Intel",path: "/executive-intelligence" },
+  { icon: Activity,  label: "System Health",  path: "/system-health" },
 ];
 
 const MobileTabBar = () => {
@@ -65,8 +65,6 @@ const MobileTabBar = () => {
   // Only render on mobile
   if (!isMobile) return null;
 
-  // Primary tabs filter by role's allowedPaths; MORE items always shown
-  // (route-level guards enforce access). Viewer keeps a clean shell anyway.
   const visibleTabs = PRIMARY_TABS.filter(t => allowedPaths.has(t.path));
   const visibleMore = orgRole === "viewer" ? [] : MORE_ITEMS;
   const showMore = visibleMore.length > 0;
