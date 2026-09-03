@@ -23,8 +23,6 @@ describe("tenant provisioning boundary", () => {
   });
 
   it("does not treat browser storage or user-editable metadata as onboarding authority", () => {
-    // Descriptive comments may name user_metadata; the security contract is that
-    // application code never reads it as a provisioning/authorization signal.
     expect(onboardingGate).not.toContain("user.user_metadata");
     expect(onboardingGate).not.toContain("user?.user_metadata");
     expect(onboardingGate).not.toContain("user_metadata?.");
@@ -36,12 +34,15 @@ describe("tenant provisioning boundary", () => {
     expect(organizationHook).not.toContain("user_metadata?.");
   });
 
-  it("fails closed for missing or incomplete tenant evidence", () => {
-    expect(onboardingGate).toContain('type GateStatus = "checking" | "restoration" | "blocked"');
+  it("fails closed unless an incomplete tenant has private verified-signup provenance", () => {
+    expect(onboardingGate).toContain('type GateStatus = "checking" | "ready" | "restoration" | "blocked"');
     expect(onboardingGate).toContain("if (!currentOrgId)");
     expect(onboardingGate).toContain("Workspace restoration required");
     expect(onboardingGate).toContain("no server-verified signup-onboarding provenance");
-    expect(onboardingGate).not.toContain("OnboardingWizard");
+    expect(onboardingGate).toContain("hasVerifiedSignupProvenance(currentOrgId)");
+    expect(onboardingGate).toContain('if (provenance.verified)');
+    expect(onboardingGate).toContain('setStatus("ready")');
+    expect(onboardingGate).toContain('if (status === "ready") return <OnboardingWizard />');
   });
 
   it("preserves access for an already completed verified organization", () => {
@@ -49,7 +50,7 @@ describe("tenant provisioning boundary", () => {
     expect(onboardingGate).toContain('navigate("/executive", { replace: true })');
   });
 
-  it("stops auth-user creation from implicitly manufacturing tenant state", () => {
+  it("stops generic auth-user creation from implicitly manufacturing tenant state", () => {
     expect(controlPlaneMigration).toContain("DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users");
     expect(controlPlaneMigration).toContain("REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM authenticated");
     expect(controlPlaneMigration).toContain('DROP POLICY IF EXISTS "Users can create organizations" ON public.organizations');
