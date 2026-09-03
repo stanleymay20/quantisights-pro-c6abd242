@@ -30,9 +30,13 @@ const REVENUE_ADJUSTMENTS: Record<string, Record<string, number>> = {
   "100m+":       { ceo: -5, cfo: 10, cmo: -5, coo: 10 },
 };
 
-const ALLOWED_ROLES = new Set(["ceo", "cfo", "cmo", "coo"]);
+type ExecutiveRole = "ceo" | "cfo" | "cmo" | "coo";
+const DEFAULT_ROLES: readonly ExecutiveRole[] = ["ceo", "cfo", "cmo", "coo"];
+const ALLOWED_ROLES = new Set<ExecutiveRole>(DEFAULT_ROLES);
+const isExecutiveRole = (value: unknown): value is ExecutiveRole =>
+  typeof value === "string" && ALLOWED_ROLES.has(value as ExecutiveRole);
 
-function computeBaseScore(role: string, industry: string, sizeBand: string, revenueBand: string): number {
+function computeBaseScore(role: ExecutiveRole, industry: string, sizeBand: string, revenueBand: string): number {
   const industryBase = INDUSTRY_WEIGHTS[industry]?.[role] ?? INDUSTRY_WEIGHTS.other[role] ?? 30;
   const sizeAdj = SIZE_ADJUSTMENTS[sizeBand] ?? 0;
   const revenueAdj = REVENUE_ADJUSTMENTS[revenueBand]?.[role] ?? 0;
@@ -75,7 +79,7 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const organizationId = typeof body?.organization_id === "string" ? body.organization_id : "";
-    const rawRoles = Array.isArray(body?.roles) ? body.roles : ["ceo", "cfo", "cmo", "coo"];
+    const rawRoles: unknown[] = Array.isArray(body?.roles) ? body.roles : [...DEFAULT_ROLES];
     const kpiTemplateId = typeof body?.kpi_template_id === "string" && body.kpi_template_id ? body.kpi_template_id : null;
     const startPilot = body?.start_pilot !== false;
 
@@ -86,11 +90,9 @@ serve(async (req) => {
       });
     }
 
-    const selectedRoles = [...new Set(rawRoles.filter((role: unknown): role is string =>
-      typeof role === "string" && ALLOWED_ROLES.has(role),
-    ))];
+    const selectedRoles: ExecutiveRole[] = [...new Set(rawRoles.filter(isExecutiveRole))];
     if (selectedRoles.length === 0 || selectedRoles.length !== rawRoles.length) {
-      return new Response(JSON.stringify({ error: "roles contains an unsupported executive role" }), {
+      return new Response(JSON.stringify({ error: "roles contains an unsupported or duplicate executive role" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
