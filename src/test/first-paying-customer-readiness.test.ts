@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
+const hardeningMigration = read("supabase/migrations/20260903122500_commercial_boundary_hardening.sql");
 const register = read("src/pages/Register.tsx");
 const onboarding = read("src/pages/Onboarding.tsx");
 const signupIntent = read("src/lib/signup-intent.ts");
@@ -13,15 +14,18 @@ const portal = read("supabase/functions/customer-portal/index.ts");
 const webhook = read("supabase/functions/stripe-webhook/index.ts");
 const cors = read("supabase/functions/_shared/cors.ts");
 const tiers = read("src/lib/stripe-tiers.ts");
+const featureAccess = read("supabase/functions/_shared/feature-access.ts");
+const quotaHook = read("src/hooks/useWorkspaceQuota.ts");
 
 describe("first paying customer readiness", () => {
-  it("keeps fresh signup authority server-issued and separate from Auth triggers", () => {
+  it("keeps fresh signup authority server-issued and separate from generic Auth triggers", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS tenant_control.signup_intents");
     expect(migration).toContain("CREATE OR REPLACE FUNCTION public.begin_signup_intent()");
     expect(migration).toContain("CREATE OR REPLACE FUNCTION public.provision_verified_signup(p_intent_token uuid)");
     expect(migration).toContain("v_uid uuid := auth.uid()");
     expect(migration).toContain("v_user.email_confirmed_at IS NULL");
-    expect(migration).toContain("v_user.created_at < (v_intent.created_at - interval '15 seconds')");
+    expect(migration).toContain("v_user.created_at < v_intent.created_at");
+    expect(migration).not.toContain("v_intent.created_at - interval '15 seconds'");
     expect(migration).toContain("existing_identity_requires_restoration");
     expect(migration).toContain("EXISTS (SELECT 1 FROM public.organization_members WHERE user_id = v_uid)");
     expect(migration).not.toMatch(/CREATE\s+TRIGGER[\s\S]*ON\s+auth\.users/i);
@@ -45,7 +49,7 @@ describe("first paying customer readiness", () => {
     expect(onboarding).toContain("provisionVerifiedSignup(intentToken)");
     expect(onboarding).toContain("hasVerifiedSignupProvenance(currentOrgId)");
     expect(onboarding).toContain('setStatus("restoration")');
-    expect(onboarding).toContain("<OnboardingWizard />");
+    expect(onboarding).toContain('if (status === "ready") return <OnboardingWizard />');
     expect(onboarding).not.toContain("user?.user_metadata?.quantivis_onboarding_started");
     expect(onboarding).not.toContain("quantivis_onboarding_provisioning");
   });
@@ -66,10 +70,13 @@ describe("first paying customer readiness", () => {
     expect(checkout).not.toContain("origin.startsWith");
   });
 
-  it("does not stack a Stripe trial after the no-card pilot", () => {
-    expect(checkout).toContain("pilot_${profile.organization_id}");
-    expect(checkout).toContain("const trialAlreadyUsed = Boolean(pilotRecord) || hadStripeTrial");
+  it("binds Stripe customer reuse, trial history and purchaser identity to the organization", () => {
+    expect(checkout).toContain('.eq("organization_id", organizationId)');
+    expect(checkout).toContain("subscriptionHistory");
+    expect(checkout).toContain("purchaser_user_id: user.id");
+    expect(checkout).toContain("const trialAlreadyUsed = Boolean(pilotRecord) || hadRecordedTrial || hadTrustedStripeTrial");
     expect(checkout).toContain("...(trialAlreadyUsed ? {} : { trial_period_days: 14 })");
+    expect(checkout).not.toContain("stripe.customers.list({ email:");
   });
 
   it("keeps advertised starter and growth workspace limits synchronized", () => {
@@ -97,11 +104,27 @@ describe("first paying customer readiness", () => {
     expect(portal).not.toContain("stripe.customers.list({ email:");
   });
 
-  it("binds new Stripe webhook subscriptions to trusted organization metadata and membership", () => {
+  it("makes Stripe webhook attribution tenant-bound and failures retryable", () => {
     expect(webhook).toContain("sub.metadata?.organization_id");
-    expect(webhook).toContain("metadataOrgId !== userProfile.organization_id");
+    expect(webhook).toContain("sub.metadata?.purchaser_user_id");
+    expect(webhook).toContain('.eq("user_id", purchaserUserId)');
     expect(webhook).toContain('["owner", "admin"].includes(billingMembership.role)');
-    expect(webhook).toContain("Unsupported Stripe product");
+    expect(webhook).toContain('supabase.rpc("claim_stripe_event"');
+    expect(webhook).toContain('supabase.rpc("complete_stripe_event"');
+    expect(webhook).toContain('supabase.rpc("fail_stripe_event"');
+    expect(webhook).not.toContain("findAuthUserByEmail");
     expect(webhook).not.toContain('TIERS[productId] ?? "starter"');
+    expect(hardeningMigration).toContain("status IN ('processing', 'processed', 'failed')");
+  });
+
+  it("fails closed on unknown feature and quota state", () => {
+    expect(hardeningMigration).toContain("'reason', 'feature_not_configured'");
+    expect(hardeningMigration).toContain("'reason', 'quota_not_configured'");
+    expect(hardeningMigration).toContain("usage_increment_must_be_positive");
+    expect(hardeningMigration).toContain("workspace_organization_mismatch");
+    expect(featureAccess).toContain("user.app_metadata?.is_demo === true");
+    expect(featureAccess).not.toContain("user.user_metadata?.is_demo");
+    expect(quotaHook).toContain("const DENIED_QUOTA");
+    expect(quotaHook).not.toContain("quota_limit: 999999, allowed: true");
   });
 });
