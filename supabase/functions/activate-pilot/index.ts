@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { getCorsHeaders, corsPreflightResponse } from "../_shared/cors.ts";
 import { grantPilotAccess, PILOT_DAYS, PILOT_TIER } from "../_shared/pilot-access.ts";
 
@@ -8,11 +7,16 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse(req);
   const corsHeaders = getCorsHeaders(req);
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
-  );
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!supabaseUrl || !serviceRoleKey) {
+    return new Response(JSON.stringify({ error: "Pilot runtime configuration is unavailable" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -52,9 +56,17 @@ serve(async (req) => {
       });
     }
 
-    const isMember = await verifyOrgMembership(userData.user.id, organizationId);
-    if (!isMember) {
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
+    // The pilot is an organization-wide, one-time commercial entitlement. Only
+    // a billing-capable owner/admin may consume it; ordinary members cannot.
+    const { data: membership, error: membershipError } = await supabase
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", organizationId)
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership || !["owner", "admin"].includes(membership.role)) {
+      return new Response(JSON.stringify({ error: "Only an organization owner or admin can activate the pilot" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
