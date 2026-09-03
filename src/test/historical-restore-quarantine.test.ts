@@ -34,6 +34,12 @@ describe("historical restore quarantine", () => {
     expect(migration).not.toMatch(/GRANT\s+EXECUTE/i);
   });
 
+  it("pins every restore batch to a deterministic historical snapshot", () => {
+    expect(migration).toContain("source_snapshot_at timestamptz NOT NULL");
+    expect(migration).toContain("snapshot_filter_column text NOT NULL");
+    expect(migration).toContain("Immutable source cutoff");
+  });
+
   it("stores source rows without promoting them into public tenant tables", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS restore_quarantine.rows");
     expect(migration).toContain("payload jsonb NOT NULL");
