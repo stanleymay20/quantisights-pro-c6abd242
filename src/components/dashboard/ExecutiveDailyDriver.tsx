@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, MessageSquareText, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -112,8 +112,6 @@ export default function ExecutiveDailyDriver({
     brief,
     interventions,
     degradedSurfaces,
-    regenerate,
-    generating,
   } = useExecutiveIntelligence();
   const [decisions, setDecisions] = useState<PendingDecision[]>([]);
   const [attributions, setAttributions] = useState<Record<string, DecisionValueAttribution>>({});
@@ -244,7 +242,7 @@ export default function ExecutiveDailyDriver({
   const degraded = degradedSurfaces.length > 0;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-5 px-3 py-4 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-5xl space-y-5 px-3 py-4 sm:px-6 sm:py-6">
       <section className="rounded-2xl border border-primary/20 bg-primary/[0.03] p-5 sm:p-7" aria-labelledby="executive-focus-heading">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -266,9 +264,9 @@ export default function ExecutiveDailyDriver({
               {firstDecision ? "Review top decision" : "Open executive brief"}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
-            <Button variant="outline" onClick={() => void regenerate()} disabled={generating}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${generating ? "animate-spin" : ""}`} />
-              Refresh intelligence
+            <Button variant="outline" onClick={() => navigate("/app/copilot")}>
+              <MessageSquareText className="mr-2 h-4 w-4" />
+              Ask Quantivis
             </Button>
           </div>
         </div>
@@ -393,6 +391,6 @@ export default function ExecutiveDailyDriver({
           <Button className="mt-4" variant="outline" onClick={() => navigate("/executive-brief")}>Open full executive brief</Button>
         </CardContent></Card>
       </section>
-    </main>
+    </div>
   );
 }

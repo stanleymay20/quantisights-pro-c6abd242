@@ -487,7 +487,7 @@ const DecisionLedgerPage = () => {
 
           <IntelligenceDisclaimer variant="banner" context="advisory" />
           <LazyInputWarning decisions={decisions} />
-        <main className="flex-1 p-8 overflow-auto space-y-6">
+        <div className="flex-1 p-8 overflow-auto space-y-6">
           <SectionErrorBoundary sectionName="Decision Ledger">
           {isExecutiveReviewMode && executiveReviewDecision && currentOrgId && (
             <section
@@ -1144,7 +1144,7 @@ const DecisionLedgerPage = () => {
             </CollapsibleContent>
           </Collapsible>
           </SectionErrorBoundary>
-        </main>
+        </div>
 
       {/* Decision Responsibility Confirmation Dialog */}
       <DecisionResponsibilityDialog

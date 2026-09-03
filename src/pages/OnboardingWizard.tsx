@@ -92,7 +92,7 @@ const Onboarding = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
   // Step 4 - Data input
-  const [dataOption, setDataOption] = useState("later");
+  const [dataOption, setDataOption] = useState("");
 
   useEffect(() => {
     if (currentOrg) setOrgName(currentOrg.name);
@@ -209,7 +209,7 @@ const Onboarding = () => {
       case 1: return industry && sizeBand;
       case 2: return selectedRoles.length > 0;
       case 3: return true;
-      case 4: return true;
+      case 4: return Boolean(dataOption);
       case 5: return true;
       default: return false;
     }
@@ -467,8 +467,8 @@ const Onboarding = () => {
             <div className="space-y-8">
               <div className="text-center space-y-2">
                 <Sparkles className="w-12 h-12 text-primary mx-auto" />
-                <h1 className="text-3xl font-bold tracking-tight">Ready to Launch</h1>
-                <p className="text-muted-foreground">Review your setup and activate your intelligence engine</p>
+                <h1 className="text-3xl font-bold tracking-tight">Review Your Setup</h1>
+                <p className="text-muted-foreground">Confirm your choices, then continue to your Quantivis workspace.</p>
               </div>
 
               <Card>
@@ -512,9 +512,9 @@ const Onboarding = () => {
 
               <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 text-center">
                 <p className="text-sm text-muted-foreground">
-                  This will generate <strong>industry-weighted risk indices</strong> for your {industry} business,
-                  compute initial <strong>convergence scores</strong>, and
-                  {selectedTemplate ? " deploy your selected KPIs" : " prepare your custom KPI workspace"}.
+                  Quantivis will tailor your starting workspace to your organisation and
+                  {selectedTemplate ? " prepare the KPIs you selected" : " prepare a workspace for your own KPIs"}.
+                  You can change these settings later.
                 </p>
               </div>
             </div>
