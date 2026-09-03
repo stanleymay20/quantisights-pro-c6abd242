@@ -1,0 +1,236 @@
+name: One-shot GA usability hardening
+
+on:
+  push:
+    branches:
+      - commercial/first-paying-customer-20260903
+    paths:
+      - .github/workflows/one-shot-ga-usability-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    if: github.repository == 'stanleymay20/quantisights-pro-c6abd242' && github.ref == 'refs/heads/commercial/first-paying-customer-20260903'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: commercial/first-paying-customer-20260903
+          fetch-depth: 0
+
+      - name: Apply guarded GA usability repairs
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, expected: int = 1):
+              p = Path(path)
+              text = p.read_text()
+              found = text.count(old)
+              if found != expected:
+                  raise SystemExit(f"{path}: expected {expected} occurrence(s), found {found}: {old[:100]!r}")
+              p.write_text(text.replace(old, new))
+
+          # Dashboard: trusted demo UI marker + one page landmark owned by ProtectedShell.
+          replace_exact(
+              "src/pages/Dashboard.tsx",
+              "const isDemoUser = Boolean(user?.user_metadata?.is_demo);",
+              "const isDemoUser = user?.app_metadata?.is_demo === true;",
+          )
+          replace_exact(
+              "src/pages/Dashboard.tsx",
+              '<main id="main-content" className="flex-1 overflow-auto">',
+              '<div className="flex-1 overflow-auto">',
+          )
+          replace_exact(
+              "src/pages/Dashboard.tsx",
+              "      </main>\n    </>",
+              "      </div>\n    </>",
+          )
+
+          # Executive home: use scarce hero CTA space for the product's primary interaction.
+          replace_exact(
+              "src/components/dashboard/ExecutiveDailyDriver.tsx",
+              "import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, RefreshCw, ShieldCheck } from \"lucide-react\";",
+              "import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, MessageSquareText, ShieldCheck } from \"lucide-react\";",
+          )
+          replace_exact(
+              "src/components/dashboard/ExecutiveDailyDriver.tsx",
+              "  const {\n    brief,\n    interventions,\n    degradedSurfaces,\n    regenerate,\n    generating,\n  } = useExecutiveIntelligence();",
+              "  const {\n    brief,\n    interventions,\n    degradedSurfaces,\n  } = useExecutiveIntelligence();",
+          )
+          replace_exact(
+              "src/components/dashboard/ExecutiveDailyDriver.tsx",
+              '            <Button variant="outline" onClick={() => void regenerate()} disabled={generating}>\n              <RefreshCw className={`mr-2 h-4 w-4 ${generating ? "animate-spin" : ""}`} />\n              Refresh intelligence\n            </Button>',
+              '            <Button variant="outline" onClick={() => navigate("/app/copilot")}>\n              <MessageSquareText className="mr-2 h-4 w-4" />\n              Ask Quantivis\n            </Button>',
+          )
+          replace_exact(
+              "src/components/dashboard/ExecutiveDailyDriver.tsx",
+              '<main className="mx-auto max-w-5xl space-y-5 px-3 py-4 sm:px-6 sm:py-6">',
+              '<div className="mx-auto max-w-5xl space-y-5 px-3 py-4 sm:px-6 sm:py-6">',
+          )
+          p = Path("src/components/dashboard/ExecutiveDailyDriver.tsx")
+          text = p.read_text()
+          if text.count("</main>") != 1:
+              raise SystemExit("ExecutiveDailyDriver: expected exactly one closing main tag")
+          p.write_text(text.replace("</main>", "</div>"))
+
+          # Core protected pages inherit the single main landmark from ProtectedShell.
+          for path in [
+              "src/pages/DecisionLedger.tsx",
+              "src/pages/Outcomes.tsx",
+              "src/pages/Billing.tsx",
+          ]:
+              p = Path(path)
+              text = p.read_text()
+              if text.count("<main") != 1 or text.count("</main>") != 1:
+                  raise SystemExit(f"{path}: expected exactly one main landmark")
+              p.write_text(text.replace("<main", "<div", 1).replace("</main>", "</div>", 1))
+
+          # Navigation: use task language and put Ask Quantivis in the mobile primary rail.
+          replace_exact(
+              "src/components/dashboard/DashboardSidebar.tsx",
+              '  "Operations": "sidebar.operations",',
+              '  "Outcomes": "sidebar.outcomes",',
+          )
+          replace_exact(
+              "src/components/dashboard/DashboardSidebar.tsx",
+              '    label: "Operations",\n    path: "/outcomes",',
+              '    label: "Outcomes",\n    path: "/outcomes",',
+          )
+          replace_exact(
+              "src/components/layout/MobileTabBar.tsx",
+              " *   Dashboard · Decisions · Operations · Reports · More",
+              " *   Dashboard · Ask · Decisions · Outcomes · More",
+          )
+          replace_exact(
+              "src/components/layout/MobileTabBar.tsx",
+              '  { icon: LayoutDashboard,   label: "Dashboard", path: "/dashboard" },\n  { icon: ClipboardList,     label: "Decisions", path: "/decisions" },\n  { icon: Target,            label: "Operations",path: "/outcomes" },\n  { icon: FileText,          label: "Reports",   path: "/reports" },',
+              '  { icon: LayoutDashboard,   label: "Dashboard", path: "/dashboard" },\n  { icon: MessageSquareText, label: "Ask",       path: "/app/copilot" },\n  { icon: ClipboardList,     label: "Decisions", path: "/decisions" },\n  { icon: Target,            label: "Outcomes",  path: "/outcomes" },',
+          )
+          replace_exact(
+              "src/components/layout/MobileTabBar.tsx",
+              'const MORE_ITEMS: TabItem[] = [\n  { icon: Settings,  label: "Settings",    path: "/settings" },',
+              'const MORE_ITEMS: TabItem[] = [\n  { icon: FileText,  label: "Reports",     path: "/reports" },\n  { icon: Settings,  label: "Settings",    path: "/settings" },',
+          )
+          replace_exact(
+              "src/components/layout/MobileTabBar.tsx",
+              "  const visibleTabs = PRIMARY_TABS.filter(t => allowedPaths.has(t.path));",
+              '  const visibleTabs = PRIMARY_TABS.filter((t) =>\n    t.path === "/app/copilot" ? orgRole !== "viewer" : allowedPaths.has(t.path),\n  );',
+          )
+
+          # Onboarding: make skipping data an explicit choice and reduce internal jargon.
+          replace_exact(
+              "src/pages/OnboardingWizard.tsx",
+              '  const [dataOption, setDataOption] = useState("later");',
+              '  const [dataOption, setDataOption] = useState("");',
+          )
+          replace_exact(
+              "src/pages/OnboardingWizard.tsx",
+              "      case 4: return true;",
+              "      case 4: return Boolean(dataOption);",
+          )
+          replace_exact(
+              "src/pages/OnboardingWizard.tsx",
+              '<h1 className="text-3xl font-bold tracking-tight">Ready to Launch</h1>\n                <p className="text-muted-foreground">Review your setup and activate your intelligence engine</p>',
+              '<h1 className="text-3xl font-bold tracking-tight">Review Your Setup</h1>\n                <p className="text-muted-foreground">Confirm your choices, then continue to your Quantivis workspace.</p>',
+          )
+          replace_exact(
+              "src/pages/OnboardingWizard.tsx",
+              '                  This will generate <strong>industry-weighted risk indices</strong> for your {industry} business,\n                  compute initial <strong>convergence scores</strong>, and\n                  {selectedTemplate ? " deploy your selected KPIs" : " prepare your custom KPI workspace"}.',
+              '                  Quantivis will tailor your starting workspace to your organisation and\n                  {selectedTemplate ? " prepare the KPIs you selected" : " prepare a workspace for your own KPIs"}.\n                  You can change these settings later.',
+          )
+
+          # Pricing contract: annual totals must match the configured annual price, not monthly list price.
+          replace_exact(
+              "src/lib/stripe-tiers.ts",
+              "  entryAnnual: TIERS.starter.price * 12,",
+              "  entryAnnual: TIERS.starter.price_annual * 12,",
+          )
+          replace_exact(
+              "src/lib/stripe-tiers.ts",
+              "  governanceAnnual: TIERS.growth.price * 12,",
+              "  governanceAnnual: TIERS.growth.price_annual * 12,",
+          )
+
+          # Translation keys for the clearer primary navigation label.
+          replace_exact(
+              "src/i18n/locales/en.json",
+              '    "operations": "Operations",',
+              '    "operations": "Operations",\n    "outcomes": "Outcomes",',
+          )
+          replace_exact(
+              "src/i18n/locales/de.json",
+              '    "operations": "Betrieb",',
+              '    "operations": "Betrieb",\n    "outcomes": "Ergebnisse",',
+          )
+
+          # Static GA usability regression contract.
+          Path("src/test/ga-usability-contract.test.ts").write_text(r'''import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const read = (relative: string) =>
+  readFileSync(new URL(relative, import.meta.url), "utf8");
+
+describe("GA usability contract", () => {
+  it("keeps demo UI state on server-owned app metadata", () => {
+    const dashboard = read("../pages/Dashboard.tsx");
+    expect(dashboard).toContain("user?.app_metadata?.is_demo === true");
+    expect(dashboard).not.toContain("user?.user_metadata?.is_demo");
+  });
+
+  it("uses the executive hero for review and Ask Quantivis rather than duplicate refresh", () => {
+    const driver = read("../components/dashboard/ExecutiveDailyDriver.tsx");
+    expect(driver).toContain("Review top decision");
+    expect(driver).toContain("Ask Quantivis");
+    expect(driver).not.toContain("Refresh intelligence");
+  });
+
+  it("keeps one main landmark on the core protected journey", () => {
+    const shell = read("../components/layout/ProtectedShell.tsx");
+    expect(shell.match(/<main\b/g)?.length ?? 0).toBe(1);
+    for (const page of [
+      "../pages/Dashboard.tsx",
+      "../components/dashboard/ExecutiveDailyDriver.tsx",
+      "../pages/DecisionLedger.tsx",
+      "../pages/Outcomes.tsx",
+      "../pages/Billing.tsx",
+    ]) {
+      expect(read(page)).not.toMatch(/<main\b/);
+    }
+  });
+
+  it("prioritizes Ask and Outcomes on mobile while retaining Reports", () => {
+    const mobile = read("../components/layout/MobileTabBar.tsx");
+    expect(mobile).toContain('label: "Ask"');
+    expect(mobile).toContain('label: "Outcomes"');
+    expect(mobile).toContain('label: "Reports"');
+  });
+
+  it("requires an explicit data-source choice during onboarding", () => {
+    const onboarding = read("../pages/OnboardingWizard.tsx");
+    expect(onboarding).toContain('const [dataOption, setDataOption] = useState("")');
+    expect(onboarding).toContain("case 4: return Boolean(dataOption);");
+  });
+
+  it("keeps annual commercial totals aligned to annual pricing", () => {
+    const tiers = read("../lib/stripe-tiers.ts");
+    expect(tiers).toContain("entryAnnual: TIERS.starter.price_annual * 12");
+    expect(tiers).toContain("governanceAnnual: TIERS.growth.price_annual * 12");
+  });
+});
+''')
+          PY
+
+      - name: Commit guarded repairs
+        shell: bash
+        run: |
+          git config user.name "quantivis-ga-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src
+          git diff --cached --check
+          git commit -m "Harden GA usability journey"
+          git push origin HEAD:commercial/first-paying-customer-20260903
