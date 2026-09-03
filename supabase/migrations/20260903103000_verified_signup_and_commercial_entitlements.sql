@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS tenant_control.signup_intents (
   CHECK (expires_at > created_at)
 );
 
+CREATE INDEX IF NOT EXISTS idx_signup_intents_expires_at
+  ON tenant_control.signup_intents(expires_at);
+
 ALTER TABLE tenant_control.signup_intents ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON tenant_control.signup_intents FROM PUBLIC, anon, authenticated;
 
@@ -102,9 +105,9 @@ BEGIN
     RAISE EXCEPTION 'email_confirmation_required' USING ERRCODE = '42501';
   END IF;
 
-  -- Allow a small clock/transaction skew, but reject identities that pre-date
-  -- the server intent. This is the returning-user boundary.
-  IF v_user.created_at < (v_intent.created_at - interval '15 seconds')
+  -- Both values are authoritative server-side timestamps in the same Supabase
+  -- environment. A self-serve identity must not pre-date the issued capability.
+  IF v_user.created_at < v_intent.created_at
      OR v_user.created_at > v_intent.expires_at THEN
     RAISE EXCEPTION 'existing_identity_requires_restoration' USING ERRCODE = '42501';
   END IF;
