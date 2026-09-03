@@ -1,3 +1,4 @@
+# second-push trigger: workflow already exists on this branch
 name: One-shot GA usability hardening
 
 on:
@@ -34,7 +35,6 @@ jobs:
                   raise SystemExit(f"{path}: expected {expected} occurrence(s), found {found}: {old[:100]!r}")
               p.write_text(text.replace(old, new))
 
-          # Dashboard: trusted demo UI marker + one page landmark owned by ProtectedShell.
           replace_exact(
               "src/pages/Dashboard.tsx",
               "const isDemoUser = Boolean(user?.user_metadata?.is_demo);",
@@ -51,7 +51,6 @@ jobs:
               "      </div>\n    </>",
           )
 
-          # Executive home: use scarce hero CTA space for the product's primary interaction.
           replace_exact(
               "src/components/dashboard/ExecutiveDailyDriver.tsx",
               "import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, RefreshCw, ShieldCheck } from \"lucide-react\";",
@@ -78,7 +77,6 @@ jobs:
               raise SystemExit("ExecutiveDailyDriver: expected exactly one closing main tag")
           p.write_text(text.replace("</main>", "</div>"))
 
-          # Core protected pages inherit the single main landmark from ProtectedShell.
           for path in [
               "src/pages/DecisionLedger.tsx",
               "src/pages/Outcomes.tsx",
@@ -90,7 +88,6 @@ jobs:
                   raise SystemExit(f"{path}: expected exactly one main landmark")
               p.write_text(text.replace("<main", "<div", 1).replace("</main>", "</div>", 1))
 
-          # Navigation: use task language and put Ask Quantivis in the mobile primary rail.
           replace_exact(
               "src/components/dashboard/DashboardSidebar.tsx",
               '  "Operations": "sidebar.operations",',
@@ -122,7 +119,6 @@ jobs:
               '  const visibleTabs = PRIMARY_TABS.filter((t) =>\n    t.path === "/app/copilot" ? orgRole !== "viewer" : allowedPaths.has(t.path),\n  );',
           )
 
-          # Onboarding: make skipping data an explicit choice and reduce internal jargon.
           replace_exact(
               "src/pages/OnboardingWizard.tsx",
               '  const [dataOption, setDataOption] = useState("later");',
@@ -144,7 +140,6 @@ jobs:
               '                  Quantivis will tailor your starting workspace to your organisation and\n                  {selectedTemplate ? " prepare the KPIs you selected" : " prepare a workspace for your own KPIs"}.\n                  You can change these settings later.',
           )
 
-          # Pricing contract: annual totals must match the configured annual price, not monthly list price.
           replace_exact(
               "src/lib/stripe-tiers.ts",
               "  entryAnnual: TIERS.starter.price * 12,",
@@ -156,7 +151,6 @@ jobs:
               "  governanceAnnual: TIERS.growth.price_annual * 12,",
           )
 
-          # Translation keys for the clearer primary navigation label.
           replace_exact(
               "src/i18n/locales/en.json",
               '    "operations": "Operations",',
@@ -168,7 +162,6 @@ jobs:
               '    "operations": "Betrieb",\n    "outcomes": "Ergebnisse",',
           )
 
-          # Static GA usability regression contract.
           Path("src/test/ga-usability-contract.test.ts").write_text(r'''import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
