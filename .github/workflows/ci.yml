@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 # Staging serializes every deployable main SHA. CI therefore must preserve an
 # exact result for every pushed SHA rather than cancelling an older run when a
