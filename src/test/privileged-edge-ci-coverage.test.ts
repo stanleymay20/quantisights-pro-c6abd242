@@ -8,6 +8,11 @@ const ci = readFileSync(
 );
 
 describe("privileged Edge CI coverage", () => {
+  it("runs pull-request CI even when controlled work is stacked on a non-main base", () => {
+    expect(ci).toContain("pull_request:\n");
+    expect(ci).not.toContain("pull_request:\n    branches: [main]");
+  });
+
   it("Deno-checks security-sensitive commercial, demo, data, connector, orchestration and decision functions", () => {
     expect(ci).toContain("check_edge() {");
     expect(ci).toContain('config="$1"');
