@@ -28,6 +28,12 @@ describe("historical restore quarantine", () => {
     expect(migration).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)[\s\S]*\sTO\s+(?:anon|authenticated)/i);
   });
 
+  it("exposes no browser-callable promotion or security-definer path", () => {
+    expect(migration).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\./i);
+    expect(migration).not.toMatch(/SECURITY\s+DEFINER/i);
+    expect(migration).not.toMatch(/GRANT\s+EXECUTE/i);
+  });
+
   it("stores source rows without promoting them into public tenant tables", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS restore_quarantine.rows");
     expect(migration).toContain("payload jsonb NOT NULL");
