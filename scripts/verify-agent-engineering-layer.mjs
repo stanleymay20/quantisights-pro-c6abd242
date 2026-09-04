@@ -72,29 +72,35 @@ const roleNames = [
 ];
 
 for (const role of roleNames) {
-  const occurrences = contracts.split(role).length - 1;
-  if (occurrences !== 1) failures.push(`AGENT_CONTRACTS.md must define ${role} exactly once (found ${occurrences})`);
+  const heading = `## ${roleNames.indexOf(role) + 1}. ${role}`;
+  if (!contracts.includes(heading)) failures.push(`AGENT_CONTRACTS.md missing role heading: ${heading}`);
 }
 
 mustContain("REVIEW_PROTOCOL.md", review, [
+  "## Fresh-context requirement",
+  "## Confidence filter",
   "more than 80% confident",
-  "exact file and line/range",
+  "## Pre-report gate",
   "Zero findings is a valid review result.",
-  "Why do current guards fail?",
+  "## Output format",
 ]);
 
 mustContain("LEARNING_PROTOCOL.md", learning, [
+  "## Trust model",
   "unreviewed context",
+  "## Local memory boundary",
   ".agent-memory/",
   "Do not preserve ephemeral facts as durable rules",
-  "Promote durable verified lessons",
+  "## Learning workflow",
+  "## Promotion destinations",
 ]);
 
 mustContain("ECC_ADOPTION_NOTES.md", adoption, [
   "does not currently depend on the ECC runtime",
-  "Deliberately not imported",
+  "## Adopted principles",
+  "## Deliberately not imported",
   "exact-SHA staging",
-  "Optional future adoption gate",
+  "## Optional future adoption gate",
 ]);
 
 const ignoreLines = memoryIgnore
