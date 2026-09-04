@@ -86,8 +86,11 @@ It does not:
 - `REVIEW_PROTOCOL.md` — independent review confidence/evidence rules.
 - `LEARNING_PROTOCOL.md` — memory trust boundary and knowledge promotion process.
 - `HANDOFF_TEMPLATE.md` — cross-agent/session handoff template.
+- `ECC_ADOPTION_NOTES.md` — what was learned from ECC, what was not imported, and the future adoption gate.
 - `../../.agent-memory/README.md` — local untracked memory boundary.
 - `../../scripts/verify-agent-engineering-layer.mjs` — deterministic policy verifier.
+- `../../.github/pull_request_template.md` — plan/review/evidence fields for repository PRs.
+- `../../.github/workflows/agent-engineering-policy.yml` — fast deterministic constitution check.
 
 ## Rollout model
 
