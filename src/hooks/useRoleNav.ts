@@ -5,7 +5,7 @@
  * based on their org role.
  *
  * UX-1 — Executive IA collapse:
- *   Dashboard · Decisions · Operations · Reports · Governance · Settings
+ *   Dashboard · Decisions · Outcomes · Reports · Governance · Settings
  *
  * Power-user routes live in the "Advanced" drawer (gated separately in
  * DashboardSidebar by role).
@@ -31,6 +31,8 @@ const ALL_PATHS = new Set([
   "/settings",
 ]);
 
+const NO_PATHS = new Set<string>();
+
 const ROLE_PATHS: Record<NonNullable<Exclude<OrgRole, null | undefined>>, Set<string>> = {
   owner: ALL_PATHS,
   admin: ALL_PATHS,
@@ -48,8 +50,10 @@ const ROLE_PATHS: Record<NonNullable<Exclude<OrgRole, null | undefined>>, Set<st
 };
 
 export function getAllowedPaths(role: OrgRole): Set<string> {
-  if (!role) return ALL_PATHS;
-  return ROLE_PATHS[role] ?? ALL_PATHS;
+  // Role resolution is authorization evidence. Until it exists, protected
+  // navigation must remain hidden rather than assuming a privileged role.
+  if (!role) return NO_PATHS;
+  return ROLE_PATHS[role] ?? NO_PATHS;
 }
 
 export function useRoleNav(orgRole: OrgRole): Set<string> {
