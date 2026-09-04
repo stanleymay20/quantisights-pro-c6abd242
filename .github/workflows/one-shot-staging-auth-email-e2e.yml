@@ -1,0 +1,66 @@
+name: One-shot staging Auth email E2E
+
+on:
+  push:
+    branches:
+      - evidence/staging-auth-email-e2e-20260904
+    paths:
+      - .github/workflows/one-shot-staging-auth-email-e2e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  signup-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    env:
+      SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      TEST_EMAIL: delivered@resend.dev
+    steps:
+      - name: Verify staging-only acceptance inputs
+        run: |
+          set -Eeuo pipefail
+          test "$SUPABASE_PROJECT_REF" = "cmnihsbdbpubznlkmjbc"
+          test "$TEST_EMAIL" = "delivered@resend.dev"
+          test -n "$SUPABASE_ANON_KEY" || { echo "::error::SUPABASE_ANON_KEY is missing"; exit 1; }
+          echo "::add-mask::$SUPABASE_ANON_KEY"
+
+      - name: Trigger real Supabase Auth signup email
+        run: |
+          set -Eeuo pipefail
+          password="$(openssl rand -base64 36 | tr -d '\n')Aa1!"
+          echo "::add-mask::$password"
+          payload="$(node -e 'process.stdout.write(JSON.stringify({email: process.env.TEST_EMAIL, password: process.argv[1], data: {ga_transport_test: true}}))' "$password")"
+          status="$(curl --silent --show-error \
+            --output /tmp/signup-response.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://${SUPABASE_PROJECT_REF}.supabase.co/auth/v1/signup" \
+            --header "apikey: ${SUPABASE_ANON_KEY}" \
+            --header "Content-Type: application/json" \
+            --data "$payload")"
+          if [ "$status" != "200" ]; then
+            echo "::error::Staging Auth signup returned HTTP ${status}"
+            node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/signup-response.json","utf8")||"{}"); console.error(p.error_code||p.code||p.msg||p.message||"signup failed")' || true
+            exit 1
+          fi
+          node - <<'NODE'
+          const fs = require('fs');
+          const body = JSON.parse(fs.readFileSync('/tmp/signup-response.json', 'utf8'));
+          if (!body.user?.id) {
+            console.error('::error::Signup response did not contain a user id');
+            process.exit(1);
+          }
+          console.log('Staging Auth accepted a new disposable signup and initiated email verification.');
+          NODE
+
+      - name: Allow asynchronous hook and queue processing
+        run: sleep 12
+
+      - name: Record bounded acceptance result
+        run: |
+          echo "Real staging Supabase Auth signup request completed for Resend controlled delivery address."
+          echo "No personal customer address was used and production was not targeted."
