@@ -17,7 +17,7 @@ describe("staging Auth custom SMTP contract", () => {
   it("uses the verified Quantivis sender and Resend SMTP endpoint", () => {
     expect(smtpScript).toContain('const EXPECTED_FROM_EMAIL = "alerts@quantivis.io"');
     expect(smtpScript).toContain('const SMTP_HOST = "smtp.resend.com"');
-    expect(smtpScript).toContain("const SMTP_PORT = 465");
+    expect(smtpScript).toContain('const SMTP_PORT = "465"');
     expect(smtpScript).toContain('const SMTP_USER = "resend"');
     expect(smtpScript).toContain('const SMTP_SENDER_NAME = "Quantivis"');
   });
@@ -33,7 +33,7 @@ describe("staging Auth custom SMTP contract", () => {
   it("read-back verifies only non-secret SMTP settings", () => {
     expect(smtpScript).toContain('after.smtp_admin_email !== EXPECTED_FROM_EMAIL');
     expect(smtpScript).toContain('after.smtp_host !== SMTP_HOST');
-    expect(smtpScript).toContain('Number(after.smtp_port) !== SMTP_PORT');
+    expect(smtpScript).toContain('String(after.smtp_port) !== SMTP_PORT');
     expect(smtpScript).toContain('after.smtp_user !== SMTP_USER');
     expect(smtpScript).toContain('after.smtp_sender_name !== SMTP_SENDER_NAME');
     expect(smtpScript).not.toContain("after.smtp_pass");
