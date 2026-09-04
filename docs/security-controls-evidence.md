@@ -1,7 +1,7 @@
 # Security Controls & Compliance Evidence Pack
 
 **Document Owner:** Platform Engineering  
-**Last Updated:** 2026-04-08  
+**Last Updated:** 2026-09-02  
 **Classification:** Internal — Confidential  
 **Applicable Frameworks:** SOC 2 Type II, ISO 27001, GDPR/DSGVO
 
@@ -50,7 +50,7 @@
 | Control | Implementation | Evidence |
 |---------|---------------|----------|
 | CC6.1 — Logical access provisioning | Invitation-based org membership with role assignment | `team_invitations` table, `accept_invitation` RPC |
-| CC6.2 — User registration | Handle_new_user trigger creates org + profile + workspace atomically | `handle_new_user()` trigger function |
+| CC6.2 — User registration | Fail-closed tenant boundary: Auth identity creation has no implicit tenant/workspace side effects; trusted signup tenant provisioning requires a separate server-controlled provenance path | `20260902153000_fail_closed_tenant_control_plane.sql`, `src/pages/Onboarding.tsx` |
 | CC6.3 — Elevated access | Step-up auth required for executive overrides | `exec_verify_step_up_auth` (5-min validity window) |
 | CC6.4 — Access review | Auth event logging with risk scoring | `auth_events` table, `login-anomaly-detect` function |
 | CC6.5 — Access revocation | Cascade delete on user removal | FK constraints with `ON DELETE CASCADE` |
@@ -204,6 +204,7 @@ Lovable Cloud CDN (Edge)
 | PT-003 | SCIM token DELETE not creator-scoped | Low | Identified | Q3 2026 |
 | PT-004 | Slack webhook URL in notification_preferences | Low | Identified | Q3 2026 |
 | PT-005 | Some RLS policies use `USING(true)` for INSERT | Warn | Under review | Q2 2026 |
+| PT-006 | Tenant control plane allowed self-membership insertion and client-side tenant creation; auth trigger manufactured tenant shells | P0 | Remediation in exact-SHA staging validation | 2026-09-02 |
 
 ---
 

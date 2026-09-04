@@ -30,7 +30,7 @@ for (const org of [state.orgs.a.id, state.orgs.b.id]) {
   if (oErr) failures.push({ op: "delete organization", org, error: oErr.message });
 }
 
-for (const u of [state.users.a, state.users.b]) {
+for (const u of [state.users.a, state.users.b, state.users.c].filter(Boolean)) {
   if (!u.user_id) continue;
   const { error } = await sb.auth.admin.deleteUser(u.user_id);
   if (error) failures.push({ op: "delete user", email: u.email, error: error.message });

@@ -12,23 +12,30 @@
 //        - B reads own audit_log canary (row present)
 //        - A performs one allowed own-org write (insert decision_ledger)
 //        - B performs one allowed own-org write (insert decision_ledger)
-//   5. NEGATIVE CROSS-TENANT PROBES:
+//        - A admin adds an unassigned user C as viewer in org A
+//   5. NEGATIVE CROSS-TENANT / CONTROL-PLANE PROBES:
 //        - A→B read decision_ledger (must return [] with HTTP 200)
 //        - B→A read decision_ledger (must return [] with HTTP 200)
 //        - A→B read audit_log       (must return [] with HTTP 200)
 //        - B→A read audit_log       (must return [] with HTTP 200)
 //        - A→B insert decision_ledger (must be EXPECTED_DENIAL)
 //        - B→A insert decision_ledger (must be EXPECTED_DENIAL)
+//        - A self-enrols into org B as owner (must be EXPECTED_DENIAL)
+//        - B self-enrols into org A as owner (must be EXPECTED_DENIAL)
+//        - A admin promotes self to owner (must be EXPECTED_DENIAL)
+//        - B admin promotes self to owner (must be EXPECTED_DENIAL)
+//        - A creates an organization directly (must be EXPECTED_DENIAL)
+//        - B creates an organization directly (must be EXPECTED_DENIAL)
 //
 // Evidence surface: decision_ledger.evidence_sources JSONB (public.evidence_sources
 // does not exist in this schema; the JSONB column is the real evidence store and
-// is governed by decision_ledger RLS, so cross-tenant leaks of evidence are
-// covered by the decision_ledger probes).
+// is governed by decision_ledger RLS, so cross-tenant evidence access is fully
+// covered by the decision_ledger read/write probes).
 //
 // Verdicts:
 //   PASS              — probe returned exactly what a correct policy allows
-//   CRITICAL_LEAK     — cross-tenant read returned rows OR cross-tenant write succeeded
-//   EXPECTED_DENIAL   — cross-tenant write rejected by documented RLS/auth class
+//   CRITICAL_LEAK     — forbidden cross-tenant/control-plane write succeeded
+//   EXPECTED_DENIAL   — forbidden write rejected by documented RLS/auth class
 //   FRAMEWORK_INVALID — positive control failed, canary missing, or malformed response
 //   API_FAILURE       — unexpected HTTP status (4xx/5xx not in the denial class)
 //
@@ -60,8 +67,9 @@ for (const side of ["a", "b"]) {
   const c = (state.seeded_rows || {})[side] || {};
   for (const t of REQUIRED_CANARIES) if (!c[t]) missing.push(`${side}.${t}`);
 }
+if (!state.users?.c?.user_id) missing.push("users.c.user_id");
 if (missing.length > 0) {
-  console.error("FRAMEWORK_INVALID: missing canaries: " + missing.join(", "));
+  console.error("FRAMEWORK_INVALID: missing canaries/control subjects: " + missing.join(", "));
   process.exit(1);
 }
 
@@ -164,6 +172,33 @@ async function positiveWrite(token, actorEmail, actorOrgId) {
   return false;
 }
 
+async function positiveMembershipInsert(token, actorEmail, actorOrgId, targetUserId) {
+  const url = `${URL}/rest/v1/organization_members`;
+  const base = {
+    kind: "positive_membership_insert", actor: actorEmail, actor_org: actorOrgId,
+    target_org: actorOrgId, table: "organization_members", op: "POST",
+  };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers(token), Prefer: "return=representation" },
+      body: JSON.stringify({ organization_id: actorOrgId, user_id: targetUserId, role: "viewer" }),
+    });
+  } catch (e) {
+    push({ ...base, status: 0, body: `network_error: ${e.message}`, verdict: "FRAMEWORK_INVALID" });
+    return false;
+  }
+  const { text, parsed } = await readBody(res);
+  if (res.status >= 200 && res.status < 300 && Array.isArray(parsed) && parsed[0]?.user_id === targetUserId) {
+    push({ ...base, status: res.status, inserted_user_id: targetUserId, verdict: "PASS" });
+    return true;
+  }
+  push({ ...base, status: res.status, body: bodySnippet(text), verdict: "FRAMEWORK_INVALID",
+    note: `admin viewer-membership insert expected 2xx with row; got ${res.status}` });
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Negative cross-tenant probes
 // ---------------------------------------------------------------------------
@@ -193,7 +228,7 @@ async function negativeRead(token, actorEmail, actorOrgId, targetOrgId, table) {
 
 function classifyWriteDenial(status, parsed, text) {
   if (status >= 200 && status < 300) {
-    return { verdict: "CRITICAL_LEAK", note: "cross-tenant insert accepted" };
+    return { verdict: "CRITICAL_LEAK", note: "forbidden write accepted" };
   }
   const code = parsed && typeof parsed === "object" ? String(parsed.code || "") : "";
   const msg = parsed && typeof parsed === "object" ? String(parsed.message || "") : text || "";
@@ -233,6 +268,72 @@ async function negativeWrite(token, actorEmail, actorOrgId, targetOrgId) {
   push({ ...base, status: res.status, body: bodySnippet(text), ...cls });
 }
 
+async function negativeMembershipSelfJoin(token, actorEmail, actorUserId, actorOrgId, targetOrgId) {
+  const url = `${URL}/rest/v1/organization_members`;
+  const base = {
+    kind: "negative_membership_self_join", actor: actorEmail, actor_org: actorOrgId,
+    target_org: targetOrgId, table: "organization_members", op: "POST",
+  };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers(token), Prefer: "return=representation" },
+      body: JSON.stringify({ organization_id: targetOrgId, user_id: actorUserId, role: "owner" }),
+    });
+  } catch (e) {
+    push({ ...base, status: 0, body: `network_error: ${e.message}`, verdict: "FRAMEWORK_INVALID" });
+    return;
+  }
+  const { text, parsed } = await readBody(res);
+  const cls = classifyWriteDenial(res.status, parsed, text);
+  push({ ...base, status: res.status, body: bodySnippet(text), ...cls });
+}
+
+async function negativeAdminOwnerEscalation(token, actorEmail, actorUserId, actorOrgId) {
+  const url = `${URL}/rest/v1/organization_members?organization_id=eq.${actorOrgId}&user_id=eq.${actorUserId}`;
+  const base = {
+    kind: "negative_admin_owner_escalation", actor: actorEmail, actor_org: actorOrgId,
+    target_org: actorOrgId, table: "organization_members", op: "PATCH",
+  };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: { ...headers(token), Prefer: "return=representation" },
+      body: JSON.stringify({ role: "owner" }),
+    });
+  } catch (e) {
+    push({ ...base, status: 0, body: `network_error: ${e.message}`, verdict: "FRAMEWORK_INVALID" });
+    return;
+  }
+  const { text, parsed } = await readBody(res);
+  const cls = classifyWriteDenial(res.status, parsed, text);
+  push({ ...base, status: res.status, body: bodySnippet(text), ...cls });
+}
+
+async function negativeOrganizationCreate(token, actorEmail, actorUserId, actorOrgId) {
+  const url = `${URL}/rest/v1/organizations`;
+  const base = {
+    kind: "negative_organization_create", actor: actorEmail, actor_org: actorOrgId,
+    target_org: null, table: "organizations", op: "POST",
+  };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers(token), Prefer: "return=representation" },
+      body: JSON.stringify({ name: `forbidden-direct-org-${Date.now()}`, created_by: actorUserId }),
+    });
+  } catch (e) {
+    push({ ...base, status: 0, body: `network_error: ${e.message}`, verdict: "FRAMEWORK_INVALID" });
+    return;
+  }
+  const { text, parsed } = await readBody(res);
+  const cls = classifyWriteDenial(res.status, parsed, text);
+  push({ ...base, status: res.status, body: bodySnippet(text), ...cls });
+}
+
 // ---------------------------------------------------------------------------
 // Execute
 // ---------------------------------------------------------------------------
@@ -247,12 +348,14 @@ pos.push(await positiveRead(tokenA, state.users.a.email, state.orgs.a.id, "audit
 pos.push(await positiveRead(tokenB, state.users.b.email, state.orgs.b.id, "audit_log",       state.seeded_rows.b.audit_log));
 pos.push(await positiveWrite(tokenA, state.users.a.email, state.orgs.a.id));
 pos.push(await positiveWrite(tokenB, state.users.b.email, state.orgs.b.id));
+pos.push(await positiveMembershipInsert(tokenA, state.users.a.email, state.orgs.a.id, state.users.c.user_id));
 
 if (pos.some((ok) => !ok)) {
   const summary = {
     run_tag: state.run_tag,
     seeded_role: state.seeded_role,
     evidence_surface: state.evidence_surface,
+    orgs: state.orgs,
     aborted: "positive_controls_failed",
     totals: countTotals(results),
     results,
@@ -262,13 +365,34 @@ if (pos.some((ok) => !ok)) {
   process.exit(1);
 }
 
-// 2) Negative cross-tenant probes.
+// 2) Negative data-plane cross-tenant probes.
 for (const t of REQUIRED_CANARIES) {
   await negativeRead(tokenA, state.users.a.email, state.orgs.a.id, state.orgs.b.id, t);
   await negativeRead(tokenB, state.users.b.email, state.orgs.b.id, state.orgs.a.id, t);
 }
 await negativeWrite(tokenA, state.users.a.email, state.orgs.a.id, state.orgs.b.id);
 await negativeWrite(tokenB, state.users.b.email, state.orgs.b.id, state.orgs.a.id);
+
+// 3) Negative control-plane probes. These catch the class of bug where data
+// tables look isolated only because a user has not yet forged membership.
+await negativeMembershipSelfJoin(
+  tokenA, state.users.a.email, state.users.a.user_id, state.orgs.a.id, state.orgs.b.id,
+);
+await negativeMembershipSelfJoin(
+  tokenB, state.users.b.email, state.users.b.user_id, state.orgs.b.id, state.orgs.a.id,
+);
+await negativeAdminOwnerEscalation(
+  tokenA, state.users.a.email, state.users.a.user_id, state.orgs.a.id,
+);
+await negativeAdminOwnerEscalation(
+  tokenB, state.users.b.email, state.users.b.user_id, state.orgs.b.id,
+);
+await negativeOrganizationCreate(
+  tokenA, state.users.a.email, state.users.a.user_id, state.orgs.a.id,
+);
+await negativeOrganizationCreate(
+  tokenB, state.users.b.email, state.users.b.user_id, state.orgs.b.id,
+);
 
 function countTotals(rs) {
   const t = { probes: rs.length, PASS: 0, EXPECTED_DENIAL: 0, CRITICAL_LEAK: 0, FRAMEWORK_INVALID: 0, API_FAILURE: 0 };
@@ -280,13 +404,14 @@ const summary = {
   run_tag: state.run_tag,
   seeded_role: state.seeded_role,
   evidence_surface: state.evidence_surface,
+  orgs: state.orgs,
   totals: countTotals(results),
   results,
 };
 console.log(JSON.stringify(summary, null, 2));
 
 if (leaks > 0) {
-  console.error(`\nCRITICAL: ${leaks} cross-tenant leak(s). Exit 2.`);
+  console.error(`\nCRITICAL: ${leaks} cross-tenant/control-plane leak(s). Exit 2.`);
   process.exit(2);
 }
 if (frameworkInvalid > 0 || apiFailures > 0) {
@@ -295,4 +420,4 @@ if (frameworkInvalid > 0 || apiFailures > 0) {
   );
   process.exit(1);
 }
-console.log(`\nPASS: ${results.length} probes — all positive controls PASS and all cross-tenant probes correctly denied.`);
+console.log(`\nPASS: ${results.length} probes — data plane and tenant control plane correctly enforced.`);

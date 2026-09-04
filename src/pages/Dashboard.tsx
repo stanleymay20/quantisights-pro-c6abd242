@@ -60,13 +60,25 @@ const Dashboard = () => {
   const [pendingDecisions, setPendingDecisions] = useState<number | null>(0);
   const [decisionStatsError, setDecisionStatsError] = useState<string | null>(null);
   const [onboardingVerificationError, setOnboardingVerificationError] = useState<string | null>(null);
+  const [onboardingVerifiedComplete, setOnboardingVerifiedComplete] = useState(false);
   const decisionSyncRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (orgLoading || !currentOrgId) return;
-    const cacheKey = `onboarding_checked_${currentOrgId}`;
-    if (sessionStorage.getItem(cacheKey) === "done") return;
+    // First-run guidance must fail closed. "Not loading" is not evidence that an
+    // organization is safe for onboarding; only a positive database verification
+    // of onboarding_completed=true may enable the WelcomeFlow.
+    if (orgLoading || !currentOrgId) {
+      setOnboardingVerifiedComplete(false);
+      return;
+    }
 
+    const cacheKey = `onboarding_checked_${currentOrgId}`;
+    if (sessionStorage.getItem(cacheKey) === "done") {
+      setOnboardingVerifiedComplete(true);
+      return;
+    }
+
+    setOnboardingVerifiedComplete(false);
     let cancelled = false;
     const checkOnboarding = async () => {
       setOnboardingVerificationError(null);
@@ -80,23 +92,28 @@ const Dashboard = () => {
         if (error) {
           console.warn("[Dashboard] Onboarding check failed:", error.message);
           setOnboardingVerificationError(error.message);
+          setOnboardingVerifiedComplete(false);
           return;
         }
         if (!data) {
           setOnboardingVerificationError("Organization onboarding status could not be verified.");
+          setOnboardingVerifiedComplete(false);
           return;
         }
         if (!data.onboarding_completed) {
+          setOnboardingVerifiedComplete(false);
           navigate("/onboarding", { replace: true });
           return;
         }
         // Cache only a successfully verified completed state. Unknown/error
         // states remain retryable on the next mount instead of becoming truth.
         sessionStorage.setItem(cacheKey, "done");
+        setOnboardingVerifiedComplete(true);
       } catch (error) {
         if (cancelled) return;
         console.warn("[Dashboard] Onboarding check threw:", error);
         setOnboardingVerificationError(error instanceof Error ? error.message : "Onboarding verification failed.");
+        setOnboardingVerifiedComplete(false);
       }
     };
     void checkOnboarding();
@@ -166,7 +183,7 @@ const Dashboard = () => {
   const isContextLoading = orgLoading || workspaceLoading || projectLoading || datasetLoading;
   const isLoading = isContextLoading || metricsLoading || insightsLoading;
   const isDemoHydrating = isDemoUser && (!currentWorkspaceId || !activeDatasetId);
-  const showWelcomeFlow = !isDemoUser && !isContextLoading;
+  const showWelcomeFlow = !isDemoUser && !isContextLoading && onboardingVerifiedComplete;
   // An unavailable evidence source is not the same as an empty dataset.
   const showEmptyState = !metricsError && !insightsError && !hasData && !isLoading && !isDemoHydrating;
 

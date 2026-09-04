@@ -7,6 +7,7 @@ import { componentTagger } from "lovable-tagger";
 import {
   PRODUCTION_PUBLIC_CLIENT_CONFIG,
   STAGING_PUBLIC_CLIENT_CONFIG,
+  resolveDefaultPublicClientTarget,
   resolvePublicClientConfig,
   validatePublicClientConfig,
 } from "./config/public-client-config";
@@ -65,13 +66,18 @@ const releaseProvenancePlugin = (releaseMetadata: Record<string, unknown>): Plug
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, "VITE_");
 
-  // Fail-safe environment separation: only an explicit production-mode build
-  // defaults to the production Supabase project. Development, test, preview,
-  // and any custom non-production mode default to staging unless a complete
-  // VITE_SUPABASE_* pair explicitly overrides the target.
-  const defaultClientTarget = mode === "production"
-    ? PRODUCTION_PUBLIC_CLIENT_CONFIG
-    : STAGING_PUBLIC_CLIENT_CONFIG;
+  // Hosting providers commonly build deploy previews with Vite's `production`
+  // mode. That must never make an isolated preview inherit production Supabase.
+  // Netlify exposes CONTEXT (production/deploy-preview/branch-deploy); Vercel
+  // exposes VERCEL_ENV (production/preview/development). Any explicit
+  // non-production provider context fails closed to staging.
+  const deploymentContext = process.env.CONTEXT?.trim()
+    || process.env.VERCEL_ENV?.trim()
+    || null;
+  const defaultClientTarget = resolveDefaultPublicClientTarget({
+    mode,
+    deploymentContext,
+  });
 
   const publicClientConfig = resolvePublicClientConfig({
     VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim(),
@@ -88,6 +94,7 @@ export default defineConfig(({ mode }) => {
   const releaseMetadata = {
     ...baseReleaseMetadata,
     buildMode: mode,
+    deploymentContext,
     supabaseProjectRef,
     supabaseConfigSource: publicClientConfig.source,
   };
