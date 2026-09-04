@@ -18,6 +18,7 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
       STAGING_AUTH_EMAIL_SEND_LIMIT: "120"
@@ -33,9 +34,11 @@ jobs:
           set -Eeuo pipefail
           test "$SUPABASE_PROJECT_REF" = "cmnihsbdbpubznlkmjbc"
           test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN is missing"; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::SUPABASE_SERVICE_ROLE_KEY is missing"; exit 1; }
           test -n "$RESEND_API_KEY" || { echo "::error::RESEND_API_KEY is missing"; exit 1; }
           test "$RESEND_FROM_EMAIL" = "alerts@quantivis.io" || { echo "::error::RESEND_FROM_EMAIL must be alerts@quantivis.io"; exit 1; }
           echo "::add-mask::$RESEND_API_KEY"
+          echo "::add-mask::$SUPABASE_SERVICE_ROLE_KEY"
 
       - name: Validate new Resend provider pair
         run: node scripts/preflight-supabase-auth-email.mjs provider-input
@@ -54,7 +57,20 @@ jobs:
             --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Prove rotated provider in staging Edge runtime
-        run: node scripts/preflight-supabase-auth-email.mjs runtime
+        run: |
+          set -Eeuo pipefail
+          status="$(curl --silent --show-error --output /tmp/provider-preflight.json --write-out '%{http_code}' \
+            --request POST \
+            "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/process-email-queue" \
+            --header "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            --header "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            --header "Content-Type: application/json" \
+            --data '{"mode":"provider_preflight"}')"
+          if [ "$status" != "200" ]; then
+            echo "::error::Staging email-worker provider preflight failed with HTTP ${status}"
+            exit 1
+          fi
+          echo "Staging email-worker provider preflight passed."
 
       - name: Configure and read-back verify staging custom SMTP
         run: node scripts/configure-staging-auth-smtp.mjs
