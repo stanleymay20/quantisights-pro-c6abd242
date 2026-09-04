@@ -1,5 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 
+const STAGING_SUPABASE_REF = "cmnihsbdbpubznlkmjbc";
+
 const requiredFiles = [
   "AGENTS.md",
   "CLAUDE.md",
@@ -12,6 +14,7 @@ const requiredFiles = [
   ".agent-memory/.gitignore",
   ".agent-memory/README.md",
   ".github/pull_request_template.md",
+  ".mcp.json",
 ];
 
 const failures = [];
@@ -34,6 +37,7 @@ const learning = requireFile("docs/agent-engineering/LEARNING_PROTOCOL.md");
 const adoption = requireFile("docs/agent-engineering/ECC_ADOPTION_NOTES.md");
 const memoryIgnore = requireFile(".agent-memory/.gitignore");
 const prTemplate = requireFile(".github/pull_request_template.md");
+const mcpText = requireFile(".mcp.json");
 
 const mustContain = (name, text, markers) => {
   for (const marker of markers) {
@@ -123,10 +127,44 @@ mustContain("pull_request_template.md", prTemplate, [
   "PASS | FAIL | BLOCKED | INSUFFICIENT EVIDENCE",
 ]);
 
+// Repository MCP is an engineering authority boundary. Keep investigation
+// staging-only and read-only unless a separately reviewed policy change says
+// otherwise. Any new server therefore requires a deliberate verifier update.
+try {
+  const mcp = JSON.parse(mcpText);
+  const servers = mcp?.mcpServers;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    failures.push(".mcp.json must define an mcpServers object");
+  } else {
+    const names = Object.keys(servers);
+    if (names.length !== 1 || names[0] !== "supabase-staging") {
+      failures.push(`.mcp.json must expose only the reviewed supabase-staging server (found: ${names.join(", ") || "none"})`);
+    }
+
+    const server = servers["supabase-staging"];
+    if (!server || server.type !== "http" || typeof server.url !== "string") {
+      failures.push("supabase-staging MCP must be an HTTP server with an explicit URL");
+    } else {
+      const url = new URL(server.url);
+      if (url.protocol !== "https:" || url.hostname !== "mcp.supabase.com") {
+        failures.push("supabase-staging MCP must use https://mcp.supabase.com");
+      }
+      if (url.searchParams.get("project_ref") !== STAGING_SUPABASE_REF) {
+        failures.push("supabase-staging MCP project_ref does not match the reviewed staging project");
+      }
+      if (url.searchParams.get("read_only") !== "true") {
+        failures.push("supabase-staging MCP must remain read_only=true");
+      }
+    }
+  }
+} catch (error) {
+  failures.push(`.mcp.json is not valid reviewed JSON/URL configuration: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 if (failures.length) {
   console.error("Agent engineering policy verification failed:\n");
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
 
-console.log(`Agent engineering policy verification passed (${requiredFiles.length} governed files, ${roleNames.length} role contracts).`);
+console.log(`Agent engineering policy verification passed (${requiredFiles.length} governed files, ${roleNames.length} role contracts, staging read-only MCP).`);
