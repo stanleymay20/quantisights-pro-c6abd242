@@ -32,7 +32,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           cp package-lock.json /tmp/package-lock.before.json
-          npm update fflate --package-lock-only --ignore-scripts
+          npm update fflate --package-lock-only --ignore-scripts --no-audit
 
           node <<'NODE'
           const fs = require('node:fs');
