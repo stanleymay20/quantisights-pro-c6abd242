@@ -83,11 +83,6 @@ jobs:
               "    const serviceRoleKey = await getLegacyServiceRoleKey();\n    await verifySupabaseManagedProvider(serviceRoleKey);",
               "    await verifySupabaseManagedProvider(workerAuthSecret);")
 
-          deploy = ".github/workflows/deploy-supabase-staging.yml"
-          replace_exact(deploy,
-              "          # Prove the credentials that are actually active in Supabase plus the\n          # worker's exact service-role authorization before changing hook/cron.\n          phase=\"runtime-provider-preflight\"\n          node scripts/preflight-supabase-auth-email.mjs runtime\n",
-              "          # Generate an invocation credential that is independent of Supabase\n          # API-key formats. Store the same value in Edge secrets and, during\n          # configure, Postgres Vault for the private queue cron.\n          phase=\"generate-worker-secret\"\n          worker_secret=\"$(openssl rand -base64 48 | tr -d '\\n')\"\n          echo \"::add-mask::$worker_secret\"\n          export EMAIL_QUEUE_WORKER_SECRET=\"$worker_secret\"\n          phase=\"worker-secret-rotation\"\n          supabase secrets set \\\n            EMAIL_QUEUE_WORKER_SECRET=\"$worker_secret\" \\\n            --project-ref \"$SUPABASE_PROJECT_REF\"\n\n          # Prove the credentials that are actually active in Supabase plus the\n          # worker's dedicated invocation-secret authorization before changing hook/cron.\n          phase=\"runtime-provider-preflight\"\n          node scripts/preflight-supabase-auth-email.mjs runtime\n")
-
           test = "src/test/auth-email-worker-security-contract.test.ts"
           p = Path(test)
           text = p.read_text()
@@ -105,8 +100,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           changed="$(git diff --name-only | sort)"
-          expected=".github/workflows/deploy-supabase-staging.yml
-          scripts/configure-supabase-auth-email.mjs
+          expected="scripts/configure-supabase-auth-email.mjs
           scripts/preflight-supabase-auth-email.mjs
           src/test/auth-email-worker-security-contract.test.ts
           supabase/functions/process-email-queue/index.ts"
@@ -116,12 +110,11 @@ jobs:
           fi
           git diff --check
 
-      - name: Commit durable worker-auth repair and remove helper
+      - name: Commit durable worker-auth repair
         run: |
           set -Eeuo pipefail
           git config user.name "Stanley Osei-Wusu"
           git config user.email "107648937+stanleymay20@users.noreply.github.com"
-          git rm .github/workflows/one-shot-patch-email-worker-auth.yml
-          git add .github/workflows/deploy-supabase-staging.yml scripts/configure-supabase-auth-email.mjs scripts/preflight-supabase-auth-email.mjs src/test/auth-email-worker-security-contract.test.ts supabase/functions/process-email-queue/index.ts
+          git add scripts/configure-supabase-auth-email.mjs scripts/preflight-supabase-auth-email.mjs src/test/auth-email-worker-security-contract.test.ts supabase/functions/process-email-queue/index.ts
           git commit -m "Decouple email worker auth from Supabase service-role keys"
           git push origin HEAD:security/staging-auth-smtp-20260904
