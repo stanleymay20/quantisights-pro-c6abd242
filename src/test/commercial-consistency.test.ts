@@ -8,8 +8,9 @@ const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n")
 describe("commercial source of truth", () => {
   it("derives published entry and governance terms from configured checkout tiers", () => {
     expect(COMMERCIAL_TERMS.entryMonthly).toBe(TIERS.starter.price);
-    expect(COMMERCIAL_TERMS.entryAnnual).toBe(TIERS.starter.price * 12);
+    expect(COMMERCIAL_TERMS.entryAnnual).toBe(TIERS.starter.price_annual * 12);
     expect(COMMERCIAL_TERMS.governanceMonthly).toBe(TIERS.growth.price);
+    expect(COMMERCIAL_TERMS.governanceAnnual).toBe(TIERS.growth.price_annual * 12);
     expect(COMMERCIAL_TERMS.trialDays).toBe(14);
   });
 

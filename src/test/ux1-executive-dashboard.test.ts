@@ -48,12 +48,12 @@ describe("UX-1 executive dashboard contract", () => {
     const mobileTabs = read("src/components/layout/MobileTabBar.tsx");
     const routes = read("src/routes/index.tsx");
 
-    for (const label of ["Dashboard", "Decisions", "Operations", "Reports", "Governance", "Settings"]) {
+    for (const label of ["Dashboard", "Decisions", "Outcomes", "Reports", "Governance", "Settings"]) {
       expect(sidebar).toContain(`label: "${label}"`);
     }
 
     expect(sidebar).not.toContain('label: "Home"');
-    expect(sidebar).not.toContain('label: "Outcomes"');
+    expect(sidebar).not.toContain('label: "Operations"');
     expect(sidebar).not.toContain('label: "Workspace"');
     expect(sidebar).not.toContain('path: "/workspace"');
     expect(mobileTabs).not.toContain('label: "Workspace"');

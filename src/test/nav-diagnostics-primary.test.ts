@@ -8,13 +8,13 @@ const sidebar = readFileSync(
 );
 
 describe("diagnostics navigation", () => {
-  it("places Diagnostics under the primary Operations section", () => {
-    const operationsStart = sidebar.indexOf('label: "Operations"');
-    const reportsStart = sidebar.indexOf('label: "Reports"', operationsStart);
-    const operationsBlock = sidebar.slice(operationsStart, reportsStart);
+  it("places Diagnostics under the primary Outcomes section", () => {
+    const outcomesStart = sidebar.indexOf('label: "Outcomes"');
+    const reportsStart = sidebar.indexOf('label: "Reports"', outcomesStart);
+    const outcomesBlock = sidebar.slice(outcomesStart, reportsStart);
 
-    expect(operationsBlock).toContain('label: "Diagnostics"');
-    expect(operationsBlock).toContain('path: "/diagnostics"');
+    expect(outcomesBlock).toContain('label: "Diagnostics"');
+    expect(outcomesBlock).toContain('path: "/diagnostics"');
   });
 
   it("does not duplicate Diagnostics in the Advanced Labs section", () => {
