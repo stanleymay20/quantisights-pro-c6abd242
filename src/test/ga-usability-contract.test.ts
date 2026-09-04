@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { getAllowedPaths } from "@/hooks/useRoleNav";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -30,6 +31,17 @@ describe("GA usability contract", () => {
     expect(mobile).toContain('label: "Ask"');
     expect(mobile).toContain('label: "Outcomes"');
     expect(mobile).toContain('label: "Reports"');
+  });
+
+  it("fails protected navigation closed until verified role evidence resolves", () => {
+    expect(getAllowedPaths(null).size).toBe(0);
+    expect(getAllowedPaths(undefined).size).toBe(0);
+    expect(getAllowedPaths("unexpected-role" as any).size).toBe(0);
+    expect(getAllowedPaths("owner").has("/dashboard")).toBe(true);
+
+    const sidebar = read("../components/dashboard/DashboardSidebar.tsx");
+    expect(sidebar).not.toContain('!orgRole || orgRole === "owner"');
+    expect(sidebar).toContain('orgRole === "owner" || orgRole === "admin" || orgRole === "executive" || orgRole === "steward"');
   });
 
   it("requires an explicit data-source choice during onboarding", () => {
