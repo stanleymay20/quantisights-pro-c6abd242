@@ -1,0 +1,127 @@
+name: One-shot patch email worker auth
+
+on:
+  push:
+    branches:
+      - security/staging-auth-smtp-20260904
+    paths:
+      - .github/workflows/one-shot-patch-email-worker-auth.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: security/staging-auth-smtp-20260904
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Apply exact worker-auth replacements
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old[:100]!r}")
+              p.write_text(text.replace(old, new))
+
+          worker = "supabase/functions/process-email-queue/index.ts"
+          replace_exact(worker,
+              "  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')\n\n  if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey) {",
+              "  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')\n  const workerAuthSecret = Deno.env.get('EMAIL_QUEUE_WORKER_SECRET')\n\n  if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey || !workerAuthSecret) {")
+          replace_exact(worker,
+              "      service_role_present: Boolean(supabaseServiceKey),\n",
+              "      service_role_present: Boolean(supabaseServiceKey),\n      worker_auth_secret_present: Boolean(workerAuthSecret),\n")
+          replace_exact(worker,
+              "  // This worker intentionally runs with platform verify_jwt disabled because\n  // Supabase's legacy gateway verifier can reject valid legacy API JWTs after a\n  // project adopts the newer signing-key system. Authorization is therefore\n  // enforced inside the function by comparing the bearer credential with the\n  // platform-injected service-role secret itself. Merely forging a JWT claim\n  // such as { role: 'service_role' } is not sufficient.\n  const token = authHeader.slice('Bearer '.length).trim()\n  if (token !== supabaseServiceKey) {",
+              "  // This worker intentionally runs with platform verify_jwt disabled because\n  // it is invoked only by the private email queue cron and release preflight.\n  // Authorization uses a dedicated random worker secret shared only between\n  // Supabase Edge secrets and Postgres Vault. It is deliberately independent\n  // of Supabase anon/service-role API-key formats and rotations.\n  const token = authHeader.slice('Bearer '.length).trim()\n  if (token !== workerAuthSecret) {")
+          replace_exact(worker,
+              "  // A service-role-only provider preflight validates the Resend credentials\n",
+              "  // A worker-secret-only provider preflight validates the Resend credentials\n")
+
+          cfg = "scripts/configure-supabase-auth-email.mjs"
+          replace_exact(cfg,
+              "const hookSecret = process.env.SEND_EMAIL_HOOK_SECRET?.trim();\n",
+              "const hookSecret = process.env.SEND_EMAIL_HOOK_SECRET?.trim();\nconst workerSecret = process.env.EMAIL_QUEUE_WORKER_SECRET?.trim();\n")
+          replace_exact(cfg,
+              "    SELECT 1 FROM vault.secrets WHERE name = 'email_queue_service_role_key'\n",
+              "    SELECT 1 FROM vault.secrets WHERE name = 'email_queue_worker_secret'\n")
+          replace_exact(cfg,
+              "  const { anonKey, serviceRoleKey } = await getLegacyApiKeys();\n",
+              "  const { anonKey } = await getLegacyApiKeys();\n")
+          replace_exact(cfg,
+              "  if (!hookSecret) fail(\"SEND_EMAIL_HOOK_SECRET must be set for configure\");\n",
+              "  if (!hookSecret) fail(\"SEND_EMAIL_HOOK_SECRET must be set for configure\");\n  if (!workerSecret) fail(\"EMAIL_QUEUE_WORKER_SECRET must be set for configure\");\n")
+          replace_exact(cfg,
+              "DELETE FROM vault.secrets WHERE name = 'email_queue_service_role_key';\nSELECT vault.create_secret(\n  ${sqlLiteral(serviceRoleKey)},\n  'email_queue_service_role_key',\n  'Service-role credential used only by the database email queue cron to invoke process-email-queue'\n);",
+              "DELETE FROM vault.secrets WHERE name = 'email_queue_worker_secret';\nSELECT vault.create_secret(\n  ${sqlLiteral(workerSecret)},\n  'email_queue_worker_secret',\n  'Dedicated invocation credential used only by the database email queue cron to invoke process-email-queue'\n);")
+          replace_exact(cfg,
+              "      'apikey', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_service_role_key' LIMIT 1),\n      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_service_role_key' LIMIT 1)",
+              "      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_worker_secret' LIMIT 1)")
+          replace_exact(cfg,
+              "Provider credentials, service-role, and webhook secret values were never printed.",
+              "Provider credentials, worker secret, and webhook secret values were never printed.")
+
+          preflight = "scripts/preflight-supabase-auth-email.mjs"
+          replace_exact(preflight,
+              "const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();\n",
+              "const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();\nconst workerAuthSecret = process.env.EMAIL_QUEUE_WORKER_SECRET?.trim();\n")
+          replace_exact(preflight,
+              "  if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {",
+              "  if (action === \"runtime\" && !workerAuthSecret) {\n    raise(\"worker-auth-secret-missing\", \"EMAIL_QUEUE_WORKER_SECRET must be set for runtime preflight\");\n  }\n  if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {")
+          replace_exact(preflight,
+              "    const serviceRoleKey = await getLegacyServiceRoleKey();\n    await verifySupabaseManagedProvider(serviceRoleKey);",
+              "    await verifySupabaseManagedProvider(workerAuthSecret);")
+
+          deploy = ".github/workflows/deploy-supabase-staging.yml"
+          replace_exact(deploy,
+              "          # Prove the credentials that are actually active in Supabase plus the\n          # worker's exact service-role authorization before changing hook/cron.\n          phase=\"runtime-provider-preflight\"\n          node scripts/preflight-supabase-auth-email.mjs runtime\n",
+              "          # Generate an invocation credential that is independent of Supabase\n          # API-key formats. Store the same value in Edge secrets and, during\n          # configure, Postgres Vault for the private queue cron.\n          phase=\"generate-worker-secret\"\n          worker_secret=\"$(openssl rand -base64 48 | tr -d '\\n')\"\n          echo \"::add-mask::$worker_secret\"\n          export EMAIL_QUEUE_WORKER_SECRET=\"$worker_secret\"\n          phase=\"worker-secret-rotation\"\n          supabase secrets set \\\n            EMAIL_QUEUE_WORKER_SECRET=\"$worker_secret\" \\\n            --project-ref \"$SUPABASE_PROJECT_REF\"\n\n          # Prove the credentials that are actually active in Supabase plus the\n          # worker's dedicated invocation-secret authorization before changing hook/cron.\n          phase=\"runtime-provider-preflight\"\n          node scripts/preflight-supabase-auth-email.mjs runtime\n")
+
+          test = "src/test/auth-email-worker-security-contract.test.ts"
+          p = Path(test)
+          text = p.read_text()
+          text = text.replace('it("uses in-function service-role authorization when gateway JWT verification is disabled", () => {', 'it("uses a dedicated invocation secret when gateway JWT verification is disabled", () => {')
+          text = text.replace('expect(worker).toContain("Deno.env.get(\'SUPABASE_SERVICE_ROLE_KEY\')");\n    expect(worker).toContain("token !== supabaseServiceKey");', 'expect(worker).toContain("Deno.env.get(\'EMAIL_QUEUE_WORKER_SECRET\')");\n    expect(worker).toContain("token !== workerAuthSecret");')
+          text = text.replace('"if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey)",', '"if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey || !workerAuthSecret)",')
+          text = text.replace('const authGuard = worker.indexOf("token !== supabaseServiceKey");', 'const authGuard = worker.indexOf("token !== workerAuthSecret");')
+          text = text.replace('it("runs provider preflight only after service-role authentication and before queue access", () => {', 'it("runs provider preflight only after worker-secret authentication and before queue access", () => {')
+          if "token !== supabaseServiceKey" in text:
+              raise SystemExit("stale service-role auth assertion remains in worker security test")
+          p.write_text(text)
+          PY
+
+      - name: Verify patch surface
+        run: |
+          set -Eeuo pipefail
+          changed="$(git diff --name-only | sort)"
+          expected=".github/workflows/deploy-supabase-staging.yml
+          scripts/configure-supabase-auth-email.mjs
+          scripts/preflight-supabase-auth-email.mjs
+          src/test/auth-email-worker-security-contract.test.ts
+          supabase/functions/process-email-queue/index.ts"
+          if [ "$changed" != "$expected" ]; then
+            printf 'Unexpected patch surface:\n%s\n' "$changed"
+            exit 1
+          fi
+          git diff --check
+
+      - name: Commit durable worker-auth repair and remove helper
+        run: |
+          set -Eeuo pipefail
+          git config user.name "Stanley Osei-Wusu"
+          git config user.email "107648937+stanleymay20@users.noreply.github.com"
+          git rm .github/workflows/one-shot-patch-email-worker-auth.yml
+          git add .github/workflows/deploy-supabase-staging.yml scripts/configure-supabase-auth-email.mjs scripts/preflight-supabase-auth-email.mjs src/test/auth-email-worker-security-contract.test.ts supabase/functions/process-email-queue/index.ts
+          git commit -m "Decouple email worker auth from Supabase service-role keys"
+          git push origin HEAD:security/staging-auth-smtp-20260904
