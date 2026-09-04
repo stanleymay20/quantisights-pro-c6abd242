@@ -8,7 +8,7 @@ const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
 const EXPECTED_FROM_EMAIL = "alerts@quantivis.io";
 const SMTP_HOST = "smtp.resend.com";
-const SMTP_PORT = 465;
+const SMTP_PORT = "465";
 const SMTP_USER = "resend";
 const SMTP_SENDER_NAME = "Quantivis";
 
@@ -70,7 +70,7 @@ try {
   const mismatches = [];
   if (after.smtp_admin_email !== EXPECTED_FROM_EMAIL) mismatches.push("smtp_admin_email");
   if (after.smtp_host !== SMTP_HOST) mismatches.push("smtp_host");
-  if (Number(after.smtp_port) !== SMTP_PORT) mismatches.push("smtp_port");
+  if (String(after.smtp_port) !== SMTP_PORT) mismatches.push("smtp_port");
   if (after.smtp_user !== SMTP_USER) mismatches.push("smtp_user");
   if (after.smtp_sender_name !== SMTP_SENDER_NAME) mismatches.push("smtp_sender_name");
 
