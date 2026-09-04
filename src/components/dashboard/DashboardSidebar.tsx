@@ -153,7 +153,7 @@ interface AdvancedGroup {
 
 // ─── PRIMARY NAV — executive outcome-oriented items ──────────────────────────
 // UX-1 IA collapse:
-//   Dashboard · Decisions · Operations · Reports · Governance · Settings
+//   Dashboard · Decisions · Outcomes · Reports · Governance · Settings
 // Power-user pages live under "Advanced" at the bottom of the sidebar.
 const navSections: NavSection[] = [
   {
@@ -547,7 +547,7 @@ const DashboardSidebar = () => {
 
   // Power-user roles see the Advanced drawer; viewer/analyst keep a clean shell
   const showAdvanced =
-    !orgRole || orgRole === "owner" || orgRole === "admin" || orgRole === "executive" || orgRole === "steward";
+    orgRole === "owner" || orgRole === "admin" || orgRole === "executive" || orgRole === "steward";
 
   const handleSignOut = async () => {
     await signOut();
