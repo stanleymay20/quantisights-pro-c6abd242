@@ -1,0 +1,43 @@
+name: One-shot staging Resend SMTP preflight
+
+on:
+  push:
+    branches:
+      - security/staging-auth-hibp-20260904
+    paths:
+      - .github/workflows/one-shot-staging-resend-smtp-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+    steps:
+      - name: Checkout exact preflight branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: security/staging-auth-hibp-20260904
+          persist-credentials: false
+
+      - name: Verify staging-only credential pair
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$SUPABASE_PROJECT_REF" = "cmnihsbdbpubznlkmjbc"
+          if [ -z "$RESEND_API_KEY" ] || [ -z "$RESEND_FROM_EMAIL" ]; then
+            echo "::error::staging GitHub Environment does not contain both RESEND_API_KEY and RESEND_FROM_EMAIL"
+            exit 1
+          fi
+          echo "Staging GitHub Environment contains the required Resend credential pair. Values were not printed."
+
+      - name: Validate staging Resend provider input
+        run: node scripts/preflight-supabase-auth-email.mjs provider-input
