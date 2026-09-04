@@ -13,28 +13,28 @@ const supabaseConfig = readFileSync(
 );
 
 describe("Auth email worker security contract", () => {
-  it("uses in-function service-role authorization when gateway JWT verification is disabled", () => {
+  it("uses a dedicated invocation secret when gateway JWT verification is disabled", () => {
     expect(supabaseConfig).toMatch(
       /\[functions\.process-email-queue\]\s+verify_jwt = false/,
     );
-    expect(worker).toContain("Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')");
-    expect(worker).toContain("token !== supabaseServiceKey");
+    expect(worker).toContain("Deno.env.get('EMAIL_QUEUE_WORKER_SECRET')");
+    expect(worker).toContain("token !== workerAuthSecret");
     expect(worker).toContain("JSON.stringify({ error: 'Forbidden' })");
     expect(worker).not.toContain("claims?.role !== 'service_role'");
   });
 
   it("checks provider runtime before the no-send authorization probe", () => {
     const runtimeGuard = worker.indexOf(
-      "if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey)",
+      "if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey || !workerAuthSecret)",
     );
-    const authGuard = worker.indexOf("token !== supabaseServiceKey");
+    const authGuard = worker.indexOf("token !== workerAuthSecret");
 
     expect(runtimeGuard).toBeGreaterThanOrEqual(0);
     expect(authGuard).toBeGreaterThan(runtimeGuard);
   });
 
-  it("runs provider preflight only after service-role authentication and before queue access", () => {
-    const authGuard = worker.indexOf("token !== supabaseServiceKey");
+  it("runs provider preflight only after worker-secret authentication and before queue access", () => {
+    const authGuard = worker.indexOf("token !== workerAuthSecret");
     const providerStart = worker.indexOf(
       "if (requestPayload.mode === 'provider_preflight')",
     );

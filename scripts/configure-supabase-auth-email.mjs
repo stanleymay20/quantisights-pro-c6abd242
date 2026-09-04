@@ -4,6 +4,7 @@ const action = process.argv[2] || "configure";
 const accessToken = process.env.SUPABASE_ACCESS_TOKEN?.trim();
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim();
 const hookSecret = process.env.SEND_EMAIL_HOOK_SECRET?.trim();
+const workerSecret = process.env.EMAIL_QUEUE_WORKER_SECRET?.trim();
 
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
 const PRODUCTION_REF = "izgfrekdamlgigehxoqs";
@@ -109,7 +110,7 @@ const readInfrastructure = async () => {
   const infrastructure = await runSql(`
 SELECT
   EXISTS (
-    SELECT 1 FROM vault.secrets WHERE name = 'email_queue_service_role_key'
+    SELECT 1 FROM vault.secrets WHERE name = 'email_queue_worker_secret'
   ) AS vault_secret_present,
   EXISTS (
     SELECT 1 FROM cron.job
@@ -192,7 +193,7 @@ WHERE jobname = 'process-email-queue';
 }
 
 try {
-  const { anonKey, serviceRoleKey } = await getLegacyApiKeys();
+  const { anonKey } = await getLegacyApiKeys();
 
   if (action === "verify") {
     await verifyConfiguredTransport(anonKey);
@@ -202,6 +203,7 @@ try {
   }
 
   if (!hookSecret) fail("SEND_EMAIL_HOOK_SECRET must be set for configure");
+  if (!workerSecret) fail("EMAIL_QUEUE_WORKER_SECRET must be set for configure");
   if (!/^v1,whsec_[A-Za-z0-9+/=_-]{32,}$/.test(hookSecret)) {
     fail("SEND_EMAIL_HOOK_SECRET must use the v1,whsec_ Standard Webhooks format");
   }
@@ -225,11 +227,11 @@ BEGIN
     PERFORM cron.unschedule(worker_job_id);
   END LOOP;
 END $$;
-DELETE FROM vault.secrets WHERE name = 'email_queue_service_role_key';
+DELETE FROM vault.secrets WHERE name = 'email_queue_worker_secret';
 SELECT vault.create_secret(
-  ${sqlLiteral(serviceRoleKey)},
-  'email_queue_service_role_key',
-  'Service-role credential used only by the database email queue cron to invoke process-email-queue'
+  ${sqlLiteral(workerSecret)},
+  'email_queue_worker_secret',
+  'Dedicated invocation credential used only by the database email queue cron to invoke process-email-queue'
 );
 
 SELECT cron.schedule(
@@ -240,8 +242,7 @@ SELECT cron.schedule(
     url := ${sqlLiteral(workerUri)},
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'apikey', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_service_role_key' LIMIT 1),
-      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_service_role_key' LIMIT 1)
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'email_queue_worker_secret' LIMIT 1)
     ),
     body := '{}'::jsonb,
     timeout_milliseconds := 10000
@@ -278,7 +279,7 @@ COMMIT;
 
   console.log(`Auth email hook + queue worker verified for ${projectRef}.`);
   console.log(`Hook URI: ${hookUri}`);
-  console.log("Provider credentials, service-role, and webhook secret values were never printed.");
+  console.log("Provider credentials, worker secret, and webhook secret values were never printed.");
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }

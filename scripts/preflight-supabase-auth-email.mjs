@@ -8,6 +8,7 @@ const accessToken = process.env.SUPABASE_ACCESS_TOKEN?.trim();
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim();
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
 const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
+const workerAuthSecret = process.env.EMAIL_QUEUE_WORKER_SECRET?.trim();
 const diagnosticPath = process.env.AUTH_EMAIL_PREFLIGHT_DIAGNOSTIC_PATH?.trim();
 
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
@@ -80,6 +81,9 @@ const validateInputs = () => {
   }
   if (!ALLOWED_ACTIONS.has(action)) {
     raise("unsupported-action", "Unsupported Auth email preflight action");
+  }
+  if (action === "runtime" && !workerAuthSecret) {
+    raise("worker-auth-secret-missing", "EMAIL_QUEUE_WORKER_SECRET must be set for runtime preflight");
   }
   if (Boolean(resendApiKey) !== Boolean(resendFromEmail)) {
     raise(
@@ -321,8 +325,7 @@ try {
     console.log("Resend credential values and provider response bodies were never printed.");
   } else {
     await verifyProviderSecretPresence();
-    const serviceRoleKey = await getLegacyServiceRoleKey();
-    await verifySupabaseManagedProvider(serviceRoleKey);
+    await verifySupabaseManagedProvider(workerAuthSecret);
     await verifyWorkerRuntimeWithoutPrivilege();
     writeDiagnostic("success", "runtime-ok");
     console.log(`Independent Auth email runtime preflight passed for ${projectRef}.`);

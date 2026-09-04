@@ -77,13 +77,15 @@ Deno.serve(async (req) => {
   const resendFromEmail = Deno.env.get('RESEND_FROM_EMAIL')
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  const workerAuthSecret = Deno.env.get('EMAIL_QUEUE_WORKER_SECRET')
 
-  if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey) {
+  if (!resendApiKey || !resendFromEmail || !supabaseUrl || !supabaseServiceKey || !workerAuthSecret) {
     console.error('Missing required email worker environment variables', {
       resend_api_key_present: Boolean(resendApiKey),
       resend_from_email_present: Boolean(resendFromEmail),
       supabase_url_present: Boolean(supabaseUrl),
       service_role_present: Boolean(supabaseServiceKey),
+      worker_auth_secret_present: Boolean(workerAuthSecret),
     })
     return new Response(
       JSON.stringify({ error: 'Server configuration error' }),
@@ -100,20 +102,19 @@ Deno.serve(async (req) => {
   }
 
   // This worker intentionally runs with platform verify_jwt disabled because
-  // Supabase's legacy gateway verifier can reject valid legacy API JWTs after a
-  // project adopts the newer signing-key system. Authorization is therefore
-  // enforced inside the function by comparing the bearer credential with the
-  // platform-injected service-role secret itself. Merely forging a JWT claim
-  // such as { role: 'service_role' } is not sufficient.
+  // it is invoked only by the private email queue cron and release preflight.
+  // Authorization uses a dedicated random worker secret shared only between
+  // Supabase Edge secrets and Postgres Vault. It is deliberately independent
+  // of Supabase anon/service-role API-key formats and rotations.
   const token = authHeader.slice('Bearer '.length).trim()
-  if (token !== supabaseServiceKey) {
+  if (token !== workerAuthSecret) {
     return new Response(
       JSON.stringify({ error: 'Forbidden' }),
       { status: 403, headers: { 'Content-Type': 'application/json' } }
     )
   }
 
-  // A service-role-only provider preflight validates the Resend credentials
+  // A worker-secret-only provider preflight validates the Resend credentials
   // where Supabase-managed secrets actually live. It performs one controlled
   // test send and returns before reading either email queue, so certification
   // never requires copying provider secrets into GitHub and never consumes a
