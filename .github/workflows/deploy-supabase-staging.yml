@@ -80,6 +80,15 @@ jobs:
             echo "::error::staging environment secret SUPABASE_SERVICE_ROLE_KEY is required for tenant-control-plane evidence"
             exit 1
           fi
+          if [ -z "$RESEND_API_KEY" ] || [ -z "$RESEND_FROM_EMAIL" ]; then
+            echo "::error::staging environment secrets RESEND_API_KEY and RESEND_FROM_EMAIL are required for GA Auth email delivery"
+            exit 1
+          fi
+          if [ "$RESEND_FROM_EMAIL" != "alerts@quantivis.io" ]; then
+            echo "::error::staging RESEND_FROM_EMAIL must be alerts@quantivis.io"
+            exit 1
+          fi
+          echo "::add-mask::$RESEND_API_KEY"
 
       - name: Checkout CI-certified release
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,16 +154,24 @@ jobs:
       - name: Verify staging migration state
         run: supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
 
+      - name: Generate staging email worker invocation secret
+        run: |
+          set -Eeuo pipefail
+          worker_secret="$(openssl rand -base64 48 | tr -d '\n')"
+          echo "::add-mask::$worker_secret"
+          echo "EMAIL_QUEUE_WORKER_SECRET=$worker_secret" >> "$GITHUB_ENV"
+          supabase secrets set \
+            EMAIL_QUEUE_WORKER_SECRET="$worker_secret" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy staging Edge Functions
         run: bash scripts/deploy-supabase-functions-resilient.sh
 
       - name: Verify staging Edge Functions
         run: bash scripts/verify-supabase-functions.sh
 
-      # The independent Auth-email provider is currently a known release blocker.
-      # Prove the database tenant boundary first so that an unrelated provider
-      # failure cannot mask a P0 authorization regression. The downstream GA
-      # validation repeats this evidence after Auth email becomes healthy.
+      # Prove the database tenant boundary before Auth-email configuration so an
+      # external provider failure cannot mask a P0 authorization regression.
       - name: Seed staging tenant-control-plane proof
         id: tenant_control_seed
         run: npm run tenant-isolation:seed
@@ -179,11 +196,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Auth delivery is a release requirement, not an optional convenience.
-      # GitHub-managed provider credentials are validated before rotation. If the
-      # provider is intentionally managed only in Supabase, preserve those values
-      # and validate them inside the service-role-protected worker. Never disable
-      # the independent path before the replacement provider/runtime is proven.
+      # Auth delivery is a release requirement. Provider input, Edge runtime,
+      # private worker authorization, hook/cron wiring, custom SMTP and the
+      # staging email-capacity limit must all pass before this gate is green.
       - name: Configure independent staging Auth email transport
         id: auth_email
         env:
@@ -213,30 +228,16 @@ jobs:
 
           trap on_error ERR
 
-          phase="validate-provider-input-pair"
-          if { [ -n "$RESEND_API_KEY" ] && [ -z "$RESEND_FROM_EMAIL" ]; } || \
-             { [ -z "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; }; then
-            echo "::error::RESEND_API_KEY and RESEND_FROM_EMAIL must either both be configured or both be absent"
-            false
-          fi
+          phase="provider-input-preflight"
+          node scripts/preflight-supabase-auth-email.mjs provider-input
+          phase="provider-secret-rotation"
+          supabase secrets set \
+            RESEND_API_KEY="$RESEND_API_KEY" \
+            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+            --project-ref "$SUPABASE_PROJECT_REF"
 
-          if [ -n "$RESEND_API_KEY" ] && [ -n "$RESEND_FROM_EMAIL" ]; then
-            echo "::add-mask::$RESEND_API_KEY"
-            # Prove the proposed replacement pair before it can overwrite a
-            # working Supabase-managed provider configuration.
-            phase="provider-input-preflight"
-            node scripts/preflight-supabase-auth-email.mjs provider-input
-            phase="provider-secret-rotation"
-            supabase secrets set \
-              RESEND_API_KEY="$RESEND_API_KEY" \
-              RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
-              --project-ref "$SUPABASE_PROJECT_REF"
-          else
-            echo "Provider credentials are not stored in the staging GitHub Environment; preserving Supabase-managed provider secrets and verifying them fail-closed."
-          fi
-
-          # Prove the credentials that are actually active in Supabase plus the
-          # worker's exact service-role authorization before changing hook/cron.
+          # Prove the credentials actually active in Supabase plus the worker's
+          # dedicated invocation-secret boundary before changing hook/cron.
           phase="runtime-provider-preflight"
           node scripts/preflight-supabase-auth-email.mjs runtime
 
@@ -255,6 +256,9 @@ jobs:
           unset SEND_EMAIL_HOOK_SECRET
           phase="verify-transport"
           node scripts/configure-supabase-auth-email.mjs verify
+
+          phase="configure-custom-smtp"
+          node scripts/configure-staging-auth-smtp.mjs
 
           # Client Acceptance deliberately exercises a real recovery email. The
           # staging project therefore gets a bounded, staging-only hourly email
