@@ -8,6 +8,7 @@ const requiredFiles = [
   "docs/agent-engineering/REVIEW_PROTOCOL.md",
   "docs/agent-engineering/LEARNING_PROTOCOL.md",
   "docs/agent-engineering/HANDOFF_TEMPLATE.md",
+  "docs/agent-engineering/ECC_ADOPTION_NOTES.md",
   ".agent-memory/.gitignore",
   ".agent-memory/README.md",
   ".github/pull_request_template.md",
@@ -30,6 +31,7 @@ const claude = requireFile("CLAUDE.md");
 const contracts = requireFile("docs/agent-engineering/AGENT_CONTRACTS.md");
 const review = requireFile("docs/agent-engineering/REVIEW_PROTOCOL.md");
 const learning = requireFile("docs/agent-engineering/LEARNING_PROTOCOL.md");
+const adoption = requireFile("docs/agent-engineering/ECC_ADOPTION_NOTES.md");
 const memoryIgnore = requireFile(".agent-memory/.gitignore");
 const prTemplate = requireFile(".github/pull_request_template.md");
 
@@ -86,6 +88,13 @@ mustContain("LEARNING_PROTOCOL.md", learning, [
   ".agent-memory/",
   "Do not preserve ephemeral facts as durable rules",
   "Promote durable verified lessons",
+]);
+
+mustContain("ECC_ADOPTION_NOTES.md", adoption, [
+  "does not currently depend on the ECC runtime",
+  "Deliberately not imported",
+  "exact-SHA staging",
+  "Optional future adoption gate",
 ]);
 
 const ignoreLines = memoryIgnore
