@@ -5,11 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# The quality candidate is the literal PR head on pull requests and the pushed
+# commit on main. Do not use GitHub's synthetic PR merge SHA as exact-head
+# evidence. Base/merge compatibility is a separate merge-time concern.
+env:
+  QUALITY_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
 # Staging serializes every deployable main SHA. CI therefore must preserve an
-# exact result for every pushed SHA rather than cancelling an older run when a
-# newer commit arrives; GA Readiness verifies that exact prerequisite evidence.
+# exact result for every tested candidate rather than cancelling an older run
+# when a newer commit arrives; GA Readiness verifies exact prerequisite evidence.
 concurrency:
-  group: ci-${{ github.sha }}
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -20,8 +26,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout exact quality candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.QUALITY_SHA }}
+
+      - name: Verify checked-out quality SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "expected_quality_sha=$QUALITY_SHA"
+          echo "actual_checkout_sha=$actual"
+          test "$actual" = "$QUALITY_SHA"
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -135,7 +152,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: quantivis-production-dist-${{ github.sha }}
+          name: quantivis-production-dist-${{ env.QUALITY_SHA }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
@@ -169,7 +186,7 @@ jobs:
         if: ${{ always() && (steps.dependency_audit.outcome == 'success' || steps.dependency_audit.outcome == 'failure') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: npm-audit-${{ github.sha }}
+          name: npm-audit-${{ env.QUALITY_SHA }}
           path: artifacts/npm-audit/*.json
           if-no-files-found: error
           retention-days: 7
