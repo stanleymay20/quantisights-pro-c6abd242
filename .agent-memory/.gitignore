@@ -1,0 +1,4 @@
+# Agent/session memory is local and unreviewed. Do not commit memory entries.
+*
+!.gitignore
+!README.md
