@@ -1,4 +1,5 @@
 name: One-shot staging Auth SMTP cutover
+# One-shot rerun after aligning Supabase smtp_port to its string contract.
 
 on:
   push:
