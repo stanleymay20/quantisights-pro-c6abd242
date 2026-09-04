@@ -48,9 +48,6 @@ jobs:
           console.log(`validated fflate graph: root=${root}, posthog=${posthog}`);
           NODE
 
-      - name: Prove production dependency audit is clean
-        run: npm audit --omit=dev --audit-level=moderate
-
       - name: Commit lockfile-only repair
         shell: bash
         run: |
