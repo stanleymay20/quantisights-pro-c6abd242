@@ -1,0 +1,68 @@
+name: One-shot staging Auth SMTP cutover
+
+on:
+  push:
+    branches:
+      - security/staging-auth-smtp-20260904
+    paths:
+      - .github/workflows/one-shot-staging-auth-smtp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: cmnihsbdbpubznlkmjbc
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+      STAGING_AUTH_EMAIL_SEND_LIMIT: "120"
+    steps:
+      - name: Checkout exact staging SMTP candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify staging-only inputs
+        run: |
+          set -Eeuo pipefail
+          test "$SUPABASE_PROJECT_REF" = "cmnihsbdbpubznlkmjbc"
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN is missing"; exit 1; }
+          test -n "$RESEND_API_KEY" || { echo "::error::RESEND_API_KEY is missing"; exit 1; }
+          test "$RESEND_FROM_EMAIL" = "alerts@quantivis.io" || { echo "::error::RESEND_FROM_EMAIL must be alerts@quantivis.io"; exit 1; }
+          echo "::add-mask::$RESEND_API_KEY"
+
+      - name: Validate new Resend provider pair
+        run: node scripts/preflight-supabase-auth-email.mjs provider-input
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        with:
+          version: 2.115.0
+
+      - name: Rotate staging email-worker provider pair
+        run: |
+          set -Eeuo pipefail
+          supabase secrets set \
+            RESEND_API_KEY="$RESEND_API_KEY" \
+            RESEND_FROM_EMAIL="$RESEND_FROM_EMAIL" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Prove rotated provider in staging Edge runtime
+        run: node scripts/preflight-supabase-auth-email.mjs runtime
+
+      - name: Configure and read-back verify staging custom SMTP
+        run: node scripts/configure-staging-auth-smtp.mjs
+
+      - name: Configure and read-back verify staging Auth security and email capacity
+        run: node scripts/configure-staging-auth-rate-limits.mjs
+
+      - name: Record bounded result
+        run: |
+          echo "Staging Resend provider, Edge runtime, custom SMTP, HIBP, and Auth email capacity all verified."
+          echo "Production was not targeted."
