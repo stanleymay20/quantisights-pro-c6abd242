@@ -1,198 +1,135 @@
 # Quantivis
 
-**Enterprise Decision Intelligence Platform**
+**Decision Intelligence & Data Quality Platform**
 
 **Website:** https://www.quantivis.io
 
-Quantivis is an AI-powered decision-intelligence platform that transforms raw business data into executive insights, operational intelligence, forecasts, risk analysis and decision support.
+Quantivis is an AI-assisted decision-intelligence platform for turning messy operational data into validated analytical outputs, forecasts, structured insights and decision support.
+
+The codebase demonstrates the engineering work between **raw data and a defensible decision**: ingestion, schema inference, validation, quality diagnostics, multi-tenant data handling, analytical workflows and governed application delivery.
 
 ## Data & analytics engineering evidence
 
-For data and analytics roles, this repository demonstrates hands-on work across the path from raw data to decision-ready outputs:
+This repository demonstrates hands-on work across:
 
-- **PostgreSQL / SQL** — database migrations, functions/RPCs, metric-processing and persistence workflows.
-- **Data ingestion** — CSV and multi-metric business datasets with schema, date, region, dimension and metric detection.
-- **Data quality** — validation, dataset diagnostics, quality scoring and ingestion hardening.
-- **Analytics** — KPI dashboards, revenue and margin analysis, operational trends, forecasting and executive reporting.
-- **Production data systems** — Supabase/PostgreSQL backend, authentication, multi-tenant application workflows and edge functions.
-- **Decision support** — turning analytical results into structured insights and recommendations rather than displaying charts alone.
+- **PostgreSQL / SQL** — migrations, functions/RPCs, metric-processing and persistence workflows;
+- **Data ingestion** — CSV and multi-metric datasets with schema, date, region, dimension and metric detection;
+- **Data quality** — validation, dataset diagnostics, quality scoring and ingestion hardening;
+- **Analytics** — KPI workflows, operational trends, forecasting and executive reporting;
+- **Production-oriented data systems** — Supabase/PostgreSQL, authentication, multi-tenant workflows and Edge Functions;
+- **Decision support** — converting analytical results into structured findings and recommendations rather than charts alone;
+- **Release discipline** — CI/CD, security controls, audit evidence and staged readiness checks maintained in the repository.
 
-This is a production-oriented product codebase rather than a standalone classroom notebook, so the emphasis includes reliability, security, data contracts and maintainability alongside analytics.
+Quantivis is a product codebase rather than a classroom notebook, so reliability, security, data contracts and maintainability are part of the analytical evidence.
 
-## Vision
-
-Quantivis helps executives, operators, analysts, founders, governments and enterprises move from:
+## Decision pipeline
 
 ```text
-Raw Data → Validated Data → Intelligence → Decisions → Outcomes
+Raw Data
+   ↓
+Schema & Type Detection
+   ↓
+Validation / Quality Diagnostics
+   ↓
+Analysis & Forecasting
+   ↓
+Structured Intelligence
+   ↓
+Human Decision
+   ↓
+Outcome / Feedback
 ```
 
-The platform is designed to ingest messy real-world datasets and turn them into usable business intelligence while making data quality and uncertainty visible.
-
----
+A central design principle is that poor-quality or incomplete data should be made visible rather than silently converted into confident recommendations.
 
 ## Core capabilities
 
-### Data ingestion
+### Data ingestion and validation
 
-Supported today:
+Current capabilities include:
 
-- CSV datasets
-- Multi-metric business datasets
-- Financial datasets
-- Manufacturing datasets
-- Revenue datasets
-- Operational datasets
-- KPI-oriented datasets
+- CSV datasets;
+- multi-metric operational and business datasets;
+- automatic schema inference;
+- metric and dimension detection;
+- region and date detection;
+- validation and diagnostics;
+- dataset quality scoring.
 
-Current ingestion capabilities include:
+Hardening work includes XLSX/multi-sheet ingestion, European number formats, Excel serial dates, large-dataset handling, PII detection and richer lineage/health scoring.
 
-- Automatic schema inference
-- Metric detection
-- Dimension detection
-- Region detection
-- Date detection
-- Data validation
-- Dataset diagnostics
-- Quality scoring
+### Decision intelligence
 
-Additional hardening in progress:
+Implemented or developed analytical workflows include:
 
-- Excel support (`.xlsx`)
-- Multi-sheet imports
-- European number parsing
-- Excel serial dates
-- Large-dataset streaming
-- PII detection
-- Dataset health scoring
+- KPI analysis;
+- trend analysis;
+- forecasting;
+- operational bottleneck analysis;
+- supplier/customer analysis;
+- structured executive reporting;
+- decision and recommendation workflows.
 
----
+## Development and public-interest relevance
 
-## Decision Intelligence Engine
+Although Quantivis originated as an enterprise decision-intelligence product, the underlying pipeline is domain-agnostic: fragmented datasets still need validation, comparability and traceability whether the decision concerns a company, a public programme or an economic-development intervention.
 
-Example analytical use cases include:
+Relevant development-oriented applications could include:
 
-- Revenue analysis
-- Margin optimisation
-- Operational bottleneck detection
-- Supplier-risk analysis
-- Customer-trend analysis
-- Forecasting
-- Executive reporting
-- Strategic planning
+- SME and entrepreneurship indicators;
+- financial-inclusion programme monitoring;
+- regional economic-development data;
+- programme KPI and outcome tracking;
+- operational data-quality assessment for public-interest organisations.
 
----
+These are **transferable use cases**, not claims that Quantivis is currently deployed by UN agencies, governments or development programmes.
+
+Potential Sustainable Development Goal relevance includes **SDG 8 (Decent Work and Economic Growth), SDG 9 (Industry, Innovation and Infrastructure) and SDG 10 (Reduced Inequalities)** where the platform is applied to appropriate programmes and datasets. This is a problem-domain mapping, not a claim of measured SDG impact.
 
 ## Technology stack
 
-### Frontend
+**Frontend:** React · TypeScript · Vite · Tailwind CSS · shadcn/ui
 
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- shadcn/ui
+**Backend/data:** Supabase · PostgreSQL / SQL · Edge Functions · authentication · Google OAuth
 
-### Backend / data
+**Intelligence layer:** data profiling · analytical workflows · forecasting · insight generation · recommendation support
 
-- Supabase
-- PostgreSQL / SQL
-- Edge Functions
-- Authentication
-- Google OAuth
+## Evidence and claim boundaries
 
-### Intelligence layer
+The repository contains production-oriented engineering, but specific claims about business impact, forecast accuracy, institutional adoption or development outcomes require evidence from the relevant deployment and dataset. Roadmap items are kept separate from currently supported capabilities.
 
-- Decision Intelligence Engine
-- Data Profiling Engine
-- Executive Insight Generation
-- Forecasting and Recommendation Systems
-
----
+See `AUDIT.md` and `.github/workflows/` for the current engineering/release-quality evidence rather than relying on marketing statements.
 
 ## Development
-
-### Install
 
 ```bash
 git clone https://github.com/stanleymay20/quantisights-pro-c6abd242.git
 cd quantisights-pro-c6abd242
 npm install
-```
-
-### Run locally
-
-```bash
 npm run dev
 ```
 
-### Build
+Build and preview:
 
 ```bash
 npm run build
-```
-
-### Preview production build
-
-```bash
 npm run preview
 ```
 
----
-
 ## Platform provenance
 
-The project originated on [Lovable](https://lovable.dev) and keeps Lovable's
-preview/editor integration (`.lovable/`, the `lovable-tagger` dev dependency,
-and the `oauth.lovable.app` / `ai.gateway.lovable.dev` origins in the security
-policy) for that workflow. Production hosting, CI, release gates, database
-migrations, RLS policies, and the application/test code itself are maintained
-independently in this repository — see `AUDIT.md` for the current release-quality
-baseline and `.github/workflows/` for the enforced CI/CD pipeline.
+The project originated on Lovable and retains Lovable preview/editor integration for that workflow. Production hosting, CI, release gates, database migrations, RLS policies and application/test code are maintained in this repository.
 
----
+## Current engineering priorities
 
-## Authentication
-
-Supported authentication methods include:
-
-- Email / password
-- Google OAuth
-- MFA where enabled
-- SSO/SAML for enterprise workflows
-
-Future roadmap items are kept separate from currently supported capabilities.
-
----
-
-## Enterprise-readiness roadmap
-
-High-priority initiatives include:
-
-1. Enterprise data-ingestion hardening
-2. Dataset health scoring
+1. Data-ingestion hardening
+2. Dataset health and lineage
 3. XLSX ingestion
-4. Data-lineage tracking
-5. Executive-reporting automation
-6. Forecasting improvements
-7. Decision ledger
-8. Governance and audit controls
-
----
-
-## Repository goals
-
-This repository is focused on:
-
-- Enterprise-grade reliability
-- Secure authentication
-- High-quality data ingestion
-- Data-quality visibility
-- Executive intelligence workflows
-- AI-assisted decision support
-- Production deployment readiness
-
----
+4. Privacy/PII controls
+5. Forecasting validation
+6. Decision traceability
+7. Governance and audit controls
+8. Reliable reporting automation
 
 ## License
 
