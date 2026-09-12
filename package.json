@@ -142,6 +142,16 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "@humanfs/node": "0.16.8",
+    "js-yaml": "4.3.2",
+    "jspdf": {
+      "fflate": "0.8.3"
+    },
+    "posthog-js": {
+      "fflate": "0.4.9"
+    }
   }
 }
