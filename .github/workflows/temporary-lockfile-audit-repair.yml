@@ -35,11 +35,17 @@ jobs:
             exit 1
           }
 
-      - name: Repair vulnerable lockfile resolutions only
+      - name: Inspect current vulnerable dependency paths
+        shell: bash
+        run: |
+          npm ci
+          npm ls @humanfs/node @vitest/mocker fflate js-yaml vitest --all || true
+
+      - name: Refresh only vulnerable package resolutions within existing contracts
         shell: bash
         run: |
           cp package.json /tmp/package.json.before
-          npm audit fix --package-lock-only --audit-level=moderate
+          npm update --package-lock-only --depth=999 @humanfs/node @vitest/mocker fflate js-yaml vitest
           cmp -s package.json /tmp/package.json.before || {
             echo "Refusing package.json mutation" >&2
             git diff -- package.json >&2 || true
@@ -53,7 +59,9 @@ jobs:
       - name: Verify repaired lock deterministically
         shell: bash
         run: |
+          rm -rf node_modules
           npm ci
+          npm ls @humanfs/node @vitest/mocker fflate js-yaml vitest --all || true
           npm audit --audit-level=moderate
           git diff --check
 
