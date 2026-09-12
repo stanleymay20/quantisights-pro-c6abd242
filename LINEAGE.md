@@ -62,6 +62,25 @@ Decision: **preserve the design, migration and rollback artifacts as research/ar
 
 `quantisights-pro-ff2bbabf` is **not a safe archive candidate yet** because it remains the authoritative historical location for two unique workstreams that have not been deliberately reimplemented or retired in canonical. It may be clearly marked historical and frozen for development, but it should remain preserved until those workstreams have an explicit canonical disposition with evidence.
 
+## Dependency audit repair provenance — 2026-09-12
+
+PR #45 exposed five dependency advisories through the repository's fail-closed `npm audit --audit-level=moderate` gate. The repair was deliberately kept narrow instead of accepting the much broader Dependabot maintenance bundle.
+
+Because npm 10.9.8 hit an internal Arborist `edgesOut` resolver error while attempting lockfile regeneration, a temporary one-shot workflow used npm 11.6.0 only to regenerate `package-lock.json` from a reviewed security contract. That temporary workflow then switched back to the repository's normal npm 10.9.8 for permanent validation before it was allowed to commit anything.
+
+Permanent validation on npm 10.9.8 passed with the repaired lockfile:
+
+- `npm ci` installed 649 packages and reported **0 vulnerabilities**;
+- `@humanfs/node` resolved to `0.16.8`;
+- `js-yaml` resolved to `4.3.2`;
+- the `jspdf` dependency path resolved `fflate` to `0.8.3`;
+- the `posthog-js` dependency path resolved `fflate` to `0.4.9`;
+- `vitest` and `@vitest/mocker` resolved to `4.1.11`;
+- `npm audit --audit-level=moderate` passed with **0 vulnerabilities**;
+- the temporary writer removed itself after committing only the repaired lockfile and its own deletion.
+
+This is dependency-security remediation only. It does not alter Quantivis runtime behavior, database migrations, RLS/security policy, deployment configuration, or the lineage decisions above. The ordinary PR CI at the final user-authored head remains the merge authority.
+
 ## Consolidation rule
 
 Do not merge repositories merely to make the repository count smaller.
