@@ -35,11 +35,13 @@ jobs:
             exit 1
           }
 
-      - name: Regenerate lock from reviewed security contract
+      - name: Regenerate lock with isolated newer npm resolver
         shell: bash
         run: |
+          echo "Permanent validation npm: $(npm --version)"
+          echo "Temporary generator npm: $(npx --yes npm@11.6.0 --version)"
           cp package.json /tmp/package.json.before
-          npm install --package-lock-only --ignore-scripts --no-audit
+          npx --yes npm@11.6.0 install --package-lock-only --ignore-scripts --no-audit
           cmp -s package.json /tmp/package.json.before || {
             echo "Refusing package.json mutation" >&2
             git diff -- package.json >&2 || true
@@ -50,9 +52,13 @@ jobs:
             exit 1
           }
 
-      - name: Verify repaired dependency tree and audit
+      - name: Verify repaired tree with repository npm
         shell: bash
         run: |
+          test "$(npm --version)" = "10.9.8" || {
+            echo "Expected permanent validation on npm 10.9.8, got $(npm --version)" >&2
+            exit 1
+          }
           rm -rf node_modules
           npm ci
           npm ls @humanfs/node @vitest/mocker fflate js-yaml vitest --all
