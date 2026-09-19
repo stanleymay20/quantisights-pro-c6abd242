@@ -36,6 +36,10 @@ const uriAllowList = process.env.AUTH_URI_ALLOW_LIST.trim();
 const PRODUCTION_REF = "izgfrekdamlgigehxoqs";
 const STAGING_REF = "cmnihsbdbpubznlkmjbc";
 const RETIRED_REF = "itpwpnwzzitkelffttyx";
+const STAGING_PREVIEW_CALLBACKS = [
+  "https://deploy-preview-34--quantivis.netlify.app/auth/callback",
+  "https://deploy-preview-*--quantivis.netlify.app/auth/callback",
+];
 
 if (projectRef === RETIRED_REF) {
   console.error("::error::Refusing to configure Auth on the retired Supabase project");
@@ -75,6 +79,12 @@ let requiredAllowEntries;
 try {
   normalizedSiteUrl = requireHttpsUrl(siteUrl, "AUTH_SITE_URL");
   requiredAllowEntries = parseAllowList(uriAllowList);
+  // Netlify deploy previews are staging-only acceptance surfaces. Supabase
+  // otherwise falls back to the staging Site URL when redirectTo is not
+  // allow-listed, which can strand a successful Google login on Lovable.
+  if (projectRef === STAGING_REF) {
+    requiredAllowEntries = [...new Set([...requiredAllowEntries, ...STAGING_PREVIEW_CALLBACKS])];
+  }
   for (const entry of requiredAllowEntries) {
     // Supabase permits wildcard redirect entries. Validate the non-wildcard
     // portion conservatively without ever evaluating or following the URL.

@@ -35,6 +35,10 @@ jobs:
       AUTH_URI_ALLOW_LIST: https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/auth/callback,https://quantivis-insights.lovable.app/auth/callback,https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://**--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/**,https://quantivis-insights.lovable.app/**
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+      LOAD_TARGET: staging
+      LOAD_SUPABASE_URL: https://cmnihsbdbpubznlkmjbc.supabase.co
+      LOAD_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SUPABASE_FUNCTION_DEPLOY_MAX_ATTEMPTS: "5"
       SUPABASE_FUNCTION_DEPLOY_BASE_DELAY_SECONDS: "5"
       SUPABASE_FUNCTION_DEPLOY_PACE_SECONDS: "2"
@@ -66,6 +70,14 @@ jobs:
           fi
           if [ -z "$SUPABASE_DB_PASSWORD" ]; then
             echo "::error::staging environment secret SUPABASE_DB_PASSWORD is not set"
+            exit 1
+          fi
+          if [ -z "$LOAD_SUPABASE_ANON_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_ANON_KEY is required for tenant-control-plane evidence"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::staging environment secret SUPABASE_SERVICE_ROLE_KEY is required for tenant-control-plane evidence"
             exit 1
           fi
 
@@ -138,6 +150,34 @@ jobs:
 
       - name: Verify staging Edge Functions
         run: bash scripts/verify-supabase-functions.sh
+
+      # The independent Auth-email provider is currently a known release blocker.
+      # Prove the database tenant boundary first so that an unrelated provider
+      # failure cannot mask a P0 authorization regression. The downstream GA
+      # validation repeats this evidence after Auth email becomes healthy.
+      - name: Seed staging tenant-control-plane proof
+        id: tenant_control_seed
+        run: npm run tenant-isolation:seed
+
+      - name: Prove staging tenant control plane
+        id: tenant_control_proof
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/tenant-control-plane
+          npm run tenant-isolation:run | tee artifacts/tenant-control-plane/probes.log
+
+      - name: Teardown staging tenant-control-plane fixtures
+        if: ${{ always() && steps.tenant_control_seed.outcome != 'skipped' }}
+        run: npm run tenant-isolation:teardown
+
+      - name: Publish staging tenant-control-plane proof
+        if: ${{ always() && steps.tenant_control_proof.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-tenant-control-plane-${{ steps.release.outputs.sha }}
+          path: artifacts/tenant-control-plane/
+          if-no-files-found: error
+          retention-days: 30
 
       # Auth delivery is a release requirement, not an optional convenience.
       # GitHub-managed provider credentials are validated before rotation. If the

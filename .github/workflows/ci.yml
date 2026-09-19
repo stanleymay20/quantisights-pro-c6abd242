@@ -139,18 +139,31 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p artifacts/npm-audit
+
+          # Runtime/commercial dependency surface: moderate or higher blocks.
           set +e
-          npm audit --audit-level=moderate --json > artifacts/npm-audit/npm-audit.json
-          audit_status=$?
+          npm audit --omit=dev --audit-level=moderate --json > artifacts/npm-audit/production.json
+          production_status=$?
+
+          # Full toolchain: high or critical blocks. Moderate dev-only findings
+          # remain visible in the uploaded evidence rather than being presented as
+          # production runtime vulnerabilities.
+          npm audit --audit-level=high --json > artifacts/npm-audit/full-graph.json
+          full_graph_status=$?
           set -e
-          echo "exit_code=$audit_status" >> "$GITHUB_OUTPUT"
-          exit "$audit_status"
+
+          echo "production_exit_code=$production_status" >> "$GITHUB_OUTPUT"
+          echo "full_graph_exit_code=$full_graph_status" >> "$GITHUB_OUTPUT"
+
+          if [ "$production_status" -ne 0 ] || [ "$full_graph_status" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Upload dependency audit evidence
         if: ${{ always() && (steps.dependency_audit.outcome == 'success' || steps.dependency_audit.outcome == 'failure') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-audit-${{ github.sha }}
-          path: artifacts/npm-audit/npm-audit.json
+          path: artifacts/npm-audit/*.json
           if-no-files-found: error
           retention-days: 7

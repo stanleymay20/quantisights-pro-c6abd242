@@ -18,6 +18,10 @@ const script = readFileSync(
 
 const stagingCallback =
   "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app/auth/callback";
+const stagingNetlifyPreviewCallback =
+  "https://deploy-preview-34--quantivis.netlify.app/auth/callback";
+const stagingNetlifyPreviewWildcard =
+  "https://deploy-preview-*--quantivis.netlify.app/auth/callback";
 
 describe("Google OAuth environment configuration", () => {
   it("keeps OAuth credentials in environment-scoped secrets", () => {
@@ -83,6 +87,16 @@ describe("Google OAuth environment configuration", () => {
     expect(stagingDeploy).toContain(stagingCallback);
     expect(stagingDeploy).toContain("node scripts/configure-supabase-google-oauth.mjs redirects-only");
     expect(stagingDeploy).toContain("Ensure staging Auth redirect contract");
+  });
+
+  it("allow-lists Netlify acceptance callbacks only for staging", () => {
+    expect(script).toContain("const STAGING_PREVIEW_CALLBACKS = [");
+    expect(script).toContain(stagingNetlifyPreviewCallback);
+    expect(script).toContain(stagingNetlifyPreviewWildcard);
+    expect(script).toContain("if (projectRef === STAGING_REF)");
+    expect(script).toContain(
+      "requiredAllowEntries = [...new Set([...requiredAllowEntries, ...STAGING_PREVIEW_CALLBACKS])]",
+    );
   });
 
   it("does not inject Google provider credentials into the staging deploy", () => {

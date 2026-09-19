@@ -5,11 +5,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import OnboardingWizard from "@/pages/OnboardingWizard";
 
-const ONBOARDING_PROVISION_KEY = "quantivis_onboarding_provisioning";
-
-type GateStatus = "checking" | "ready" | "restoration" | "blocked";
+type GateStatus = "checking" | "restoration" | "blocked";
 
 const Onboarding = () => {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -23,11 +20,7 @@ const Onboarding = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState<GateStatus>("checking");
   const [detail, setDetail] = useState<string | null>(null);
-  const provisioningAttempted = useRef(false);
   const refreshOrganizationsRef = useRef(refreshOrganizations);
-
-  const onboardingStarted = user?.user_metadata?.quantivis_onboarding_started === true;
-  const onboardingProvisioned = user?.user_metadata?.quantivis_onboarding_provisioned === true;
 
   useEffect(() => {
     refreshOrganizationsRef.current = refreshOrganizations;
@@ -50,26 +43,12 @@ const Onboarding = () => {
         return;
       }
 
+      // Missing membership is never treated as permission to create a tenant.
+      // Trusted signup provisioning and historical restoration are server-side
+      // operations and must establish the relationship before this route opens.
       if (!currentOrgId) {
-        if (!onboardingStarted) {
-          setStatus("restoration");
-          setDetail("Your identity is verified, but this environment is not linked to a verified Quantivis tenant.");
-          return;
-        }
-
-        if (provisioningAttempted.current) return;
-        provisioningAttempted.current = true;
-        setStatus("checking");
-        sessionStorage.setItem(ONBOARDING_PROVISION_KEY, "allowed");
-        try {
-          await refreshOrganizationsRef.current();
-        } catch (refreshError: unknown) {
-          if (cancelled) return;
-          setStatus("blocked");
-          setDetail(refreshError instanceof Error ? refreshError.message : "Workspace provisioning could not be verified.");
-        } finally {
-          sessionStorage.removeItem(ONBOARDING_PROVISION_KEY);
-        }
+        setStatus("restoration");
+        setDetail("Your identity is verified, but this environment is not linked to a verified Quantivis tenant.");
         return;
       }
 
@@ -91,14 +70,11 @@ const Onboarding = () => {
         return;
       }
 
-      if (onboardingStarted || onboardingProvisioned) {
-        setStatus("ready");
-        setDetail(null);
-        return;
-      }
-
+      // An incomplete organization is not sufficient evidence that the current
+      // identity is a legitimate fresh signup. Client-editable user_metadata and
+      // browser storage are deliberately not authorization inputs here.
       setStatus("restoration");
-      setDetail("This organisation is incomplete but has no verified signup-onboarding provenance. Setup is blocked to avoid creating replacement data.");
+      setDetail("This organisation is incomplete but has no server-verified signup-onboarding provenance. Setup is blocked to avoid creating or overwriting replacement data.");
     };
 
     void verify();
@@ -110,14 +86,10 @@ const Onboarding = () => {
     currentOrgId,
     evidenceReady,
     navigate,
-    onboardingProvisioned,
-    onboardingStarted,
     orgError,
     orgLoading,
     user,
   ]);
-
-  if (status === "ready") return <OnboardingWizard />;
 
   if (status === "checking") {
     return (
@@ -150,7 +122,6 @@ const Onboarding = () => {
             <Button
               variant="outline"
               onClick={() => {
-                provisioningAttempted.current = false;
                 setStatus("checking");
                 setDetail(null);
                 void refreshOrganizationsRef.current();

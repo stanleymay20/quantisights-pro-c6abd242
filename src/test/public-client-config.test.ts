@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRODUCTION_PUBLIC_CLIENT_CONFIG,
   STAGING_PUBLIC_CLIENT_CONFIG,
+  resolveDefaultPublicClientTarget,
   resolvePublicClientConfig,
   validatePublicClientConfig,
 } from "../../config/public-client-config";
@@ -60,11 +61,45 @@ describe("public client bootstrap configuration", () => {
     });
   });
 
-  it("makes Vite production-only by default and sends non-production modes to staging", () => {
+  it("sends hosting-provider deploy previews to staging even when Vite mode is production", () => {
+    expect(resolveDefaultPublicClientTarget({
+      mode: "production",
+      deploymentContext: "deploy-preview",
+    })).toBe(STAGING_PUBLIC_CLIENT_CONFIG);
+
+    expect(resolveDefaultPublicClientTarget({
+      mode: "production",
+      deploymentContext: "branch-deploy",
+    })).toBe(STAGING_PUBLIC_CLIENT_CONFIG);
+
+    expect(resolveDefaultPublicClientTarget({
+      mode: "production",
+      deploymentContext: "preview",
+    })).toBe(STAGING_PUBLIC_CLIENT_CONFIG);
+  });
+
+  it("keeps an explicit hosting-provider production context on production", () => {
+    expect(resolveDefaultPublicClientTarget({
+      mode: "production",
+      deploymentContext: "production",
+    })).toBe(PRODUCTION_PUBLIC_CLIENT_CONFIG);
+  });
+
+  it("preserves the local Vite fallback when no hosting-provider context exists", () => {
+    expect(resolveDefaultPublicClientTarget({ mode: "production" })).toBe(
+      PRODUCTION_PUBLIC_CLIENT_CONFIG,
+    );
+    expect(resolveDefaultPublicClientTarget({ mode: "development" })).toBe(
+      STAGING_PUBLIC_CLIENT_CONFIG,
+    );
+  });
+
+  it("records provider deployment context in the Vite release provenance", () => {
     const viteConfig = readFileSync(resolve(__dirname, "../../vite.config.ts"), "utf8");
-    expect(viteConfig).toContain('mode === "production"');
-    expect(viteConfig).toContain("? PRODUCTION_PUBLIC_CLIENT_CONFIG");
-    expect(viteConfig).toContain(": STAGING_PUBLIC_CLIENT_CONFIG");
+    expect(viteConfig).toContain("process.env.CONTEXT");
+    expect(viteConfig).toContain("process.env.VERCEL_ENV");
+    expect(viteConfig).toContain("resolveDefaultPublicClientTarget");
+    expect(viteConfig).toContain("deploymentContext");
     expect(viteConfig).toContain("supabaseProjectRef");
     expect(viteConfig).toContain("supabaseConfigSource");
   });

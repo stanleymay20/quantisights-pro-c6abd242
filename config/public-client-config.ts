@@ -12,6 +12,11 @@ export type PublicClientConfig = PublicClientTarget & {
   source: "environment" | "checked-in-public-default";
 };
 
+export type PublicClientDeploymentContext = {
+  mode: string;
+  deploymentContext?: string | null;
+};
+
 // These are browser-public identifiers, not secrets. Supabase publishable keys
 // are intentionally delivered to clients and are constrained by RLS.
 // NEVER place a service-role key, secret key, or other privileged credential here.
@@ -24,6 +29,31 @@ export const STAGING_PUBLIC_CLIENT_CONFIG = Object.freeze({
   supabaseUrl: "https://cmnihsbdbpubznlkmjbc.supabase.co",
   supabasePublishableKey: "sb_publishable_lQQB76Cc8zYj9NiD60rqPg_aeyJdnie",
 });
+
+/**
+ * Select the checked-in browser fallback without allowing a hosting-provider
+ * preview to inherit production merely because Vite builds previews in
+ * `production` mode. An explicit provider context of `production` may use the
+ * production fallback; every other explicit deployment context fails closed to
+ * staging. When no provider context exists, ordinary Vite production builds
+ * retain the historical production fallback.
+ */
+export const resolveDefaultPublicClientTarget = ({
+  mode,
+  deploymentContext,
+}: PublicClientDeploymentContext): PublicClientTarget => {
+  const normalizedContext = deploymentContext?.trim().toLowerCase() || null;
+  const isExplicitProductionDeployment = normalizedContext === "production";
+  const isExplicitNonProductionDeployment = Boolean(
+    normalizedContext && !isExplicitProductionDeployment,
+  );
+
+  if (isExplicitNonProductionDeployment) return STAGING_PUBLIC_CLIENT_CONFIG;
+  if (isExplicitProductionDeployment) return PRODUCTION_PUBLIC_CLIENT_CONFIG;
+  return mode === "production"
+    ? PRODUCTION_PUBLIC_CLIENT_CONFIG
+    : STAGING_PUBLIC_CLIENT_CONFIG;
+};
 
 const SUPABASE_HOST_RE = /^([a-z0-9-]+)\.supabase\.co$/i;
 const PUBLISHABLE_KEY_RE = /^sb_publishable_[A-Za-z0-9_-]{20,}$/;
