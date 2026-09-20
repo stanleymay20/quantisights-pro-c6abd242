@@ -21,17 +21,13 @@ interface OrganizationSwitchDetail {
 
 const ORG_STORAGE_KEY = "quantivis_org_id";
 const ORG_SWITCH_EVENT = "quantivis:org-switch";
-const ONBOARDING_PROVISION_KEY = "quantivis_onboarding_provisioning";
 
 // Deduplicate organization discovery per authenticated user. Failed promises are
 // evicted so retry can actually re-read membership rather than replay an error.
 const orgFetchPromises = new Map<string, Promise<Organization[]>>();
 
-const toSlug = (name: string) =>
-  name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "workspace";
-
 export const useOrganization = () => {
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +35,7 @@ export const useOrganization = () => {
   const [evidenceReady, setEvidenceReady] = useState(false);
   const requestSeq = useRef(0);
 
-  const fetchMembershipOrgs = useCallback(async () => {
+  const fetchMembershipOrgs = useCallback(async (): Promise<Organization[]> => {
     if (!user) return [];
 
     const { data, error: membershipError } = await supabase
@@ -58,113 +54,6 @@ export const useOrganization = () => {
         role: membership.role,
       }));
   }, [user]);
-
-  const ensurePersonalTenant = useCallback(async (): Promise<Organization | null> => {
-    if (!user) return null;
-
-    const provisioningAuthorized =
-      typeof window !== "undefined" &&
-      sessionStorage.getItem(ONBOARDING_PROVISION_KEY) === "allowed" &&
-      user.user_metadata?.quantivis_onboarding_started === true;
-
-    if (!provisioningAuthorized) {
-      throw new Error("Tenant provisioning is restricted to an explicitly verified signup onboarding flow.");
-    }
-
-    // Consume the one-shot browser authorization before any write. A retry must
-    // be explicitly re-authorized by the onboarding boundary.
-    sessionStorage.removeItem(ONBOARDING_PROVISION_KEY);
-
-    // Re-read membership immediately before provisioning so a concurrent
-    // restore/invite cannot race us into creating a duplicate tenant.
-    const existing = await fetchMembershipOrgs();
-    if (existing.length > 0) return existing[0];
-
-    const displayName = (
-      user.user_metadata?.full_name
-      || user.email?.split("@")[0]
-      || "My"
-    ).trim();
-    const orgName = `${displayName}'s Organization`.slice(0, 200);
-
-    const { data: org, error: orgError } = await supabase
-      .from("organizations")
-      .insert({ name: orgName, created_by: user.id })
-      .select("id, name")
-      .single();
-
-    if (orgError || !org) throw orgError || new Error("Failed to create organization");
-
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .upsert({
-        user_id: user.id,
-        full_name: user.user_metadata?.full_name ?? user.email ?? null,
-        avatar_url: user.user_metadata?.avatar_url ?? null,
-        organization_id: org.id,
-      }, { onConflict: "user_id" });
-    if (profileError) throw profileError;
-
-    const { error: memberError } = await supabase
-      .from("organization_members")
-      .insert({ organization_id: org.id, user_id: user.id, role: "owner" });
-    if (memberError) throw memberError;
-
-    const workspaceName = "Default Workspace";
-    const { data: workspace, error: workspaceError } = await supabase
-      .from("workspaces")
-      .insert({
-        organization_id: org.id,
-        name: workspaceName,
-        slug: toSlug(workspaceName),
-        created_by: user.id,
-      })
-      .select("id")
-      .single();
-    if (workspaceError || !workspace) throw workspaceError || new Error("Failed to create workspace");
-
-    const { error: workspaceMemberError } = await supabase.from("workspace_members").insert({
-      workspace_id: workspace.id,
-      user_id: user.id,
-      role: "workspace_admin",
-    });
-    if (workspaceMemberError) throw workspaceMemberError;
-
-    const { error: quotaError } = await supabase.from("workspace_quotas").insert({ workspace_id: workspace.id });
-    if (quotaError) {
-      console.error("[useOrganization] Default workspace quota provisioning failed:", quotaError.message);
-    }
-
-    // Once a tenant exists, remove the authority to create another one. Keep a
-    // durable non-authorizing marker so legitimate incomplete onboarding can be
-    // resumed later without treating a returning user as a migration failure.
-    const { error: metadataError } = await supabase.auth.updateUser({
-      data: {
-        quantivis_onboarding_started: false,
-        quantivis_onboarding_provisioned: true,
-      },
-    });
-    if (metadataError) {
-      throw new Error(`Tenant created but onboarding provenance could not be recorded: ${metadataError.message}`);
-    }
-
-    await refreshProfile();
-    return { id: org.id, name: org.name, role: "owner", industry: null };
-  }, [fetchMembershipOrgs, refreshProfile, user]);
-
-  const fetchOrCreateOrgs = useCallback(async (): Promise<Organization[]> => {
-    let orgs = await fetchMembershipOrgs();
-    const provisioningAuthorized =
-      typeof window !== "undefined" &&
-      sessionStorage.getItem(ONBOARDING_PROVISION_KEY) === "allowed" &&
-      user?.user_metadata?.quantivis_onboarding_started === true;
-
-    if (orgs.length === 0 && provisioningAuthorized) {
-      const fallbackOrg = await ensurePersonalTenant();
-      orgs = fallbackOrg ? [fallbackOrg] : [];
-    }
-    return orgs;
-  }, [ensurePersonalTenant, fetchMembershipOrgs, user]);
 
   const resolveOrganizations = useCallback(async (force = false) => {
     const seq = ++requestSeq.current;
@@ -189,7 +78,11 @@ export const useOrganization = () => {
       if (force) orgFetchPromises.delete(userId);
       let promise = orgFetchPromises.get(userId);
       if (!promise) {
-        promise = fetchOrCreateOrgs();
+        // Organization discovery is intentionally read-only. Tenant creation and
+        // membership assignment are server-controlled operations; missing
+        // membership evidence must never be interpreted as permission to create
+        // replacement tenant state in the browser.
+        promise = fetchMembershipOrgs();
         orgFetchPromises.set(userId, promise);
       }
 
@@ -221,7 +114,7 @@ export const useOrganization = () => {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [fetchOrCreateOrgs, profile?.organization_id, user]);
+  }, [fetchMembershipOrgs, profile?.organization_id, user]);
 
   useEffect(() => {
     void resolveOrganizations(false);
