@@ -1,0 +1,50 @@
+import { supabase } from "@/integrations/supabase/client";
+
+const SIGNUP_INTENT_KEY = "quantivis_verified_signup_intent";
+
+const rpc = supabase.rpc.bind(supabase) as unknown as (
+  fn: string,
+  args?: Record<string, unknown>,
+) => Promise<{ data: unknown; error: { message?: string; code?: string } | null }>;
+
+export const beginVerifiedSignupIntent = async (): Promise<string> => {
+  const { data, error } = await supabase.functions.invoke<{ token?: string }>("begin-signup-intent", {
+    body: {},
+  });
+  if (error) throw new Error(error.message || "Could not start verified signup");
+  const token = data?.token?.trim() || "";
+  if (!token) throw new Error("Signup verification token was not issued");
+  localStorage.setItem(SIGNUP_INTENT_KEY, token);
+  return token;
+};
+
+export const readVerifiedSignupIntent = (): string | null =>
+  localStorage.getItem(SIGNUP_INTENT_KEY);
+
+export const restoreVerifiedSignupIntent = (token: string): boolean => {
+  const normalized = token.trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)) {
+    return false;
+  }
+  localStorage.setItem(SIGNUP_INTENT_KEY, normalized);
+  return true;
+};
+
+export const clearVerifiedSignupIntent = () => {
+  localStorage.removeItem(SIGNUP_INTENT_KEY);
+};
+
+export const provisionVerifiedSignup = async (intentToken: string) => {
+  const { data, error } = await rpc("provision_verified_signup", {
+    p_intent_token: intentToken,
+  });
+  return { data, error };
+};
+
+export const hasVerifiedSignupProvenance = async (organizationId: string) => {
+  const { data, error } = await rpc("has_verified_signup_provenance", {
+    p_organization_id: organizationId,
+  });
+  if (error) return { verified: false, error };
+  return { verified: data === true, error: null };
+};
