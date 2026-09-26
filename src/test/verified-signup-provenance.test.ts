@@ -13,6 +13,7 @@ const signupIntent = read("src/lib/signup-intent.ts");
 const signupIntentEdge = read("supabase/functions/begin-signup-intent/index.ts");
 const supabaseConfig = read("supabase/config.toml");
 const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
+const privilegeHardening = read("supabase/migrations/20260926113712_privatize_verified_signup_privileged_logic.sql");
 
 describe("verified fresh-signup provenance", () => {
   it("never uses user-editable metadata as tenant provisioning authority", () => {
@@ -68,6 +69,17 @@ describe("verified fresh-signup provenance", () => {
     expect(migration).toContain("INSERT INTO public.workspaces");
     expect(migration).toContain("INSERT INTO public.workspace_members");
     expect(migration).toContain("consumed_by = v_uid");
+  });
+
+  it("keeps privileged signup bodies out of the exposed public API schema", () => {
+    expect(privilegeHardening).toContain("CREATE OR REPLACE FUNCTION tenant_control.provision_verified_signup");
+    expect(privilegeHardening).toContain("CREATE OR REPLACE FUNCTION tenant_control.has_verified_signup_provenance");
+    expect(privilegeHardening).toContain("CREATE OR REPLACE FUNCTION public.provision_verified_signup");
+    expect(privilegeHardening).toContain("CREATE OR REPLACE FUNCTION public.has_verified_signup_provenance");
+    expect(privilegeHardening).toContain("SECURITY INVOKER");
+    expect(privilegeHardening).toContain("signup_intents_explicit_deny");
+    expect(privilegeHardening).toContain("REVOKE ALL ON FUNCTION public.provision_verified_signup(uuid)");
+    expect(privilegeHardening).toContain("REVOKE ALL ON FUNCTION public.has_verified_signup_provenance(uuid)");
   });
 
   it("supports zero-downtime adoption only for the exact fresh legacy tenant shape", () => {
