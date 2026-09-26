@@ -6,6 +6,11 @@ const root = resolve(__dirname, "../..");
 const organizationHook = readFileSync(resolve(root, "src/hooks/useOrganization.ts"), "utf8");
 const onboardingGate = readFileSync(resolve(root, "src/pages/Onboarding.tsx"), "utf8");
 const stagingValidation = readFileSync(resolve(root, ".github/workflows/ga-staging-validation.yml"), "utf8");
+const signupIntent = readFileSync(resolve(root, "src/lib/signup-intent.ts"), "utf8");
+const verifiedSignupMigration = readFileSync(
+  resolve(root, "supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql"),
+  "utf8",
+);
 const controlPlaneMigration = readFileSync(
   resolve(root, "supabase/migrations/20260902173140_fail_closed_tenant_control_plane.sql"),
   "utf8",
@@ -36,12 +41,25 @@ describe("tenant provisioning boundary", () => {
     expect(organizationHook).not.toContain("user_metadata?.");
   });
 
-  it("fails closed for missing or incomplete tenant evidence", () => {
-    expect(onboardingGate).toContain('type GateStatus = "checking" | "restoration" | "blocked"');
+  it("fails closed unless missing or incomplete tenant evidence is backed by verified signup provenance", () => {
+    expect(onboardingGate).toContain('type GateStatus = "checking" | "ready" | "restoration" | "blocked"');
     expect(onboardingGate).toContain("if (!currentOrgId)");
+    expect(onboardingGate).toContain("readVerifiedSignupIntent()");
+    expect(onboardingGate).toContain("provisionVerifiedSignup(intentToken)");
+    expect(onboardingGate).toContain("hasVerifiedSignupProvenance(currentOrgId)");
+    expect(onboardingGate).toContain('if (provenance.verified)');
+    expect(onboardingGate).toContain('setStatus("ready")');
+    expect(onboardingGate).toContain('if (status === "ready") return <OnboardingWizard />');
     expect(onboardingGate).toContain("Workspace restoration required");
     expect(onboardingGate).toContain("no server-verified signup-onboarding provenance");
-    expect(onboardingGate).not.toContain("OnboardingWizard");
+
+    // Browser storage preserves only the opaque capability. Tenant authority is
+    // established by server-side Auth timestamps and the private intent ledger.
+    expect(signupIntent).toContain('rpc("provision_verified_signup"');
+    expect(verifiedSignupMigration).toContain("v_user.email_confirmed_at IS NULL");
+    expect(verifiedSignupMigration).toContain("v_user.created_at < v_intent.created_at");
+    expect(verifiedSignupMigration).toContain("existing_identity_requires_restoration");
+    expect(verifiedSignupMigration).toContain("existing_tenant_relationship");
   });
 
   it("preserves access for an already completed verified organization", () => {
