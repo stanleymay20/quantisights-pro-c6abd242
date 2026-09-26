@@ -12,7 +12,7 @@ const onboarding = read("src/pages/Onboarding.tsx");
 const signupIntent = read("src/lib/signup-intent.ts");
 const signupIntentEdge = read("supabase/functions/begin-signup-intent/index.ts");
 const supabaseConfig = read("supabase/config.toml");
-const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
+const migration = read("supabase/migrations/20260926115257_verified_signup_and_commercial_entitlements.sql");
 const privilegeHardening = read("supabase/migrations/20260926113712_privatize_verified_signup_privileged_logic.sql");
 
 describe("verified fresh-signup provenance", () => {
