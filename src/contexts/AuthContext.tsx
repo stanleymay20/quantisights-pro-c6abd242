@@ -17,7 +17,7 @@ interface AuthContextType {
   profileLoading: boolean;
   profile: UserProfile | null;
   refreshProfile: () => Promise<void>;
-  signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signUp: (email: string, password: string, fullName: string, signupIntent?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -221,7 +221,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [fetchProfile]);
 
-  const signUp = async (email: string, password: string, fullName: string) => {
+  const signUp = async (email: string, password: string, fullName: string, signupIntent?: string) => {
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
+    callbackUrl.searchParams.set("next", "/onboarding");
+    if (signupIntent) callbackUrl.searchParams.set("signup_intent", signupIntent);
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -229,7 +233,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         data: {
           full_name: fullName,
         },
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
+        // signup_intent is an opaque one-time capability, not authorization
+        // metadata. Carrying it in the approved redirect allows legitimate
+        // confirmation on a different browser/device; AuthCallback stores it
+        // only after Supabase establishes the authenticated session.
+        emailRedirectTo: callbackUrl.toString(),
       },
     });
     if (error) throw error;
