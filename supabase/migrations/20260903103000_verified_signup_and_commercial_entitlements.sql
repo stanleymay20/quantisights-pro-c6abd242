@@ -23,15 +23,15 @@ CREATE INDEX IF NOT EXISTS idx_signup_intents_expires_at
 ALTER TABLE tenant_control.signup_intents ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON tenant_control.signup_intents FROM PUBLIC, anon, authenticated;
 
--- The browser may request an opaque intent, but it cannot write/read the backing
--- table. The intent is only useful if the eventual authenticated user was itself
--- created after this server-issued intent and before it expires.
-CREATE OR REPLACE FUNCTION public.begin_signup_intent()
+-- Intent issuance crosses an unauthenticated boundary, so the browser never
+-- receives direct EXECUTE on a SECURITY DEFINER database function. The public
+-- begin-signup-intent Edge Function calls this internal RPC with service_role.
+CREATE OR REPLACE FUNCTION public.issue_signup_intent_internal()
 RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public, tenant_control
-AS $$
+AS $
 DECLARE
   v_token uuid;
 BEGIN
@@ -43,10 +43,10 @@ BEGIN
 
   RETURN v_token;
 END;
-$$;
+$;
 
-REVOKE ALL ON FUNCTION public.begin_signup_intent() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.begin_signup_intent() TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.issue_signup_intent_internal() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.issue_signup_intent_internal() TO service_role;
 
 -- One-time transactional tenant creation for a genuinely fresh Auth identity.
 -- Existing/returning identities are older than the intent and therefore cannot
@@ -343,8 +343,8 @@ CREATE TRIGGER sync_subscription_workspace_quotas
 AFTER INSERT OR UPDATE OF tier, status ON public.subscriptions
 FOR EACH ROW EXECUTE FUNCTION tenant_control.sync_subscription_workspace_quotas();
 
-COMMENT ON FUNCTION public.begin_signup_intent() IS
-  'Issues a 24-hour server capability for a prospective self-serve signup; it does not create tenant state.';
+COMMENT ON FUNCTION public.issue_signup_intent_internal() IS
+  'Service-role-only issuer for a 24-hour prospective signup capability; browser callers use the begin-signup-intent Edge Function.';
 COMMENT ON FUNCTION public.provision_verified_signup(uuid) IS
   'Creates one tenant only when Auth identity creation is proven to post-date a valid signup intent.';
 COMMENT ON FUNCTION public.has_verified_signup_provenance(uuid) IS
