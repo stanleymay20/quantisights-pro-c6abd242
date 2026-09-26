@@ -9,7 +9,7 @@ REVOKE ALL ON SCHEMA tenant_control FROM authenticated;
 CREATE TABLE IF NOT EXISTS tenant_control.signup_intents (
   token uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  expires_at timestamptz NOT NULL DEFAULT (clock_timestamp() + interval '30 minutes'),
+  expires_at timestamptz NOT NULL DEFAULT (clock_timestamp() + interval '24 hours'),
   consumed_at timestamptz,
   consumed_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   organization_id uuid REFERENCES public.organizations(id) ON DELETE SET NULL,
@@ -273,7 +273,7 @@ AFTER INSERT OR UPDATE OF tier, status ON public.subscriptions
 FOR EACH ROW EXECUTE FUNCTION tenant_control.sync_subscription_workspace_quotas();
 
 COMMENT ON FUNCTION public.begin_signup_intent() IS
-  'Issues a short-lived server capability for a prospective self-serve signup; it does not create tenant state.';
+  'Issues a 24-hour server capability for a prospective self-serve signup; it does not create tenant state.';
 COMMENT ON FUNCTION public.provision_verified_signup(uuid) IS
   'Creates one tenant only when Auth identity creation is proven to post-date a valid signup intent.';
 COMMENT ON FUNCTION public.has_verified_signup_provenance(uuid) IS
