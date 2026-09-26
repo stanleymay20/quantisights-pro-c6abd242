@@ -19,6 +19,8 @@ project_id = "itpwpnwzzitkelffttyx"
     verify_jwt = false
   [functions.complete-onboarding]
     verify_jwt = false
+  [functions.confirm-checkout]
+    verify_jwt = false
   [functions.compute-executive-signals]
     verify_jwt = false
   [functions.compute-kpi]
