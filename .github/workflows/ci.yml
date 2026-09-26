@@ -104,6 +104,11 @@ jobs:
           check_edge supabase/functions/deno.json supabase/functions/aicis-evaluate-outcomes/index.ts
           check_edge supabase/functions/deno.json supabase/functions/complete-onboarding/index.ts
           check_edge supabase/functions/deno.json supabase/functions/activate-pilot/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/create-checkout/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/customer-portal/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/check-subscription/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/stripe-webhook/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/confirm-checkout/index.ts
           check_edge supabase/functions/deno.json supabase/functions/decision-value-summary/index.ts
           check_edge supabase/functions/auth-email-hook/deno.json supabase/functions/auth-email-hook/index.ts
           check_edge supabase/functions/process-email-queue/deno.json supabase/functions/process-email-queue/index.ts
