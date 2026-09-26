@@ -69,11 +69,20 @@ BEGIN
     RAISE EXCEPTION 'email_confirmation_required' USING ERRCODE = '42501';
   END IF;
 
+  -- Both values are authoritative server-side timestamps in the same Supabase
+  -- environment. A self-serve identity must not pre-date the issued capability.
   IF v_user.created_at < v_intent.created_at
      OR v_user.created_at > v_intent.expires_at THEN
     RAISE EXCEPTION 'existing_identity_requires_restoration' USING ERRCODE = '42501';
   END IF;
 
+  -- Zero-downtime compatibility bridge for the legacy on_auth_user_created
+  -- trigger. During the coordinated cutover, a genuinely fresh identity may
+  -- already have the exact one-org/one-default-workspace structure created by
+  -- that trigger before this RPC runs. Adopt only that structure when every
+  -- server-side timestamp and ownership edge falls inside this signup intent.
+  -- Returning users still fail above because their auth.users.created_at
+  -- predates the newly issued intent.
   SELECT p.organization_id, w.id
     INTO v_existing_org_id, v_existing_workspace_id
   FROM public.profiles p
@@ -172,6 +181,7 @@ BEGIN
   INSERT INTO public.workspace_members (workspace_id, user_id, role)
   VALUES (v_workspace_id, v_uid, 'workspace_admin');
 
+  -- Essentials-compatible baseline until onboarding grants the Governance pilot.
   INSERT INTO public.workspace_quotas (
     workspace_id,
     max_datasets,
