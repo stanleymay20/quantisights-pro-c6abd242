@@ -14,6 +14,8 @@ const signupIntentEdge = read("supabase/functions/begin-signup-intent/index.ts")
 const supabaseConfig = read("supabase/config.toml");
 const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
 const privilegeHardening = read("supabase/migrations/20260926113712_privatize_verified_signup_privileged_logic.sql");
+const managedReplay = read("supabase/migrations/20260926115257_verified_signup_and_commercial_entitlements.sql");
+const replayRepair = read("supabase/migrations/20260926115734_restore_verified_signup_privilege_boundary_after_managed_replay.sql");
 
 describe("verified fresh-signup provenance", () => {
   it("never uses user-editable metadata as tenant provisioning authority", () => {
@@ -80,6 +82,16 @@ describe("verified fresh-signup provenance", () => {
     expect(privilegeHardening).toContain("signup_intents_explicit_deny");
     expect(privilegeHardening).toContain("REVOKE ALL ON FUNCTION public.provision_verified_signup(uuid)");
     expect(privilegeHardening).toContain("REVOKE ALL ON FUNCTION public.has_verified_signup_provenance(uuid)");
+  });
+
+  it("preserves managed migration replay lineage and re-hardens it monotonically", () => {
+    expect(managedReplay).toBe(migration);
+    expect(replayRepair).toContain("CREATE OR REPLACE FUNCTION tenant_control.provision_verified_signup");
+    expect(replayRepair).toContain("CREATE OR REPLACE FUNCTION tenant_control.has_verified_signup_provenance");
+    expect(replayRepair).toContain("SECURITY INVOKER");
+    expect(replayRepair).toContain("signup_intents_explicit_deny");
+    expect(replayRepair).toContain("REVOKE ALL ON FUNCTION public.provision_verified_signup(uuid)");
+    expect(replayRepair).toContain("REVOKE ALL ON FUNCTION public.has_verified_signup_provenance(uuid)");
   });
 
   it("supports zero-downtime adoption only for the exact fresh legacy tenant shape", () => {
