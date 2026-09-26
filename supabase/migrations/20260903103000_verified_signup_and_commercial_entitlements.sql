@@ -63,6 +63,8 @@ DECLARE
   v_intent tenant_control.signup_intents%ROWTYPE;
   v_org_id uuid;
   v_workspace_id uuid;
+  v_existing_org_id uuid;
+  v_existing_workspace_id uuid;
   v_display_name text;
 BEGIN
   IF v_uid IS NULL THEN
@@ -110,6 +112,75 @@ BEGIN
   IF v_user.created_at < v_intent.created_at
      OR v_user.created_at > v_intent.expires_at THEN
     RAISE EXCEPTION 'existing_identity_requires_restoration' USING ERRCODE = '42501';
+  END IF;
+
+  -- Zero-downtime compatibility bridge for the legacy on_auth_user_created
+  -- trigger. During the coordinated cutover, a genuinely fresh identity may
+  -- already have the exact one-org/one-default-workspace structure created by
+  -- that trigger before this RPC runs. Adopt only that structure when every
+  -- server-side timestamp and ownership edge falls inside this signup intent.
+  -- Returning users still fail above because their auth.users.created_at
+  -- predates the newly issued intent.
+  SELECT p.organization_id, w.id
+    INTO v_existing_org_id, v_existing_workspace_id
+  FROM public.profiles p
+  JOIN public.organizations o
+    ON o.id = p.organization_id
+   AND o.created_by = v_uid
+  JOIN public.organization_members om
+    ON om.organization_id = o.id
+   AND om.user_id = v_uid
+   AND om.role = 'owner'::public.org_role
+  JOIN public.workspaces w
+    ON w.organization_id = o.id
+   AND w.created_by = v_uid
+   AND w.slug = 'default'
+  JOIN public.workspace_members wm
+    ON wm.workspace_id = w.id
+   AND wm.user_id = v_uid
+   AND wm.role = 'workspace_admin'::public.workspace_role
+  WHERE p.user_id = v_uid
+    AND o.created_at >= v_intent.created_at
+    AND o.created_at <= v_intent.expires_at
+    AND p.created_at >= v_intent.created_at
+    AND p.created_at <= v_intent.expires_at
+    AND w.created_at >= v_intent.created_at
+    AND w.created_at <= v_intent.expires_at
+    AND (SELECT count(*) FROM public.profiles px WHERE px.user_id = v_uid) = 1
+    AND (SELECT count(*) FROM public.organization_members omx WHERE omx.user_id = v_uid) = 1
+    AND (SELECT count(*) FROM public.workspace_members wmx WHERE wmx.user_id = v_uid) = 1
+  LIMIT 1;
+
+  IF v_existing_org_id IS NOT NULL AND v_existing_workspace_id IS NOT NULL THEN
+    INSERT INTO public.workspace_quotas (
+      workspace_id,
+      max_datasets,
+      max_simulations_per_day,
+      max_copilot_queries_per_day,
+      max_team_seats
+    )
+    VALUES (v_existing_workspace_id, 5, 5, 20, 5)
+    ON CONFLICT (workspace_id) DO UPDATE SET
+      max_datasets = EXCLUDED.max_datasets,
+      max_simulations_per_day = EXCLUDED.max_simulations_per_day,
+      max_copilot_queries_per_day = EXCLUDED.max_copilot_queries_per_day,
+      max_team_seats = EXCLUDED.max_team_seats,
+      updated_at = now();
+
+    UPDATE tenant_control.signup_intents
+       SET consumed_at = clock_timestamp(),
+           consumed_by = v_uid,
+           organization_id = v_existing_org_id,
+           workspace_id = v_existing_workspace_id
+     WHERE token = p_intent_token;
+
+    RETURN jsonb_build_object(
+      'provisioned', true,
+      'idempotent', false,
+      'adopted_legacy', true,
+      'organization_id', v_existing_org_id,
+      'workspace_id', v_existing_workspace_id
+    );
   END IF;
 
   IF EXISTS (SELECT 1 FROM public.profiles WHERE user_id = v_uid)
