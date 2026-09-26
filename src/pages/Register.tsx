@@ -56,8 +56,8 @@ const Register = () => {
     }
     setIsLoading(true);
     try {
-      await beginVerifiedSignupIntent();
-      await signUp(email, password, fullName);
+      const signupIntent = await beginVerifiedSignupIntent();
+      await signUp(email, password, fullName, signupIntent);
       toast({ title: "Verification email sent", description: "Confirm your email to continue setting up your Quantivis workspace." });
       navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
