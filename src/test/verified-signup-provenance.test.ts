@@ -29,6 +29,17 @@ describe("verified fresh-signup provenance", () => {
     expect(register).toContain("clearVerifiedSignupIntent();");
   });
 
+  it("survives cross-device email confirmation without trusting user metadata", () => {
+    expect(authContext).toContain('callbackUrl.searchParams.set("signup_intent", signupIntent)');
+    expect(authContext).toContain("emailRedirectTo: callbackUrl.toString()");
+    expect(register).toContain("await signUp(email, password, fullName, signupIntent)");
+    expect(callback).toContain('searchParams.get("signup_intent")');
+    expect(callback).toContain("restoreVerifiedSignupIntent(redirectSignupIntent)");
+    expect(callback.indexOf("restoreVerifiedSignupIntent(redirectSignupIntent)")).toBeGreaterThan(callback.indexOf("if (ok)"));
+    expect(signupIntent).toContain("restoreVerifiedSignupIntent");
+    expect(signupIntent).toContain("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
+  });
+
   it("keeps the intent ledger private and short lived", () => {
     expect(migration).toContain("CREATE SCHEMA IF NOT EXISTS tenant_control");
     expect(migration).toContain("REVOKE ALL ON SCHEMA tenant_control FROM PUBLIC");
