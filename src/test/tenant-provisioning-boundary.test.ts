@@ -58,6 +58,7 @@ describe("tenant provisioning boundary", () => {
     expect(signupIntent).toContain('rpc("provision_verified_signup"');
     expect(verifiedSignupMigration).toContain("v_user.email_confirmed_at IS NULL");
     expect(verifiedSignupMigration).toContain("v_user.created_at < v_intent.created_at");
+    expect(verifiedSignupMigration).toContain("interval '24 hours'");
     expect(verifiedSignupMigration).toContain("existing_identity_requires_restoration");
     expect(verifiedSignupMigration).toContain("existing_tenant_relationship");
   });
