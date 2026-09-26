@@ -34,7 +34,7 @@ serve(async (req) => {
 
   const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
   const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-  let claimedEventId: string | null = null;
+  let claimedEvent: { eventId: string; claimToken: string } | null = null;
 
   try {
     const body = await req.text();
@@ -52,7 +52,16 @@ serve(async (req) => {
     });
     if (claimError) throw new Error(`Stripe event claim failed: ${claimError.message}`);
 
-    if (claimResult === "duplicate") {
+    const claimState =
+      claimResult && typeof claimResult === "object" && "state" in claimResult
+        ? String((claimResult as { state?: unknown }).state ?? "")
+        : "";
+    const claimToken =
+      claimResult && typeof claimResult === "object" && "claim_token" in claimResult
+        ? String((claimResult as { claim_token?: unknown }).claim_token ?? "")
+        : "";
+
+    if (claimState === "duplicate") {
       logStep("Already processed, acknowledging duplicate", { eventId: event.id });
       return new Response(JSON.stringify({ received: true, duplicate: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -60,7 +69,7 @@ serve(async (req) => {
       });
     }
 
-    if (claimResult === "busy") {
+    if (claimState === "busy") {
       logStep("Event is already being processed; requesting retry", { eventId: event.id });
       return new Response(JSON.stringify({ error: "Stripe event processing is already in progress" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": "30" },
@@ -68,10 +77,10 @@ serve(async (req) => {
       });
     }
 
-    if (claimResult !== "claimed") {
-      throw new Error(`Unexpected Stripe event claim result: ${String(claimResult)}`);
+    if (claimState !== "claimed" || !/^[0-9a-f-]{36}$/i.test(claimToken)) {
+      throw new Error(`Unexpected Stripe event claim result: ${JSON.stringify(claimResult)}`);
     }
-    claimedEventId = event.id;
+    claimedEvent = { eventId: event.id, claimToken };
 
     switch (event.type) {
       case "invoice.payment_failed": {
@@ -237,9 +246,10 @@ serve(async (req) => {
 
     const { error: completeError } = await supabase.rpc("complete_stripe_event", {
       p_event_id: event.id,
+      p_claim_token: claimedEvent.claimToken,
     });
     if (completeError) throw new Error(`Stripe event completion failed: ${completeError.message}`);
-    claimedEventId = null;
+    claimedEvent = null;
 
     return new Response(JSON.stringify({ received: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -247,21 +257,27 @@ serve(async (req) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logStep("ERROR", { message, claimedEventId });
+    logStep("ERROR", { message, claimedEvent });
 
-    if (claimedEventId) {
+    if (claimedEvent) {
       const { error: failError } = await supabase.rpc("fail_stripe_event", {
-        p_event_id: claimedEventId,
+        p_event_id: claimedEvent.eventId,
+        p_claim_token: claimedEvent.claimToken,
         p_error: message,
       });
-      if (failError) logStep("Failed to mark Stripe event retryable", { eventId: claimedEventId, error: failError.message });
+      if (failError) {
+        logStep("Failed to mark Stripe event retryable", {
+          eventId: claimedEvent.eventId,
+          error: failError.message,
+        });
+      }
     }
 
     // Signature/input failures are permanent 4xx. Once a verified event has been
     // claimed, processing failures are 5xx so Stripe will retry them.
     return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: claimedEventId ? 500 : 400,
+      status: claimedEvent ? 500 : 400,
     });
   }
 });
