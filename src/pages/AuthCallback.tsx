@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { restoreVerifiedSignupIntent } from "@/lib/signup-intent";
 import { safeInternalNavigation } from "@/lib/safe-navigation";
 import logo from "@/assets/quantivis-logo.png";
 
@@ -75,6 +76,7 @@ const AuthCallback = () => {
     const next = searchParams.get("next")
       ? safeInternalNavigation(searchParams.get("next"), "/onboarding")
       : consumeStoredNext();
+    const redirectSignupIntent = searchParams.get("signup_intent")?.trim() || null;
 
     // Legacy browser signup markers are deliberately discarded. Fresh-signup
     // authority now comes exclusively from the opaque server-issued intent and
@@ -86,8 +88,11 @@ const AuthCallback = () => {
       settled = true;
       if (ok) {
         if (cancelled) return;
-        // Remove OAuth query/hash material from browser history after the
-        // Supabase client has completed the PKCE exchange.
+        if (redirectSignupIntent) {
+          restoreVerifiedSignupIntent(redirectSignupIntent);
+        }
+        // Remove OAuth/confirmation query and hash material from browser history
+        // after Supabase has established the authenticated session.
         window.history.replaceState({}, document.title, window.location.pathname);
         navigate(next, { replace: true });
       } else {
