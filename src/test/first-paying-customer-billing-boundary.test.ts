@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TIERS } from "@/lib/stripe-tiers";
 
 const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").replace(/\r\n/g, "\n");
@@ -20,12 +21,15 @@ const idempotency = read("supabase/migrations/20260926122015_stripe_event_lease_
 
 describe("first paying customer billing boundary", () => {
   it("keeps all self-service Stripe prices server-owned", () => {
-    for (const priceId of [
-      "price_1T6Ji8JYFIBeCvef4RkHSCfw",
-      "price_1TiqhyJYFIBeCvefcRRwNfor",
-      "price_1TCfwlJYFIBeCvefvzY9z5m9",
-      "price_1TiqiLJYFIBeCvef3CEFlzIL",
-    ]) expect(catalog).toContain(priceId);
+    const configuredPrices = [
+      TIERS.starter.price_id,
+      TIERS.starter.price_id_annual,
+      TIERS.growth.price_id,
+      TIERS.growth.price_id_annual,
+    ].filter((priceId): priceId is string => Boolean(priceId));
+
+    expect(configuredPrices).toHaveLength(4);
+    for (const priceId of configuredPrices) expect(catalog).toContain(priceId);
 
     expect(checkout).toContain("getSelfServeCatalogEntry(requestedTier, requestedInterval)");
     expect(checkout).not.toContain("const { priceId");
