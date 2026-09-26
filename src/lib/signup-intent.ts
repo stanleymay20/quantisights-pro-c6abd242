@@ -21,6 +21,15 @@ export const beginVerifiedSignupIntent = async (): Promise<string> => {
 export const readVerifiedSignupIntent = (): string | null =>
   localStorage.getItem(SIGNUP_INTENT_KEY);
 
+export const restoreVerifiedSignupIntent = (token: string): boolean => {
+  const normalized = token.trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)) {
+    return false;
+  }
+  localStorage.setItem(SIGNUP_INTENT_KEY, normalized);
+  return true;
+};
+
 export const clearVerifiedSignupIntent = () => {
   localStorage.removeItem(SIGNUP_INTENT_KEY);
 };
