@@ -8,7 +8,7 @@ const onboardingGate = readFileSync(resolve(root, "src/pages/Onboarding.tsx"), "
 const stagingValidation = readFileSync(resolve(root, ".github/workflows/ga-staging-validation.yml"), "utf8");
 const signupIntent = readFileSync(resolve(root, "src/lib/signup-intent.ts"), "utf8");
 const verifiedSignupMigration = readFileSync(
-  resolve(root, "supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql"),
+  resolve(root, "supabase/migrations/20260926115257_verified_signup_and_commercial_entitlements.sql"),
   "utf8",
 );
 const controlPlaneMigration = readFileSync(
