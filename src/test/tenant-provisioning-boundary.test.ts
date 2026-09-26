@@ -55,6 +55,7 @@ describe("tenant provisioning boundary", () => {
 
     // Browser storage preserves only the opaque capability. Tenant authority is
     // established by server-side Auth timestamps and the private intent ledger.
+    expect(signupIntent).toContain('functions.invoke<{ token?: string }>("begin-signup-intent"');
     expect(signupIntent).toContain('rpc("provision_verified_signup"');
     expect(verifiedSignupMigration).toContain("v_user.email_confirmed_at IS NULL");
     expect(verifiedSignupMigration).toContain("v_user.created_at < v_intent.created_at");
