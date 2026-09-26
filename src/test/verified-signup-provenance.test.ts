@@ -30,7 +30,7 @@ describe("verified fresh-signup provenance", () => {
   it("keeps the intent ledger private and short lived", () => {
     expect(migration).toContain("CREATE SCHEMA IF NOT EXISTS tenant_control");
     expect(migration).toContain("REVOKE ALL ON SCHEMA tenant_control FROM PUBLIC");
-    expect(migration).toContain("interval '30 minutes'");
+    expect(migration).toContain("interval '24 hours'");
     expect(migration).toContain("ALTER TABLE tenant_control.signup_intents ENABLE ROW LEVEL SECURITY");
     expect(migration).toContain("REVOKE ALL ON tenant_control.signup_intents FROM PUBLIC, anon, authenticated");
   });
