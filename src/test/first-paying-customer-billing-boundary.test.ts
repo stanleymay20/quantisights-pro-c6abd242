@@ -16,6 +16,7 @@ const pricing = read("src/pages/Pricing.tsx");
 const returnHook = read("src/hooks/useCheckoutConfirmation.ts");
 const dashboard = read("src/pages/Dashboard.tsx");
 const onboarding = read("src/pages/Onboarding.tsx");
+const idempotency = read("supabase/migrations/20260926122015_stripe_event_lease_idempotency.sql");
 
 describe("first paying customer billing boundary", () => {
   it("keeps all self-service Stripe prices server-owned", () => {
@@ -73,6 +74,25 @@ describe("first paying customer billing boundary", () => {
     expect(webhook).toContain("Unsupported Stripe product");
     expect(webhook).not.toContain("findAuthUserByEmail");
     expect(webhook).not.toContain('?? "starter"');
+  });
+
+  it("uses lease-token Stripe event claims so stale workers cannot clobber retries", () => {
+    expect(idempotency).toContain("ADD COLUMN IF NOT EXISTS claim_token uuid");
+    expect(idempotency).toContain("status IN ('processing', 'processed', 'failed')");
+    expect(idempotency).toContain("clock_timestamp() - interval '5 minutes'");
+    expect(idempotency).toContain("stripe_event_claim_not_owned");
+    expect(idempotency).toContain("CREATE OR REPLACE FUNCTION billing_control.claim_stripe_event");
+    expect(idempotency).toContain("SECURITY DEFINER");
+    expect(idempotency).toContain("CREATE OR REPLACE FUNCTION public.claim_stripe_event");
+    expect(idempotency).toContain("SECURITY INVOKER");
+    expect(idempotency).toContain("GRANT EXECUTE ON FUNCTION public.claim_stripe_event(text, text) TO service_role");
+    expect(idempotency).toContain("REVOKE ALL ON FUNCTION public.claim_stripe_event(text, text) FROM PUBLIC, anon, authenticated");
+
+    expect(webhook).toContain('supabase.rpc("claim_stripe_event"');
+    expect(webhook).toContain("claim_token");
+    expect(webhook).toContain("p_claim_token: claimedEvent.claimToken");
+    expect(webhook).toContain('supabase.rpc("complete_stripe_event"');
+    expect(webhook).toContain('supabase.rpc("fail_stripe_event"');
   });
 
   it("provides authenticated checkout-session recovery when webhook delivery lags", () => {
