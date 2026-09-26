@@ -87,6 +87,13 @@ describe("verified fresh-signup provenance", () => {
     expect(signupIntent).toContain('functions.invoke<{ token?: string }>("begin-signup-intent"');
     expect(signupIntentEdge).toContain('rpc("issue_signup_intent_internal")');
     expect(signupIntentEdge).toContain('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")');
+    expect(signupIntentEdge).toContain('rpc("increment_rate_limit"');
+    expect(signupIntentEdge).toContain("RATE_LIMIT_MAX_ATTEMPTS = 10");
+    expect(signupIntentEdge).toContain("RATE_LIMIT_WINDOW_SECONDS = 600");
+    expect(signupIntentEdge).toContain('crypto.subtle.digest("SHA-256"');
+    expect(signupIntentEdge).toContain("signup-intent:ip:");
+    expect(signupIntentEdge).toContain('status,');
+    expect(signupIntentEdge).toContain('"Retry-After"');
     expect(supabaseConfig).toContain("[functions.begin-signup-intent]");
     expect(supabaseConfig).toContain("verify_jwt = false");
     expect(signupIntent).toContain('rpc("provision_verified_signup"');
