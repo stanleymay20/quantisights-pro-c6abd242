@@ -23,7 +23,7 @@ describe("verified fresh-signup provenance", () => {
 
   it("issues a server intent before password and Google account creation", () => {
     const intentPos = register.indexOf("await beginVerifiedSignupIntent();");
-    const passwordSignupPos = register.indexOf("await signUp(email, password, fullName);");
+    const passwordSignupPos = register.indexOf("await signUp(email, password, fullName, signupIntent);");
     expect(intentPos).toBeGreaterThan(-1);
     expect(passwordSignupPos).toBeGreaterThan(intentPos);
     expect(register).toContain("clearVerifiedSignupIntent();");
