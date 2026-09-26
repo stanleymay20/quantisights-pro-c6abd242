@@ -53,6 +53,19 @@ describe("verified fresh-signup provenance", () => {
     expect(migration).toContain("consumed_by = v_uid");
   });
 
+  it("supports zero-downtime adoption only for the exact fresh legacy tenant shape", () => {
+    expect(migration).toContain("adopted_legacy");
+    expect(migration).toContain("o.created_by = v_uid");
+    expect(migration).toContain("o.created_at >= v_intent.created_at");
+    expect(migration).toContain("p.created_at >= v_intent.created_at");
+    expect(migration).toContain("w.created_at >= v_intent.created_at");
+    expect(migration).toContain("(SELECT count(*) FROM public.organization_members omx WHERE omx.user_id = v_uid) = 1");
+    expect(migration).toContain("(SELECT count(*) FROM public.workspace_members wmx WHERE wmx.user_id = v_uid) = 1");
+    expect(migration).toContain("existing_tenant_relationship");
+    expect(onboarding).toContain("if (!provenance.verified)");
+    expect(onboarding).toContain("provisionVerifiedSignup(intentToken)");
+  });
+
   it("onboarding provisions only from the opaque intent and verifies private provenance", () => {
     expect(signupIntent).toContain('rpc("begin_signup_intent")');
     expect(signupIntent).toContain('rpc("provision_verified_signup"');
