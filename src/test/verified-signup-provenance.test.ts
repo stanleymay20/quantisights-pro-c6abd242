@@ -13,6 +13,8 @@ const signupIntent = read("src/lib/signup-intent.ts");
 const signupIntentEdge = read("supabase/functions/begin-signup-intent/index.ts");
 const supabaseConfig = read("supabase/config.toml");
 const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
+const verifiedSignupBase = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
+const verifiedSignupManagedReplay = read("supabase/migrations/20260926115257_verified_signup_and_commercial_entitlements.sql");
 const privilegeHardening = read("supabase/migrations/20260926113712_privatize_verified_signup_privileged_logic.sql");
 const privilegeReplay = read("supabase/migrations/20260926115734_restore_verified_signup_privilege_boundary_after_managed_replay.sql");
 
@@ -70,6 +72,10 @@ describe("verified fresh-signup provenance", () => {
     expect(migration).toContain("INSERT INTO public.workspaces");
     expect(migration).toContain("INSERT INTO public.workspace_members");
     expect(migration).toContain("consumed_by = v_uid");
+  });
+
+  it("records the managed base replay without changing its SQL contract", () => {
+    expect(verifiedSignupManagedReplay).toBe(verifiedSignupBase);
   });
 
   it("reasserts private privileged signup logic after a managed late replay", () => {
