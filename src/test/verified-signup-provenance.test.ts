@@ -10,6 +10,8 @@ const register = read("src/pages/Register.tsx");
 const callback = read("src/pages/AuthCallback.tsx");
 const onboarding = read("src/pages/Onboarding.tsx");
 const signupIntent = read("src/lib/signup-intent.ts");
+const signupIntentEdge = read("supabase/functions/begin-signup-intent/index.ts");
+const supabaseConfig = read("supabase/config.toml");
 const migration = read("supabase/migrations/20260903103000_verified_signup_and_commercial_entitlements.sql");
 
 describe("verified fresh-signup provenance", () => {
@@ -33,6 +35,10 @@ describe("verified fresh-signup provenance", () => {
     expect(migration).toContain("interval '24 hours'");
     expect(migration).toContain("ALTER TABLE tenant_control.signup_intents ENABLE ROW LEVEL SECURITY");
     expect(migration).toContain("REVOKE ALL ON tenant_control.signup_intents FROM PUBLIC, anon, authenticated");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.issue_signup_intent_internal()");
+    expect(migration).toContain("REVOKE ALL ON FUNCTION public.issue_signup_intent_internal() FROM PUBLIC, anon, authenticated");
+    expect(migration).toContain("GRANT EXECUTE ON FUNCTION public.issue_signup_intent_internal() TO service_role");
+    expect(migration).not.toContain("GRANT EXECUTE ON FUNCTION public.begin_signup_intent() TO anon");
   });
 
   it("binds tenant creation to a freshly created confirmed Auth identity", () => {
@@ -67,7 +73,11 @@ describe("verified fresh-signup provenance", () => {
   });
 
   it("onboarding provisions only from the opaque intent and verifies private provenance", () => {
-    expect(signupIntent).toContain('rpc("begin_signup_intent")');
+    expect(signupIntent).toContain('functions.invoke<{ token?: string }>("begin-signup-intent"');
+    expect(signupIntentEdge).toContain('rpc("issue_signup_intent_internal")');
+    expect(signupIntentEdge).toContain('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")');
+    expect(supabaseConfig).toContain("[functions.begin-signup-intent]");
+    expect(supabaseConfig).toContain("verify_jwt = false");
     expect(signupIntent).toContain('rpc("provision_verified_signup"');
     expect(signupIntent).toContain('rpc("has_verified_signup_provenance"');
     expect(onboarding).toContain("readVerifiedSignupIntent()");
