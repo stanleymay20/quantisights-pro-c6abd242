@@ -31,7 +31,7 @@ RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public, tenant_control
-AS $
+AS $issue$
 DECLARE
   v_token uuid;
 BEGIN
@@ -43,7 +43,7 @@ BEGIN
 
   RETURN v_token;
 END;
-$;
+$issue$;
 
 REVOKE ALL ON FUNCTION public.issue_signup_intent_internal() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.issue_signup_intent_internal() TO service_role;
