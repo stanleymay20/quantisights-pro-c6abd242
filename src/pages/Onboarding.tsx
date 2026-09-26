@@ -113,13 +113,47 @@ const Onboarding = () => {
 
       // An incomplete organization is not sufficient evidence by itself.
       // The private consumed signup intent is the only first-run provenance.
-      const provenance = await hasVerifiedSignupProvenance(currentOrgId);
+      let provenance = await hasVerifiedSignupProvenance(currentOrgId);
       if (cancelled) return;
 
       if (provenance.error) {
         setStatus("blocked");
         setDetail(provenance.error.message || "Quantivis could not verify signup provenance.");
         return;
+      }
+
+      // During the production cutover only, the legacy auth trigger may have
+      // already created the exact fresh tenant before this page loads. The
+      // provisioning RPC can safely adopt that structure because it still
+      // requires the server-issued intent and fresh Auth timestamps.
+      if (!provenance.verified) {
+        const intentToken = readVerifiedSignupIntent();
+        if (intentToken && !provisioningAttempted.current) {
+          provisioningAttempted.current = true;
+          const { error: adoptionError } = await provisionVerifiedSignup(intentToken);
+          if (cancelled) return;
+
+          if (adoptionError) {
+            const code = adoptionError.code || "";
+            const message = adoptionError.message || "Verified signup adoption failed.";
+            if (code === "42501" || code === "22023") clearVerifiedSignupIntent();
+            setStatus(code === "42501" || code === "22023" ? "restoration" : "blocked");
+            setDetail(
+              message.includes("existing_identity_requires_restoration")
+                ? "This identity already existed before the current signup attempt, so Quantivis will not create a replacement workspace."
+                : message,
+            );
+            return;
+          }
+
+          provenance = await hasVerifiedSignupProvenance(currentOrgId);
+          if (cancelled) return;
+          if (provenance.error) {
+            setStatus("blocked");
+            setDetail(provenance.error.message || "Quantivis could not verify adopted signup provenance.");
+            return;
+          }
+        }
       }
 
       if (provenance.verified) {
