@@ -26,6 +26,11 @@ function isAllowedOrigin(origin: string): boolean {
   return supabaseUrl === STAGING_SUPABASE_URL && STAGING_ONLY_ORIGINS.has(origin);
 }
 
+export function getAllowedRequestOrigin(req: Request): string | null {
+  const origin = req.headers.get("Origin") || "";
+  return isAllowedOrigin(origin) ? origin : null;
+}
+
 export function getCorsHeaders(req?: Request): Record<string, string> {
   const origin = req?.headers.get("Origin") || "";
   const allowedOrigin = isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
