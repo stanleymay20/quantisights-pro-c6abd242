@@ -8,11 +8,14 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (
 ) => Promise<{ data: unknown; error: { message?: string; code?: string } | null }>;
 
 export const beginVerifiedSignupIntent = async (): Promise<string> => {
-  const { data, error } = await rpc("begin_signup_intent");
+  const { data, error } = await supabase.functions.invoke<{ token?: string }>("begin-signup-intent", {
+    body: {},
+  });
   if (error) throw new Error(error.message || "Could not start verified signup");
-  if (typeof data !== "string" || !data) throw new Error("Signup verification token was not issued");
-  localStorage.setItem(SIGNUP_INTENT_KEY, data);
-  return data;
+  const token = data?.token?.trim() || "";
+  if (!token) throw new Error("Signup verification token was not issued");
+  localStorage.setItem(SIGNUP_INTENT_KEY, token);
+  return token;
 };
 
 export const readVerifiedSignupIntent = (): string | null =>
