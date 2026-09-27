@@ -1,74 +1,43 @@
-# Wiring the Auth Send Email Hook
+# Auth Send Email hook
 
-The `auth-email-hook` Edge Function is deployed and active on both the staging
-and production Supabase projects, but Supabase Auth has never actually been
-told to call it. Confirmed directly against both projects:
+The Supabase Auth **Send Email** hook routes every signup, magic-link,
+recovery, email-change and reauthentication email through the
+`auth-email-hook` Edge Function. That function renders the branded templates in
+`supabase/functions/_shared/email-templates/`, queues the mail in
+`pgmq` `auth_emails`, and logs it in `public.email_send_log`.
 
-- `public.email_send_log` has **0 rows, ever**, on staging and on production.
-- `pgmq.metrics('auth_emails')` on staging shows `total_messages: 0`.
-- GoTrue's own logs during a failing `Client Acceptance` run show it sending
-  magic-link and recovery mail itself, directly, from
-  `noreply@mail.app.supabase.io` — there is no webhook call anywhere in the
-  log for that window.
+## The deploy workflows own the hook. Do not configure it in the dashboard.
 
-Until this is wired up, every signup/magic-link/recovery/email-change email is
-Supabase's generic unbranded default, not the app's `SignupEmail` /
-`MagicLinkEmail` / `RecoveryEmail` / `EmailChangeEmail` /
-`ReauthenticationEmail` templates in `supabase/functions/_shared/email-templates/`
-— and it's why `Client Acceptance` fails closed every run on AUTH-004
-(PKCE), AUTH-011 (password-reset request), and AUTH-013 (recovery round-trip):
-the evidence RPC polls a queue the hook would populate, and nothing has ever
-populated it.
+Both `Deploy Supabase Staging` and `Deploy Supabase Production` configure the
+hook on every run. The "Configure independent … Auth email transport" step:
 
-## Projects
+1. If `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are set in the GitHub
+   Environment, preflights that pair and writes it to the project's Edge
+   Function secrets. If neither is set, it keeps the provider secrets already
+   stored in Supabase. Setting only one of the two fails the run.
+2. Proves that the active provider credentials and the worker's service-role
+   authorization work (`scripts/preflight-supabase-auth-email.mjs runtime`).
+3. Disables the existing hook, generates a fresh `v1,whsec_…` signing secret,
+   stores it as `SEND_EMAIL_HOOK_SECRET`, re-enables the hook against
+   `https://<project-ref>.supabase.co/functions/v1/auth-email-hook`, and
+   verifies the result (`scripts/configure-supabase-auth-email.mjs`).
 
-| Environment | Project ref | Notes |
+The signing secret is rotated on every deploy, so any hook secret entered by
+hand in the dashboard is replaced the next time the workflow runs. To change
+the email transport, change the GitHub Environment secrets and re-run the
+workflow.
+
+| Environment | Project ref | Workflow |
 | --- | --- | --- |
-| Staging | `cmnihsbdbpubznlkmjbc` | `quantisights-pro-staging`. Do this one first. |
-| Production | `izgfrekdamlgigehxoqs` | `quantivis-production`, created 2026-08-16. |
+| Staging | `cmnihsbdbpubznlkmjbc` | `.github/workflows/deploy-supabase-staging.yml` |
+| Production | `izgfrekdamlgigehxoqs` | `.github/workflows/deploy-edge-functions.yml` |
 
-`docs/DEPLOYMENT_SECRETS.md` documents the production ref as
-`itpwpnwzzitkelffttyx`. That ref does not resolve for this account (`ProtocolError:
-You do not have permission to perform this action` — not a "not found," so it
-may belong to a different org or be a stale/retired project). **Verify which
-ref is the real production project before touching production Auth
-settings** — confirm in Supabase Dashboard -> your organization -> project
-list, and reconcile whichever of the two refs is wrong before proceeding.
-
-## Steps (per project — do staging, verify, then production)
-
-1. **Confirm the function's webhook secret isn't already set.**
-   Dashboard -> select the project -> **Edge Functions** -> `auth-email-hook`
-   -> **Secrets**. Note whether `SEND_EMAIL_HOOK_SECRET` already exists. If it
-   does and you don't know its value, you'll replace it in step 3 — enabling
-   the hook below generates a new one, and the function will 401 every real
-   auth email until the two match, so do not skip straight to production.
-
-2. **Enable the Send Email hook.**
-   Dashboard -> **Authentication** -> **Hooks** (may show as "Hooks (Beta)")
-   -> find **Send Email** -> **Enable**.
-   - Hook type: **HTTPS**.
-   - Endpoint URL:
-     `https://<project-ref>.supabase.co/functions/v1/auth-email-hook`
-     (use the project ref from the table above for whichever environment
-     you're configuring).
-   - Supabase generates a signing secret in the form `v1,whsec_...` and shows
-     it once. Copy it now.
-
-3. **Set the matching function secret.**
-   Same **Edge Functions** -> `auth-email-hook` -> **Secrets** panel (or via
-   CLI: `supabase secrets set SEND_EMAIL_HOOK_SECRET='v1,whsec_...' --project-ref <project-ref>`).
-   Paste the exact value from step 2, including the `v1,whsec_` prefix — the
-   function strips that prefix itself (`configuredSecret.replace(/^v1,whsec_/, "")`)
-   before verifying, so pass the value Supabase gave you unmodified.
-
-4. **Save and confirm the hook shows Enabled** against the `auth-email-hook`
-   endpoint in the Authentication -> Hooks screen.
+`itpwpnwzzitkelffttyx` is the retired former production project.
 
 ## Verify
 
-Trigger one real auth email against the environment you just configured (a
-password-reset request from the login page is the simplest), then check:
+After a deploy, trigger one real auth email (a password-reset request from the
+login page is simplest), then check:
 
 ```sql
 select id, template_name, recipient_email, status, created_at
@@ -77,26 +46,11 @@ order by created_at desc
 limit 5;
 ```
 
-A new row with `status = 'sent'` (or `'pending'` briefly, then `'sent'`)
-confirms the hook fired. On staging, also confirm the queue received it:
+A new row with `status = 'sent'` confirms the hook fired. `select
+pgmq.metrics('auth_emails');` should show `total_messages` above 0.
 
-```sql
-select pgmq.metrics('auth_emails');
-```
-
-`total_messages` should now be greater than 0.
-
-If `email_send_log` stays empty after a real trigger, check the
-`auth-email-hook` function's **Logs** tab in the dashboard for a 401
-(secret mismatch — redo step 3) or 500 (payload/template error) before
-re-enabling the hook.
-
-## After staging is confirmed working
-
-Re-run `Client Acceptance` (`.github/workflows/client-acceptance.yml`,
-`workflow_dispatch`) against the current `main` SHA. AUTH-004, AUTH-011, and
-AUTH-013 should now exercise the real branded pipeline instead of timing out.
-Only repeat these steps against production once staging is verified — a bad
-secret on production fails closed (no auth email sent at all, not a fallback
-to Supabase's default mailer), so don't flip production Auth settings until
-you've watched a real staging round-trip succeed.
+If `email_send_log` stays empty, check the `auth-email-hook` function logs for
+a 401 (hook secret mismatch: re-run the deploy workflow) or a 500
+(payload/template error). An empty log with GoTrue sending from
+`noreply@mail.app.supabase.io` means the hook is not enabled. Production has no
+`email_send_log` rows until its first gated deploy runs this step.

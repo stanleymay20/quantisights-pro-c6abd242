@@ -225,6 +225,12 @@ jobs:
       - name: Verify production migration state
         run: supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
 
+      - name: Verify production database privilege boundary
+        run: node scripts/verify-supabase-privilege-boundary.mjs
+
+      - name: Enforce production Auth hardening
+        run: node scripts/configure-supabase-auth-hardening.mjs configure
+
       - name: Deploy production Edge Functions
         run: bash scripts/deploy-supabase-functions-resilient.sh
 
