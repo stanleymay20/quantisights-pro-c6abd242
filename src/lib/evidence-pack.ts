@@ -16,6 +16,7 @@ import {
   type EvidencePackAuditEntry,
   type EvidencePackDecisionInput,
   type EvidencePackGovernanceItem,
+  type EvidencePackOutcomeInput,
   type EvidencePackPdfBlock,
   type EvidencePackPdfReadyModel,
   type EvidencePackSection,
@@ -566,6 +567,141 @@ function buildOutcomePrediction(decision: EvidencePackDecisionInput): EvidencePa
   });
 }
 
+/** Baseline length used by supabase/functions/evaluate-outcomes. */
+export const OUTCOME_BASELINE_DAYS = 30;
+
+const EVALUATED_OUTCOME_LABELS: Record<string, string> = {
+  success: "Target met",
+  partial_success: "Target partially met",
+  no_effect: "No material change",
+  negative_outcome: "Moved against the expected direction",
+};
+
+const BEFORE_AFTER_CAVEAT =
+  "Before/after comparison, not a controlled experiment: other events in the same period can also explain the change.";
+
+function formatMetricValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function formatSignedPercent(value: number): string {
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function observedChangePercent(before: number | null, after: number | null): number | null {
+  if (before == null || after == null || before === 0) return null;
+  return ((after - before) / Math.abs(before)) * 100;
+}
+
+function describeExpectation(outcome: EvidencePackOutcomeInput): string {
+  const verb =
+    outcome.expected_direction === "increase" ? "rise" : outcome.expected_direction === "decrease" ? "fall" : "change";
+  const magnitude = outcome.expected_change != null ? ` by ${Math.abs(outcome.expected_change)}%` : "";
+  return `${verb}${magnitude}`;
+}
+
+function isEvaluated(outcome: EvidencePackOutcomeInput): boolean {
+  return outcome.outcome_status in EVALUATED_OUTCOME_LABELS
+    && outcome.observed_value_before != null
+    && outcome.observed_value_after != null;
+}
+
+/** Prefer the most recently evaluated outcome, else the most recently created one. */
+function selectOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePackOutcomeInput {
+  const byRecency = (a: string | null, b: string | null) => (b ?? "").localeCompare(a ?? "");
+  const evaluated = outcomes.filter(isEvaluated).sort((a, b) => byRecency(a.evaluation_date, b.evaluation_date));
+  if (evaluated.length > 0) return evaluated[0];
+  return [...outcomes].sort((a, b) => byRecency(a.created_at, b.created_at))[0];
+}
+
+function buildMeasuredOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePackSection {
+  if (outcomes.length === 0) {
+    return section({
+      status: "unavailable",
+      title: "Measured Outcome",
+      summary:
+        "No outcome tracking is configured for this decision, so this pack cannot show whether it worked.",
+      source: "decision_outcomes",
+      generated_from: [],
+    });
+  }
+
+  const outcome = selectOutcome(outcomes);
+  const metric = outcome.expected_metric;
+  const expectation = describeExpectation(outcome);
+  const method =
+    `Average of ${metric} over the ${OUTCOME_BASELINE_DAYS} days before the decision, compared with its average ` +
+    `over the ${outcome.evaluation_window_days}-day evaluation window after it.`;
+  const caveats = [BEFORE_AFTER_CAVEAT];
+  const change = observedChangePercent(outcome.observed_value_before, outcome.observed_value_after);
+  const evaluated = isEvaluated(outcome);
+
+  if (evaluated && outcome.observed_value_before === 0) {
+    caveats.push("The baseline average is zero, so a percentage change cannot be computed.");
+  }
+  if (outcome.calibration_eligible === false && outcome.eligibility_reason) {
+    caveats.push(`Excluded from confidence calibration: ${outcome.eligibility_reason}`);
+  }
+
+  let status: EvidencePackSection["status"];
+  let summary: string;
+  if (evaluated) {
+    const before = formatMetricValue(outcome.observed_value_before as number);
+    const after = formatMetricValue(outcome.observed_value_after as number);
+    const changeText = change == null ? "percentage change not computable" : formatSignedPercent(change);
+    status = "complete";
+    summary =
+      `${EVALUATED_OUTCOME_LABELS[outcome.outcome_status]}. ${metric} averaged ${before} before the decision and ` +
+      `${after} after it (${changeText}); it was expected to ${expectation}.`;
+  } else if (outcome.outcome_status === "not_evaluable") {
+    status = "partial";
+    summary =
+      `The evaluation window has closed but ${metric} could not be measured` +
+      `${outcome.notes ? `: ${outcome.notes}` : "."}`;
+  } else {
+    status = "partial";
+    summary =
+      `Measurement pending. ${metric} is expected to ${expectation} and will be evaluated ` +
+      `${outcome.evaluation_window_days} days after the decision.`;
+  }
+
+  return section({
+    status,
+    title: "Measured Outcome",
+    summary,
+    source: "decision_outcomes (written by supabase/functions/evaluate-outcomes)",
+    generated_from: [
+      "expected_metric",
+      "expected_direction",
+      "expected_change",
+      "evaluation_window_days",
+      "outcome_status",
+      "observed_value_before",
+      "observed_value_after",
+      "evaluation_date",
+    ],
+    data: {
+      outcome_id: outcome.id,
+      expected_metric: metric,
+      expected_direction: outcome.expected_direction,
+      expected_change_pct: outcome.expected_change,
+      evaluation_window_days: outcome.evaluation_window_days,
+      baseline_days: OUTCOME_BASELINE_DAYS,
+      outcome_status: outcome.outcome_status,
+      observed_value_before: outcome.observed_value_before,
+      observed_value_after: outcome.observed_value_after,
+      observed_change_pct: evaluated ? change : null,
+      accuracy_score: outcome.accuracy_score,
+      evaluation_date: outcome.evaluation_date,
+      evidence_regime: outcome.evidence_regime,
+      calibration_eligible: outcome.calibration_eligible,
+      tracked_outcome_count: outcomes.length,
+      method,
+      caveats,
+    },
+  });
+}
+
 function buildDigitalSignaturePlaceholder(): EvidencePackSection {
   return section({
     status: "not_applicable",
@@ -620,6 +756,7 @@ export async function buildEvidencePack(
 ): Promise<EvidencePack> {
   const now = options.now ?? (() => new Date().toISOString());
   const auditEntries = options.auditEntries ?? [];
+  const outcomes = options.outcomes ?? [];
   const isSimulation = options.isSimulation ?? decision.decision_origin === "demo";
 
   const runtime_metadata = buildRuntimeMetadata(decision);
@@ -645,6 +782,7 @@ export async function buildEvidencePack(
     gateway_metadata,
     decision_timeline: buildDecisionTimeline(timelineSteps),
     outcome_prediction: buildOutcomePrediction(decision),
+    measured_outcome: buildMeasuredOutcome(outcomes),
   };
 
   const hashInput = {
@@ -695,8 +833,11 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+// Measured Outcome follows the summary: whether the decision worked is the
+// first question a board or funder reading the export asks.
 const HTML_SECTION_ORDER: Array<keyof EvidencePackSections> = [
   "decision_summary",
+  "measured_outcome",
   "business_context",
   "decision_recommendation",
   "confidence",
@@ -718,6 +859,23 @@ const HTML_SECTION_ORDER: Array<keyof EvidencePackSections> = [
   "digital_signature",
 ];
 
+function outcomeMethodAndCaveats(s: EvidencePackSection): { method: string | null; caveats: string[] } {
+  return {
+    method: typeof s.data.method === "string" ? s.data.method : null,
+    caveats: Array.isArray(s.data.caveats) ? (s.data.caveats as string[]) : [],
+  };
+}
+
+function outcomeHtml(s: EvidencePackSection): string[] {
+  const { method, caveats } = outcomeMethodAndCaveats(s);
+  const parts: string[] = [];
+  if (method) parts.push(`<p class="ep-method">Method: ${escapeHtml(method)}</p>`);
+  if (caveats.length > 0) {
+    parts.push(`<ul class="ep-caveats">${caveats.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`);
+  }
+  return parts;
+}
+
 /** Deterministic, self-contained printable HTML export (no external assets). */
 export function evidencePackToHtml(pack: EvidencePack): string {
   const sectionsHtml = HTML_SECTION_ORDER.map((key) => {
@@ -727,6 +885,7 @@ export function evidencePackToHtml(pack: EvidencePack): string {
       `<h2>${escapeHtml(s.title)}</h2>`,
       `<p class="ep-status">Status: ${escapeHtml(s.status)}</p>`,
       `<p class="ep-summary">${escapeHtml(s.summary)}</p>`,
+      ...(key === "measured_outcome" ? outcomeHtml(s) : []),
       `<p class="ep-source">Source: ${escapeHtml(s.source)}</p>`,
       `</section>`,
     ].join("");
@@ -743,7 +902,7 @@ export function evidencePackToHtml(pack: EvidencePack): string {
   ].join("");
 }
 
-/** Structured, PDF-ready data model. No PDF is generated in EP-1. */
+/** Structured, PDF-ready data model, rendered to a PDF by evidence-pack-pdf.ts. */
 export function evidencePackToPdfModel(pack: EvidencePack): EvidencePackPdfReadyModel {
   const blocks: EvidencePackPdfBlock[] = [
     { type: "heading", level: 1, text: "Enterprise Decision Evidence Pack" },
@@ -766,6 +925,11 @@ export function evidencePackToPdfModel(pack: EvidencePack): EvidencePackPdfReady
     if (key === "decision_timeline") {
       const steps = (s.data.steps as unknown as EvidencePackTimelineStep[] | undefined) ?? [];
       blocks.push({ type: "timeline", steps });
+    }
+    if (key === "measured_outcome") {
+      const { method, caveats } = outcomeMethodAndCaveats(s);
+      if (method) blocks.push({ type: "paragraph", text: `Method: ${method}` });
+      if (caveats.length > 0) blocks.push({ type: "list", items: caveats });
     }
     if (key === "governance_checklist") {
       const items = (s.data.items as unknown as EvidencePackGovernanceItem[] | undefined) ?? [];

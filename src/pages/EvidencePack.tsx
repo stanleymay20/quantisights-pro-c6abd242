@@ -8,7 +8,11 @@ import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Button } from "@/components/ui/button";
 import EvidencePackPreview from "@/components/decisions/EvidencePackPreview";
 import { buildEvidencePack } from "@/lib/evidence-pack";
-import type { EvidencePack as EvidencePackModel, EvidencePackAuditEntry } from "@/lib/evidence-pack-types";
+import type {
+  EvidencePack as EvidencePackModel,
+  EvidencePackAuditEntry,
+  EvidencePackOutcomeInput,
+} from "@/lib/evidence-pack-types";
 import {
   DEMO_DECISION,
   isDemoDecisionId,
@@ -32,6 +36,7 @@ const EvidencePackPage = () => {
   const isDemo = isDemoDecisionId(decisionId);
   const [decision, setDecision] = useState<ReviewableDecision | null>(isDemo ? DEMO_DECISION : null);
   const [auditEntries, setAuditEntries] = useState<EvidencePackAuditEntry[]>([]);
+  const [outcomes, setOutcomes] = useState<EvidencePackOutcomeInput[]>([]);
   const [loading, setLoading] = useState(!isDemo);
   const [notFound, setNotFound] = useState(false);
   const [pack, setPack] = useState<EvidencePackModel | null>(null);
@@ -77,6 +82,18 @@ const EvidencePackPage = () => {
           payload: (row.payload as Record<string, unknown> | null) ?? null,
         })),
       );
+
+      // Measured outcomes written by the evaluate-outcomes Edge Function. A
+      // failed or empty read yields an "unavailable" Measured Outcome section.
+      const { data: outcomeRows } = await supabase
+        .from("decision_outcomes")
+        .select(
+          "id, expected_metric, expected_direction, expected_change, evaluation_window_days, outcome_status, observed_value_before, observed_value_after, accuracy_score, evaluation_date, evidence_regime, calibration_eligible, eligibility_reason, notes, created_at",
+        )
+        .eq("organization_id", currentOrgId)
+        .eq("decision_id", decisionId);
+
+      setOutcomes((outcomeRows ?? []) as EvidencePackOutcomeInput[]);
       setLoading(false);
     };
     load();
@@ -89,7 +106,7 @@ const EvidencePackPage = () => {
     }
     let cancelled = false;
     setPackBuilding(true);
-    buildEvidencePack(decision, { auditEntries, isSimulation: isDemo || undefined })
+    buildEvidencePack(decision, { auditEntries, outcomes, isSimulation: isDemo || undefined })
       .then((built) => {
         if (!cancelled) setPack(built);
       })
@@ -99,7 +116,7 @@ const EvidencePackPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [decision, auditEntries, isDemo]);
+  }, [decision, auditEntries, outcomes, isDemo]);
 
   return (
     <div className="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">

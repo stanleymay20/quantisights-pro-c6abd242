@@ -22,11 +22,12 @@ buildEvidencePack()            ← src/lib/evidence-pack.ts (pure, deterministic
         │
         ▼
 EvidencePack                    ← src/lib/evidence-pack-types.ts
-  20 sections + decision timeline + evidence_pack_hash
+  21 sections + decision timeline + evidence_pack_hash
         │
         ├── evidencePackToJSON()      → deterministic JSON export
         ├── evidencePackToHtml()      → deterministic printable HTML export
-        └── evidencePackToPdfModel()  → structured PDF-ready block model (no PDF bytes)
+        └── evidencePackToPdfModel()  → structured PDF-ready block model
+                └── renderEvidencePackPdf() → A4 PDF (src/lib/evidence-pack-pdf.ts, jsPDF loaded on demand)
         │
         ▼
 EvidencePackPreview             ← src/components/decisions/EvidencePackPreview.tsx
@@ -39,7 +40,7 @@ EP-1 deliberately duplicates a small canonical-hash utility (`canonicalHash` in 
 
 ## Pack structure
 
-Every Evidence Pack has exactly 20 sections (`EVIDENCE_PACK_SECTION_KEYS` in `evidence-pack-types.ts`):
+Every Evidence Pack has exactly 21 sections (schema `quantivis.evidence-pack.v2`) (`EVIDENCE_PACK_SECTION_KEYS` in `evidence-pack-types.ts`):
 
 | # | Section | Typical source |
 |---|---|---|
@@ -61,8 +62,9 @@ Every Evidence Pack has exactly 20 sections (`EVIDENCE_PACK_SECTION_KEYS` in `ev
 | 16 | Gateway Metadata | always `not_applicable` unless a gateway decision reference exists |
 | 17 | Decision Timeline | derived lifecycle stage list (see below) |
 | 18 | Outcome Prediction | `predicted_net_impact`, `predicted_roi_probability`, `outcome_delta`, `outcome_measured_at` |
-| 19 | Hashes | `evidence_pack_hash` over sections 1–18 |
-| 20 | Digital Signature | placeholder — signing is not implemented in EP-1 |
+| 19 | Measured Outcome (EP-2) | `decision_outcomes` rows written by `supabase/functions/evaluate-outcomes` |
+| 20 | Hashes | `evidence_pack_hash` over sections 1–19 |
+| 21 | Digital Signature | placeholder — signing is not implemented |
 
 Every section is a uniform `EvidencePackSection`:
 
@@ -111,25 +113,42 @@ Each step is independently marked `recorded`, `pending`, or `not_recorded` based
 
 The `Digital Signature` section is a placeholder object (`{ algorithm: null, signature: null, signed_by: null, signed_at: null }`) documenting where a future signature over `evidence_pack_hash` will attach. No cryptography is implemented in EP-1.
 
+## Measured Outcome (EP-2)
+
+The Measured Outcome section answers "did this decision work?" from the
+`decision_outcomes` row(s) the page loads for the decision. It reports only
+what `evaluate-outcomes` stored:
+
+- **unavailable** when no outcome is tracked for the decision;
+- **partial** while the evaluation window is still open, or when the window
+  closed but the metric could not be measured (`not_evaluable`, with the
+  stored reason);
+- **complete** once the metric is evaluated, stating the result (target met,
+  partially met, no material change, or moved against the expected direction),
+  the before/after averages, the percentage change and the expectation.
+
+It always states the method (the 30-day pre-decision average against the
+average over the evaluation window) and the caveat that this is a before/after
+comparison, not a controlled experiment. A zero baseline yields no percentage
+change and an explicit caveat. When several outcomes are tracked, the most
+recently evaluated one is shown.
+
 ## Export model
 
-Three deterministic export forms are supported; no PDF bytes are produced:
+Four export forms are supported:
 
 - **JSON** — `evidencePackToJSON(pack)`: `JSON.stringify(pack, null, 2)`. Round-trips exactly.
 - **Printable HTML** — `evidencePackToHtml(pack)`: a self-contained `<!doctype html>` string (no external assets) listing every section's status, summary, and source, for printing or emailing.
-- **PDF-ready data model** — `evidencePackToPdfModel(pack)`: an ordered array of typed blocks (`heading`, `status_line`, `paragraph`, `key_values`, `list`, `timeline`) that a future PDF renderer can consume directly. No PDF generation happens in EP-1.
+- **PDF-ready data model** — `evidencePackToPdfModel(pack)`: an ordered array of typed blocks (`heading`, `status_line`, `paragraph`, `key_values`, `list`, `timeline`).
+- **PDF** — `renderEvidencePackPdf(model)` in `src/lib/evidence-pack-pdf.ts` renders the block model to A4 with page breaks and a footer carrying `evidence_pack_hash` and page numbers. Characters outside the built-in font's Latin-1 range are mapped to readable text (`✓` → `[pass]`, `€` → `EUR`). The PDF's content is deterministic; its bytes are not, because jsPDF embeds a creation timestamp, so the hash — not the file — is what a reader verifies.
 
 ## Preview UI
 
-`EvidencePackPreview` renders a curated read of the full pack: Executive Summary (decision, impact, confidence, risk, evidence quality at a glance), Evidence Quality, Timeline, Business Impact, Decision, Approval, Audit, and Hashes — each section carries a status badge (`complete` / `partial` / `unavailable` / `not_applicable`) so a reader immediately sees what is and isn't backed by real data. "Download JSON" and "Download Printable HTML" trigger client-side blob downloads; no PDF/signing controls exist yet.
+`EvidencePackPreview` renders a curated read of the full pack: Executive Summary (decision, impact, confidence, risk, evidence quality at a glance), Evidence Quality, Measured Outcome (with method and caveats), Timeline, Business Impact, Decision, Approval, Audit, and Hashes — each section carries a status badge (`complete` / `partial` / `unavailable` / `not_applicable`) so a reader immediately sees what is and isn't backed by real data. "Download JSON", "Download Printable HTML" and "Download PDF" trigger client-side downloads; no signing controls exist yet.
 
 ## Page
 
-`/evidence-pack/:decisionId` loads the decision (and, best-effort, its `audit_log` entries — a denied or empty read from RLS simply yields an `unavailable` Audit Trail section, it never blocks the rest of the pack) and renders the preview. If the decision cannot be found, the page shows **"Evidence Pack unavailable"** with an explanation — it never fabricates a pack from missing data. The demo decision introduced in UX-2 (`DEMO_DECISION`, `decision_origin: "demo"`) is supported end-to-end and is always labelled as a simulation (`pack.is_simulation = true`), both in the pack data and with a banner in the preview.
-
-## Future PDF support
-
-`evidencePackToPdfModel()` already produces the block-structured input a PDF renderer needs. A later phase adds a rendering step (e.g. a headless-browser print of `evidencePackToHtml()`, or a block-to-PDF library) behind an explicit "Generate PDF" action — deliberately out of scope for EP-1.
+`/evidence-pack/:decisionId` loads the decision, its `decision_outcomes` rows (readable by all organization members under RLS) and, best-effort, its `audit_log` entries — a denied or empty read from RLS simply yields an `unavailable` Audit Trail section, it never blocks the rest of the pack) and renders the preview. If the decision cannot be found, the page shows **"Evidence Pack unavailable"** with an explanation — it never fabricates a pack from missing data. The demo decision introduced in UX-2 (`DEMO_DECISION`, `decision_origin: "demo"`) is supported end-to-end and is always labelled as a simulation (`pack.is_simulation = true`), both in the pack data and with a banner in the preview.
 
 ## Future signed export
 

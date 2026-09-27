@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   CalendarClock,
@@ -8,6 +9,7 @@ import {
   FileSearch,
   Gauge,
   Hash,
+  LineChart,
   ShieldCheck,
   TrendingUp,
 } from "lucide-react";
@@ -17,7 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { evidencePackToHtml, evidencePackToJSON } from "@/lib/evidence-pack";
+import { evidencePackToHtml, evidencePackToJSON, evidencePackToPdfModel } from "@/lib/evidence-pack";
+import { renderEvidencePackPdf } from "@/lib/evidence-pack-pdf";
 import type {
   EvidencePack,
   EvidencePackAuditEntry,
@@ -140,7 +143,7 @@ function AuditList({ entries }: { entries: EvidencePackAuditEntry[] }) {
   );
 }
 
-function downloadBlob(content: string, filename: string, mimeType: string) {
+function downloadBlob(content: BlobPart, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -151,14 +154,30 @@ function downloadBlob(content: string, filename: string, mimeType: string) {
 }
 
 /**
- * EP-1 Evidence Pack preview: a curated, human-readable read of the full
- * Evidence Pack data model, plus deterministic JSON / printable HTML export.
+ * Evidence Pack preview: a curated, human-readable read of the full
+ * Evidence Pack data model, plus JSON, printable HTML and PDF export.
  */
 export default function EvidencePackPreview({ pack, className }: EvidencePackPreviewProps) {
   const s = pack.sections;
   const governanceItems = (s.governance_checklist.data.items as unknown as EvidencePackGovernanceItem[]) ?? [];
   const timelineSteps = (s.decision_timeline.data.steps as unknown as EvidencePackTimelineStep[]) ?? [];
   const auditEntries = (s.audit_trail.data.entries as unknown as EvidencePackAuditEntry[]) ?? [];
+  const outcomeMethod = typeof s.measured_outcome.data.method === "string" ? s.measured_outcome.data.method : null;
+  const outcomeCaveats = Array.isArray(s.measured_outcome.data.caveats)
+    ? (s.measured_outcome.data.caveats as string[])
+    : [];
+  const [pdfState, setPdfState] = useState<"idle" | "rendering" | "failed">("idle");
+
+  const downloadPdf = async () => {
+    setPdfState("rendering");
+    try {
+      const bytes = await renderEvidencePackPdf(evidencePackToPdfModel(pack));
+      downloadBlob(bytes, `evidence-pack-${pack.decision_id}.pdf`, "application/pdf");
+      setPdfState("idle");
+    } catch {
+      setPdfState("failed");
+    }
+  };
 
   return (
     <div className={cn("space-y-4", className)} data-testid="evidence-pack-preview">
@@ -219,6 +238,17 @@ export default function EvidencePackPreview({ pack, className }: EvidencePackPre
           </div>
         </CardContent>
       </Card>
+
+      <SectionCard section={s.measured_outcome} icon={LineChart} testId="evidence-pack-measured-outcome">
+        {outcomeMethod && <p className="mt-2 text-xs text-muted-foreground">Method: {outcomeMethod}</p>}
+        {outcomeCaveats.length > 0 && (
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+            {outcomeCaveats.map((caveat) => (
+              <li key={caveat}>{caveat}</li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <SectionCard section={s.evidence_summary} icon={FileSearch} testId="evidence-pack-evidence-quality">
@@ -293,12 +323,28 @@ export default function EvidencePackPreview({ pack, className }: EvidencePackPre
             <Download className="h-3.5 w-3.5" />
             Download Printable HTML
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={downloadPdf}
+            disabled={pdfState === "rendering"}
+            data-testid="export-pdf-button"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {pdfState === "rendering" ? "Preparing PDF…" : "Download PDF"}
+          </Button>
+          {pdfState === "failed" && (
+            <p className="w-full text-xs text-destructive" role="alert">
+              The PDF could not be generated. The JSON and HTML exports contain the same evidence.
+            </p>
+          )}
         </CardContent>
       </Card>
 
       <Separator />
       <p className="text-xs text-muted-foreground">
-        PDF export and cryptographic signing are not yet available — see the Digital Signature section above.
+        Cryptographic signing is not yet available — see the Digital Signature section above.
       </p>
     </div>
   );
