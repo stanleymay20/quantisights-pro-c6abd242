@@ -352,4 +352,27 @@ were not ready for GA:
   Deploy Supabase Production. That run applies both migrations, enables
   leaked-password protection and wires the email hook in production.
 
-Until those migrations reach production, the exposure in finding 1 is live.
+### Production application (2026-09-27, owner-approved)
+
+On the owner's instruction, both migrations were applied directly to
+production (`izgfrekdamlgigehxoqs`), ahead of the gated pipeline. Each
+migration ran in one transaction together with its
+`supabase_migrations.schema_migrations` row, recorded under the repository
+version. `supabase db push` will therefore treat them as already applied.
+
+Post-application checks:
+- `authenticated` can execute 21 public SECURITY DEFINER functions (the
+  allowlist) and `anon` can execute 0. Supabase's
+  `authenticated_security_definer_function_executable` advisor now lists
+  exactly those 21.
+- No RLS policy references a function that `authenticated` cannot execute.
+- Every table is RLS-enabled and reachable.
+- In a rolled-back transaction:
+  - an outsider identity received `42501` from the three guarded RPCs and
+    from `exec_cleanup_old_data` and `provision_aicis_for_org`;
+  - an existing member still read their datasets and metrics through RLS.
+
+Leaked-password protection is still disabled in production. It is an Auth
+setting, not a migration, and it is enabled by the next Deploy Supabase
+Production run (`configure-supabase-auth-hardening.mjs`) or in the dashboard.
+Staging still needs the migrations through Deploy Supabase Staging.
