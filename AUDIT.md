@@ -278,3 +278,101 @@ staging project rather than guessed at:
   `docs/CLOUDFLARE_ENTERPRISE_SECURITY.md` / `docs/HOSTING_SECURITY_HEADERS.md`.
   Confirm which hosting path and which project ref are actually current
   before trusting either doc.
+
+## 2026-09-27 GA re-audit — database privilege boundary
+
+Code gates on `main@63cdd98` are green (1,378 tests, lint, both typechecks,
+evidence 183/183, certify 8/8, build, `npm audit`). The live environments
+were not ready for GA:
+
+### Findings
+
+1. **Critical: production SECURITY DEFINER exposure.** `authenticated` could
+   execute 55 public SECURITY DEFINER functions in production. Earlier
+   hardening only revoked `PUBLIC`/`anon`, while Supabase default privileges
+   grant `authenticated` directly. Any signed-in user could call:
+   - the auth-email queue (`read_email_batch`, `enqueue_email`,
+     `delete_email`, `move_to_dlq`);
+   - cross-tenant maintenance (`exec_cleanup_old_data`,
+     `cleanup_old_copilot_messages`, `update_dataset_staleness`);
+   - billing provisioning (`provision_aicis_for_org`).
+
+   `check_workspace_quota`, `increment_workspace_usage` and
+   `check_decision_evaluability` are called from the client but trusted their
+   tenant arguments.
+2. **Staging did not mirror production.** Staging was provisioned without the
+   implicit Data API grants. As a result:
+   - `authenticated` could SELECT 36 of 216 public tables;
+   - 75 RLS policies called helper functions that `authenticated` could not
+     execute (`permission denied for function`).
+
+   Staging therefore could not detect the production exposure.
+3. **Release chain stalled since 31 Aug.** The staging `SUPABASE_ACCESS_TOKEN`
+   is rejected (`Auth config GET failed: Unauthorized`). Staging also carries
+   `20260926122015_stripe_event_lease_idempotency` from draft PR #52, which
+   `main` lacks. GA Readiness has never passed.
+4. **Production was migrated by hand**, bypassing
+   `.github/workflows/deploy-edge-functions.yml` (Deploy Supabase Production).
+5. **Auth hardening.** Leaked-password protection was off in production, and
+   the Send Email hook had never fired there (`email_send_log` empty).
+
+### Remediation in this pass
+
+- `20260927100000_converge_data_api_table_grants.sql` makes
+  `authenticated`/`service_role` table grants explicit. Every table is
+  RLS-enabled, and `anon` is untouched. It is a no-op in production and brings
+  staging in line with it.
+- `20260927100100_lock_service_only_security_definer_functions.sql`:
+  - revokes `PUBLIC`/`anon`/`authenticated` EXECUTE from every public
+    SECURITY DEFINER function outside a 21-function allowlist
+    (`supabase/security/client-callable-definer-functions.json`);
+  - keeps the RLS policy helpers executable;
+  - makes service-role grants explicit;
+  - adds caller tenant guards to the three client RPCs;
+  - rejects non-positive usage increments from clients.
+- `scripts/verify-supabase-privilege-boundary.mjs` runs after migrations in
+  both deploy workflows. It fails on any anon-executable or non-allowlisted
+  DEFINER function, on any RLS policy calling a function `authenticated`
+  cannot execute, and on any table without RLS or API-role grants.
+- `scripts/configure-supabase-auth-hardening.mjs` enables and verifies
+  leaked-password protection in both deploy workflows. It supersedes the
+  staging-only approach in PR #43.
+- `docs/DEPLOYMENT_SECRETS.md` now names the real production ref and the
+  production workflow. `docs/AUTH_EMAIL_SEND_HOOK_SETUP.md` now documents the
+  workflow-owned hook instead of dashboard steps.
+
+### Still required (owner actions)
+
+- Rotate `SUPABASE_ACCESS_TOKEN` in the `staging` GitHub Environment, and
+  confirm it in `production`.
+- Resolve the staging-only migration: merge PR #52, or remove
+  `20260926122015` from the staging ledger.
+- Let CI → Deploy Supabase Staging → GA Staging Validation → Client
+  Acceptance → GA Readiness pass on one SHA. Then promote that SHA with
+  Deploy Supabase Production. That run applies both migrations, enables
+  leaked-password protection and wires the email hook in production.
+
+### Production application (2026-09-27, owner-approved)
+
+On the owner's instruction, both migrations were applied directly to
+production (`izgfrekdamlgigehxoqs`), ahead of the gated pipeline. Each
+migration ran in one transaction together with its
+`supabase_migrations.schema_migrations` row, recorded under the repository
+version. `supabase db push` will therefore treat them as already applied.
+
+Post-application checks:
+- `authenticated` can execute 21 public SECURITY DEFINER functions (the
+  allowlist) and `anon` can execute 0. Supabase's
+  `authenticated_security_definer_function_executable` advisor now lists
+  exactly those 21.
+- No RLS policy references a function that `authenticated` cannot execute.
+- Every table is RLS-enabled and reachable.
+- In a rolled-back transaction:
+  - an outsider identity received `42501` from the three guarded RPCs and
+    from `exec_cleanup_old_data` and `provision_aicis_for_org`;
+  - an existing member still read their datasets and metrics through RLS.
+
+Leaked-password protection is still disabled in production. It is an Auth
+setting, not a migration, and it is enabled by the next Deploy Supabase
+Production run (`configure-supabase-auth-hardening.mjs`) or in the dashboard.
+Staging still needs the migrations through Deploy Supabase Staging.

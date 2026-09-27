@@ -133,6 +133,12 @@ jobs:
       - name: Verify staging migration state
         run: supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
 
+      - name: Verify staging database privilege boundary
+        run: node scripts/verify-supabase-privilege-boundary.mjs
+
+      - name: Enforce staging Auth hardening
+        run: node scripts/configure-supabase-auth-hardening.mjs configure
+
       - name: Deploy staging Edge Functions
         run: bash scripts/deploy-supabase-functions-resilient.sh
 

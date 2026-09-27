@@ -264,7 +264,8 @@ describe("enterprise readiness foundation", () => {
     expect(deployment).toContain("SUPABASE_ACCESS_TOKEN");
     expect(deployment).toContain("SUPABASE_DB_PASSWORD");
     expect(deployment).toContain("non-sensitive project reference is pinned");
-    expect(deployment).toContain("itpwpnwzzitkelffttyx");
+    expect(deployment).toContain("| `production` | `izgfrekdamlgigehxoqs` |");
+    expect(deployment).toContain("`itpwpnwzzitkelffttyx` is the retired former production project");
 
     const hosting = read("docs/HOSTING_SECURITY_HEADERS.md");
     expect(hosting).toContain("Content-Security-Policy");

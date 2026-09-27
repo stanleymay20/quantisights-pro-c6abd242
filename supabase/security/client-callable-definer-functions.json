@@ -1,0 +1,28 @@
+{
+  "$comment": "Public SECURITY DEFINER functions that the `authenticated` role may execute. Every other public SECURITY DEFINER function must be service_role-only or trigger-only, and `anon` may execute none. Enforced by supabase/migrations/20260927100100_lock_service_only_security_definer_functions.sql and verified against live projects by scripts/verify-supabase-privilege-boundary.mjs.",
+  "tenantGuardedRpcs": [
+    "accept_invitation",
+    "approve_decision",
+    "check_decision_evaluability",
+    "check_workspace_quota",
+    "create_and_approve_decision",
+    "get_decision_value_summary",
+    "get_metrics_summary",
+    "increment_workspace_usage",
+    "list_execution_action_receipts",
+    "list_execution_compensation_requests",
+    "reconcile_execution_action_receipt",
+    "record_decision_value_attribution",
+    "reject_decision",
+    "request_execution_compensation",
+    "review_execution_compensation"
+  ],
+  "rlsPolicyHelpers": [
+    "exec_require_elevated_role",
+    "get_user_org_role",
+    "has_role",
+    "is_dataset_workspace_member",
+    "is_org_member",
+    "is_workspace_member"
+  ]
+}
