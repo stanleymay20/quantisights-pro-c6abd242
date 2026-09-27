@@ -606,15 +606,44 @@ function isEvaluated(outcome: EvidencePackOutcomeInput): boolean {
     && outcome.observed_value_after != null;
 }
 
-/** Prefer the most recently evaluated outcome, else the most recently created one. */
-function selectOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePackOutcomeInput {
-  const byRecency = (a: string | null, b: string | null) => (b ?? "").localeCompare(a ?? "");
-  const evaluated = outcomes.filter(isEvaluated).sort((a, b) => byRecency(a.evaluation_date, b.evaluation_date));
-  if (evaluated.length > 0) return evaluated[0];
-  return [...outcomes].sort((a, b) => byRecency(a.created_at, b.created_at))[0];
+/** An evaluation that ran to completion, whether or not the metric could be measured. */
+function isCompletedEvaluation(outcome: EvidencePackOutcomeInput): boolean {
+  return outcome.evaluation_date != null && (isEvaluated(outcome) || outcome.outcome_status === "not_evaluable");
 }
 
-function buildMeasuredOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePackSection {
+function newestFirst(a: string | null, b: string | null): number {
+  return (b ?? "").localeCompare(a ?? "");
+}
+
+/**
+ * Prefer the most recently completed evaluation, else the most recently
+ * created outcome. created_at and id break ties (one evaluate-outcomes batch
+ * stamps many rows with the same evaluation_date) so the same rows always
+ * select the same outcome, whatever order the database returns them in.
+ */
+function selectOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePackOutcomeInput {
+  const stable = (a: EvidencePackOutcomeInput, b: EvidencePackOutcomeInput) =>
+    newestFirst(a.created_at, b.created_at) || newestFirst(a.id, b.id);
+  const completed = outcomes
+    .filter(isCompletedEvaluation)
+    .sort((a, b) => newestFirst(a.evaluation_date, b.evaluation_date) || stable(a, b));
+  if (completed.length > 0) return completed[0];
+  return [...outcomes].sort(stable)[0];
+}
+
+function buildMeasuredOutcome(outcomes: EvidencePackOutcomeInput[], readFailed: boolean): EvidencePackSection {
+  if (readFailed) {
+    return section({
+      status: "unavailable",
+      title: "Measured Outcome",
+      summary:
+        "Outcome records could not be read when this pack was generated, so whether the decision worked is unknown. " +
+        "This does not mean no outcome is tracked; regenerate the pack to include it.",
+      source: "decision_outcomes (read failed)",
+      generated_from: [],
+      data: { read_failed: true },
+    });
+  }
   if (outcomes.length === 0) {
     return section({
       status: "unavailable",
@@ -629,9 +658,12 @@ function buildMeasuredOutcome(outcomes: EvidencePackOutcomeInput[]): EvidencePac
   const outcome = selectOutcome(outcomes);
   const metric = outcome.expected_metric;
   const expectation = describeExpectation(outcome);
+  // Mirrors evaluate-outcomes, whose before and after windows both include
+  // the decision date.
   const method =
-    `Average of ${metric} over the ${OUTCOME_BASELINE_DAYS} days before the decision, compared with its average ` +
-    `over the ${outcome.evaluation_window_days}-day evaluation window after it.`;
+    `Average of ${metric} from ${OUTCOME_BASELINE_DAYS} days before the decision up to and including the decision ` +
+    `date, compared with its average from the decision date to the end of the ${outcome.evaluation_window_days}-day ` +
+    `evaluation window. Values dated on the decision day count in both averages.`;
   const caveats = [BEFORE_AFTER_CAVEAT];
   const change = observedChangePercent(outcome.observed_value_before, outcome.observed_value_after);
   const evaluated = isEvaluated(outcome);
@@ -782,7 +814,7 @@ export async function buildEvidencePack(
     gateway_metadata,
     decision_timeline: buildDecisionTimeline(timelineSteps),
     outcome_prediction: buildOutcomePrediction(decision),
-    measured_outcome: buildMeasuredOutcome(outcomes),
+    measured_outcome: buildMeasuredOutcome(outcomes, options.outcomesReadFailed ?? false),
   };
 
   const hashInput = {

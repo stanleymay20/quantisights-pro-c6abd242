@@ -127,11 +127,19 @@ what `evaluate-outcomes` stored:
   partially met, no material change, or moved against the expected direction),
   the before/after averages, the percentage change and the expectation.
 
-It always states the method (the 30-day pre-decision average against the
-average over the evaluation window) and the caveat that this is a before/after
-comparison, not a controlled experiment. A zero baseline yields no percentage
-change and an explicit caveat. When several outcomes are tracked, the most
-recently evaluated one is shown.
+It always states the method exactly as `evaluate-outcomes` computes it: the
+average from 30 days before the decision up to and including the decision
+date, against the average from the decision date to the end of the evaluation
+window (decision-day values count in both). It also states that this is a
+before/after comparison, not a controlled experiment. A zero baseline yields no
+percentage change and an explicit caveat.
+
+When several outcomes are tracked, the most recently completed evaluation is
+shown, including one that could not be measured, so a newer failure is never
+hidden behind an older success. Ties on `evaluation_date` (one batch stamps
+many rows) are broken by `created_at` and `id`, so the same rows always
+produce the same pack and hash. If the `decision_outcomes` read fails, the
+section says the outcome is unknown rather than claiming nothing is tracked.
 
 ## Export model
 

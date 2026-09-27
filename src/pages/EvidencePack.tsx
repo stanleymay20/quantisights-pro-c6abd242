@@ -37,6 +37,7 @@ const EvidencePackPage = () => {
   const [decision, setDecision] = useState<ReviewableDecision | null>(isDemo ? DEMO_DECISION : null);
   const [auditEntries, setAuditEntries] = useState<EvidencePackAuditEntry[]>([]);
   const [outcomes, setOutcomes] = useState<EvidencePackOutcomeInput[]>([]);
+  const [outcomesReadFailed, setOutcomesReadFailed] = useState(false);
   const [loading, setLoading] = useState(!isDemo);
   const [notFound, setNotFound] = useState(false);
   const [pack, setPack] = useState<EvidencePackModel | null>(null);
@@ -84,8 +85,8 @@ const EvidencePackPage = () => {
       );
 
       // Measured outcomes written by the evaluate-outcomes Edge Function. A
-      // failed or empty read yields an "unavailable" Measured Outcome section.
-      const { data: outcomeRows } = await supabase
+      // failed read is reported as unknown, never as "no outcome tracked".
+      const { data: outcomeRows, error: outcomeError } = await supabase
         .from("decision_outcomes")
         .select(
           "id, expected_metric, expected_direction, expected_change, evaluation_window_days, outcome_status, observed_value_before, observed_value_after, accuracy_score, evaluation_date, evidence_regime, calibration_eligible, eligibility_reason, notes, created_at",
@@ -94,6 +95,7 @@ const EvidencePackPage = () => {
         .eq("decision_id", decisionId);
 
       setOutcomes((outcomeRows ?? []) as EvidencePackOutcomeInput[]);
+      setOutcomesReadFailed(Boolean(outcomeError));
       setLoading(false);
     };
     load();
@@ -106,7 +108,7 @@ const EvidencePackPage = () => {
     }
     let cancelled = false;
     setPackBuilding(true);
-    buildEvidencePack(decision, { auditEntries, outcomes, isSimulation: isDemo || undefined })
+    buildEvidencePack(decision, { auditEntries, outcomes, outcomesReadFailed, isSimulation: isDemo || undefined })
       .then((built) => {
         if (!cancelled) setPack(built);
       })
@@ -116,7 +118,7 @@ const EvidencePackPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [decision, auditEntries, outcomes, isDemo]);
+  }, [decision, auditEntries, outcomes, outcomesReadFailed, isDemo]);
 
   return (
     <div className="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">

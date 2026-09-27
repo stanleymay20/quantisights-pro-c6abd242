@@ -335,7 +335,9 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
       );
       expect(section.data.observed_change_pct).toBeCloseTo(-12);
       expect(section.data.baseline_days).toBe(30);
-      expect(section.data.method).toMatch(/30 days before the decision.*30-day evaluation window/);
+      expect(section.data.method).toMatch(/30 days before the decision up to and including the decision date/);
+      expect(section.data.method).toMatch(/end of the 30-day evaluation window/);
+      expect(section.data.method).toContain("Values dated on the decision day count in both averages.");
       expect(section.data.caveats).toContain(
         "Before/after comparison, not a controlled experiment: other events in the same period can also explain the change.",
       );
@@ -374,6 +376,46 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
       expect(pack.sections.measured_outcome.data.tracked_outcome_count).toBe(2);
     });
 
+    it("selects the same outcome whatever order rows with the same evaluation date arrive in", async () => {
+      const sameBatch = (id: string, created_at: string, metric: string) =>
+        outcome({ ...EVALUATED_OUTCOME, id, created_at, expected_metric: metric });
+      const rows = [
+        sameBatch("outcome-a", "2026-06-02T09:00:00.000Z", "logistics_cost_per_order"),
+        sameBatch("outcome-b", "2026-06-03T09:00:00.000Z", "on_time_delivery_rate"),
+        sameBatch("outcome-c", "2026-06-03T09:00:00.000Z", "supplier_count"),
+      ];
+      const forward = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: rows });
+      const reversed = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: [...rows].reverse() });
+
+      expect(forward.sections.measured_outcome.data.outcome_id).toBe("outcome-c");
+      expect(reversed.evidence_pack_hash).toBe(forward.evidence_pack_hash);
+    });
+
+    it("shows a newer evaluation that could not be measured instead of an older success", async () => {
+      const newerFailure = outcome({
+        id: "outcome-002",
+        outcome_status: "not_evaluable",
+        evaluation_date: "2026-08-05T00:00:00.000Z",
+        notes: "Insufficient logistics_cost_per_order data for evaluation period.",
+        created_at: "2026-07-01T00:00:00.000Z",
+      });
+      const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: [EVALUATED_OUTCOME, newerFailure] });
+
+      expect(pack.sections.measured_outcome.data.outcome_id).toBe("outcome-002");
+      expect(pack.sections.measured_outcome.status).toBe("partial");
+      expect(pack.sections.measured_outcome.summary).toContain("could not be measured");
+    });
+
+    it("reports an unreadable outcome source as unknown, not as untracked", async () => {
+      const pack = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: [], outcomesReadFailed: true });
+      const section = pack.sections.measured_outcome;
+
+      expect(section.status).toBe("unavailable");
+      expect(section.summary).toMatch(/could not be read/);
+      expect(section.summary).toMatch(/does not mean no outcome is tracked/);
+      expect(section.data.read_failed).toBe(true);
+    });
+
     it("changes the evidence hash when the measured outcome changes", async () => {
       const pending = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: [outcome()] });
       const evaluated = await buildEvidencePack(baseDecision(), { now: FIXED_NOW, outcomes: [EVALUATED_OUTCOME] });
@@ -386,7 +428,7 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
       const html = evidencePackToHtml(pack);
 
       expect(html).toContain("<h2>Measured Outcome</h2>");
-      expect(html).toContain('<p class="ep-method">Method: Average of logistics_cost_per_order');
+      expect(html).toContain('<p class="ep-method">Method: Average of logistics_cost_per_order from 30 days before');
       expect(html).toContain("not a controlled experiment");
     });
 
@@ -413,7 +455,7 @@ describe("EP-1 Enterprise Decision Evidence Pack", () => {
 
       const card = screen.getByTestId("evidence-pack-measured-outcome");
       expect(card.textContent).toContain("Target met.");
-      expect(card.textContent).toContain("Method: Average of logistics_cost_per_order");
+      expect(card.textContent).toContain("Method: Average of logistics_cost_per_order from 30 days before");
       expect(card.textContent).toContain("not a controlled experiment");
 
       const summary = screen.getByTestId("evidence-pack-executive-summary");

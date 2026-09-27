@@ -146,6 +146,11 @@ export interface BuildEvidencePackOptions {
   isSimulation?: boolean;
   /** Pre-fetched decision_outcomes rows for this decision. */
   outcomes?: EvidencePackOutcomeInput[];
+  /**
+   * True when decision_outcomes could not be read. The pack then reports the
+   * outcome as unknown rather than claiming no outcome is tracked.
+   */
+  outcomesReadFailed?: boolean;
 }
 
 /** A single block in the PDF-ready data model, rendered by evidence-pack-pdf.ts. */
