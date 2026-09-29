@@ -8,6 +8,14 @@ Quantivis is an AI-assisted decision-intelligence platform for turning messy ope
 
 The codebase demonstrates the engineering work between **raw data and a defensible decision**: ingestion, schema inference, validation, quality diagnostics, multi-tenant data handling, analytical workflows and governed application delivery.
 
+## Recruiter quick scan
+
+**Problem:** operational data is often incomplete, inconsistent or poorly structured, yet decision systems are expected to produce confident outputs.
+
+**What this repository demonstrates:** SQL/PostgreSQL, Supabase, ingestion and schema inference, data-quality diagnostics, KPI and forecasting workflows, multi-tenant application design, Edge Functions, authentication, release controls and audit-oriented engineering.
+
+**Engineering signal:** data quality is surfaced as part of the decision pipeline rather than hidden behind a polished dashboard or AI-generated recommendation.
+
 ## Data & analytics engineering evidence
 
 This repository demonstrates hands-on work across:
