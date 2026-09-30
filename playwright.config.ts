@@ -8,7 +8,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: process.env.E2E_BASE_URL || "https://quantisights-pro.lovable.app",
+    baseURL: process.env.E2E_BASE_URL || "https://quantivis.io",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },

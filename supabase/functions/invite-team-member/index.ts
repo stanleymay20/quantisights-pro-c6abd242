@@ -99,15 +99,29 @@ serve(async (req) => {
     const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "noreply@quantivis.com";
 
     if (resendKey) {
-      const rawOrigin = req.headers.get("origin") || "https://quantisights-pro.lovable.app";
-      // Validate origin against allowlist to prevent open redirect
-      const allowedOrigins = [
+      // Invite redirects must never be derived from a prefix match: an origin like
+      // https://quantivis.io.attacker.example must not be accepted.
+      const fallbackOrigin = "https://quantivis.io";
+      const rawOrigin = req.headers.get("origin") || fallbackOrigin;
+      const productionOrigins = [
+        "https://quantivis.io",
+        "https://www.quantivis.io",
+      ];
+      const stagingOnlyOrigins = [
         "https://quantisights-pro.lovable.app",
-        "https://quantivis.com",
+        "https://quantivis-insights.lovable.app",
+        "https://id-preview--28b43e06-9231-4c54-bc18-a49be01a6516.lovable.app",
+        "https://28b43e06-9231-4c54-bc18-a49be01a6516.lovableproject.com",
         "http://localhost:5173",
         "http://localhost:8080",
+        "http://127.0.0.1:4173",
       ];
-      const origin = allowedOrigins.find(o => rawOrigin.startsWith(o)) || "https://quantisights-pro.lovable.app";
+      const isStaging =
+        (Deno.env.get("SUPABASE_URL") || "") === "https://cmnihsbdbpubznlkmjbc.supabase.co";
+      const allowedOrigins = isStaging
+        ? [...productionOrigins, ...stagingOnlyOrigins]
+        : productionOrigins;
+      const origin = allowedOrigins.includes(rawOrigin) ? rawOrigin : fallbackOrigin;
       const inviteUrl = `${origin}/accept-invite?token=${invitation.token}`;
 
       await fetch("https://api.resend.com/emails", {

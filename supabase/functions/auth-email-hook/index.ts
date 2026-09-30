@@ -38,7 +38,7 @@ const SENDER_DOMAIN = 'notify.www.quantivis.io'
 const ROOT_DOMAIN = 'www.quantivis.io'
 const FROM_DOMAIN = 'www.quantivis.io'
 
-const SAMPLE_PROJECT_URL = 'https://quantisights-pro.lovable.app'
+const SAMPLE_PROJECT_URL = 'https://quantivis.io'
 const SAMPLE_EMAIL = 'user@example.test'
 const SAMPLE_DATA: Record<string, object> = {
   signup: {

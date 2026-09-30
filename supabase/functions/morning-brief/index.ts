@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
 
     <!-- CTA -->
     <div style="text-align:center;margin:32px 0;">
-      <a href="https://quantisights-pro.lovable.app/dashboard" 
+      <a href="https://quantivis.io/dashboard" 
          style="display:inline-block;padding:12px 32px;background:#1a1a1a;color:#ffffff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">
         Open Decision Queue →
       </a>

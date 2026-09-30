@@ -273,7 +273,7 @@ const InternalData = () => {
             <h3 className="font-semibold">REST API ingestion</h3>
             <p className="text-sm text-muted-foreground">Programmatically push reference signals from Snowflake/BigQuery/dbt or any pipeline.</p>
             <pre className="text-xs bg-muted/40 p-4 rounded-lg overflow-x-auto">
-{`POST https://itpwpnwzzitkelffttyx.supabase.co/functions/v1/ingest-internal-data
+{`POST ${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-internal-data
 Authorization: Bearer <user_jwt>
 Content-Type: application/json
 
