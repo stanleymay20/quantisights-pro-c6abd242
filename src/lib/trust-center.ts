@@ -172,7 +172,7 @@ export function getCapabilityMatrix(): CapabilityEntry[] {
       status: "Partially Implemented",
       deployment: "Live In App",
       detail:
-        "Deterministic pack building (20 sections, canonical content hash, JSON/HTML export, PDF-ready block model) is live at /evidence-pack/:decisionId and reads real decision_ledger + audit_log rows. Actual PDF rendering and cryptographic signing are not implemented — the Digital Signature section is an explicit placeholder.",
+        "Deterministic pack building (21 sections including the measured before/after outcome, canonical content hash, JSON, printable HTML and PDF export) is live at /evidence-pack/:decisionId and reads real decision_ledger, decision_outcomes and audit_log rows. Cryptographic signing is not implemented — the Digital Signature section is an explicit placeholder, so a PDF copy is only as trustworthy as an independently held evidence_pack_hash.",
       evidence: [
         "docs/architecture/EP-1-Enterprise-Evidence-Pack.md",
         "src/lib/evidence-pack.ts",

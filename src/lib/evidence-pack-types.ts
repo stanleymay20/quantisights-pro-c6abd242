@@ -10,7 +10,8 @@ import type { ReviewableDecision } from "@/components/decisions/executive-review
  * invents a value that isn't already present on the source record.
  */
 
-export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v1";
+// v2 adds the measured_outcome section (EP-2).
+export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v2";
 
 /**
  * "complete"      — the section is fully backed by data on the decision.
@@ -79,6 +80,7 @@ export const EVIDENCE_PACK_SECTION_KEYS = [
   "gateway_metadata",
   "decision_timeline",
   "outcome_prediction",
+  "measured_outcome",
   "hashes",
   "digital_signature",
 ] as const;
@@ -112,6 +114,29 @@ export interface EvidencePackDecisionInput extends ReviewableDecision {
   decision_simulation_id?: string | null;
 }
 
+/**
+ * A decision_outcomes row as written by the evaluate-outcomes Edge Function:
+ * the metric the decision was expected to move, and the observed before/after
+ * averages once its evaluation window has elapsed.
+ */
+export interface EvidencePackOutcomeInput {
+  id: string;
+  expected_metric: string;
+  expected_direction: string;
+  expected_change: number | null;
+  evaluation_window_days: number;
+  outcome_status: string;
+  observed_value_before: number | null;
+  observed_value_after: number | null;
+  accuracy_score: number | null;
+  evaluation_date: string | null;
+  evidence_regime: string | null;
+  calibration_eligible: boolean | null;
+  eligibility_reason: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface BuildEvidencePackOptions {
   /** Injectable clock for deterministic tests; defaults to the wall clock. */
   now?: () => string;
@@ -119,9 +144,16 @@ export interface BuildEvidencePackOptions {
   auditEntries?: EvidencePackAuditEntry[];
   /** Overrides the simulation flag; defaults to decision_origin === "demo". */
   isSimulation?: boolean;
+  /** Pre-fetched decision_outcomes rows for this decision. */
+  outcomes?: EvidencePackOutcomeInput[];
+  /**
+   * True when decision_outcomes could not be read. The pack then reports the
+   * outcome as unknown rather than claiming no outcome is tracked.
+   */
+  outcomesReadFailed?: boolean;
 }
 
-/** A single block in the PDF-ready data model. No PDF is generated in EP-1. */
+/** A single block in the PDF-ready data model, rendered by evidence-pack-pdf.ts. */
 export type EvidencePackPdfBlock =
   | { type: "heading"; level: 1 | 2; text: string }
   | { type: "status_line"; status: EvidencePackSectionStatus; text: string }
