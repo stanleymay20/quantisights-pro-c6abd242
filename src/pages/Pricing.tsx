@@ -84,22 +84,15 @@ const Pricing = () => {
   const handleCheckout = async (tierKey: TierKey) => {
     if (!user) { navigate(`/register?plan=${tierKey}`); return; }
     const tier = TIERS[tierKey];
-    const priceId = annual && tier.price_id_annual ? tier.price_id_annual : tier.price_id;
-
-    // If annual toggle selected but no annual price ID yet, show toast and continue
-    // with monthly — tagging the session so sales team can follow up on annual billing
-    if (annual && !tier.price_id_annual) {
-      toast({
-        title: "Annual billing — our team will follow up",
-        description: "Starting your checkout trial now. We'll contact you within 24 hours to set up annual billing at the discounted rate.",
-        variant: "default",
-      });
+    if ("contactSales" in tier && tier.contactSales) {
+      navigate("/enterprise/contact");
+      return;
     }
 
     setLoadingTier(tierKey);
     try {
       const { data, error } = await invokeWithRetry<{ url?: string }>("create-checkout", {
-        body: { priceId: priceId ?? tier.price_id, wantsAnnual: annual },
+        body: { tier: tierKey, interval: annual ? "year" : "month" },
       });
       if (error) throw error;
       if (data?.url) window.location.href = data.url;

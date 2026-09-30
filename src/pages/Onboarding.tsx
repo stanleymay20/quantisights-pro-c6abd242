@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOrganization } from "@/hooks/useOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { useCheckoutConfirmation } from "@/hooks/useCheckoutConfirmation";
 import OnboardingWizard from "@/pages/OnboardingWizard";
 import {
   clearVerifiedSignupIntent,
@@ -16,6 +17,7 @@ import {
 type GateStatus = "checking" | "ready" | "restoration" | "blocked";
 
 const Onboarding = () => {
+  useCheckoutConfirmation();
   const { user, loading: authLoading, signOut } = useAuth();
   const {
     currentOrgId,
