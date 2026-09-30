@@ -1,6 +1,9 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # Production continuous deploys are fail-closed. A release SHA is written to
+  # QUANTIVIS_GA_CERTIFIED_SHA only after the exact-SHA GA chain has passed.
+  ignore = "node ./scripts/netlify-release-gate.mjs"
 
 [build.environment]
   NODE_VERSION = "20"
