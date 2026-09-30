@@ -20,6 +20,13 @@ describe("runtime origin independence", () => {
     );
   });
 
+  it("does not install the retired Lovable browser-auth client", () => {
+    const packageJson = read("package.json");
+    const packageLock = read("package-lock.json");
+    expect(packageJson).not.toContain("@lovable.dev/cloud-auth-js");
+    expect(packageLock).not.toContain("node_modules/@lovable.dev/cloud-auth-js");
+  });
+
   it("uses exact invite-origin membership and keeps preview origins staging-only", () => {
     const invite = read("supabase/functions/invite-team-member/index.ts");
     expect(invite).not.toContain("rawOrigin.startsWith");
