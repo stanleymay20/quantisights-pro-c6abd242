@@ -4,11 +4,15 @@ Quantivis uses two intentionally separate Supabase projects:
 
 | Environment | Project reference | Purpose |
 | --- | --- | --- |
-| Production | `itpwpnwzzitkelffttyx` | Live application and first-client data after pilot acceptance |
+| Production | `izgfrekdamlgigehxoqs` | Live application and first-client data after pilot acceptance |
 | Staging | `cmnihsbdbpubznlkmjbc` | Migration rehearsal, tenant-isolation tests, and sanitized pilot validation |
 
-Do not replace the production project reference in `supabase/config.toml`. The
-staging project is a validation target, not a production replacement.
+`supabase/config.toml` is local-stack configuration, not remote deployment
+authority. Its `project_id` is deliberately a neutral local identifier.
+Remote mutations must select a target explicitly: the staging workflow links
+`cmnihsbdbpubznlkmjbc`, while the manually gated production workflow links
+`izgfrekdamlgigehxoqs`. The retired ref `itpwpnwzzitkelffttyx` must never
+receive deployments.
 
 ## Browser configuration
 

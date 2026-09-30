@@ -1,4 +1,4 @@
-project_id = "itpwpnwzzitkelffttyx"
+project_id = "quantivis-local"
 
 [functions]
   [functions.adaptive-calibration]

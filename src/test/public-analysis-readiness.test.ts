@@ -92,14 +92,17 @@ describe("release provenance and CSP release gates", () => {
   it("keeps staging isolated from production without exposing backend secrets", () => {
     const staging = read(".env.staging.example");
     const mcp = read(".mcp.json");
-    const production = read("supabase/config.toml");
+    const localConfig = read("supabase/config.toml");
     const ignore = read(".gitignore");
 
     expect(staging).toContain("cmnihsbdbpubznlkmjbc");
     expect(staging).not.toMatch(/SUPABASE_(?:SECRET|SERVICE_ROLE)/);
     expect(mcp).toContain("project_ref=cmnihsbdbpubznlkmjbc");
     expect(mcp).toContain("read_only=true");
-    expect(production).toContain('project_id = "itpwpnwzzitkelffttyx"');
+    expect(localConfig).toContain('project_id = "quantivis-local"');
+    expect(localConfig).not.toContain('project_id = "itpwpnwzzitkelffttyx"');
+    expect(read(".github/workflows/deploy-supabase-staging.yml")).toContain("cmnihsbdbpubznlkmjbc");
+    expect(read(".github/workflows/deploy-edge-functions.yml")).toContain("izgfrekdamlgigehxoqs");
     expect(ignore).toContain(".env.*");
     expect(existsSync(resolve(root, "docs/STAGING_SUPABASE.md"))).toBe(true);
   });
