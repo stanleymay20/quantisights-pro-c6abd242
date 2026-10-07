@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authenticateRequest, verifyOrgMembership } from "../_shared/auth-guard.ts";
 import { corsPreflightResponse, getCorsHeaders } from "../_shared/cors.ts";
 import { isValidEnum, isValidString, isValidUUID } from "../_shared/input-validation.ts";
@@ -6,7 +6,38 @@ import { isValidEnum, isValidString, isValidUUID } from "../_shared/input-valida
 const SYSTEM_TYPES = ["model", "agent", "workflow", "rules_engine", "other"] as const;
 const ENVIRONMENTS = ["development", "test", "staging", "production", "other"] as const;
 
-type ServiceClient = ReturnType<typeof createClient>;
+type ServiceClient = SupabaseClient<any, "public", "public", any, any>;
+
+type IssuedCredential = {
+  id: string;
+  ai_system_id: string;
+  token_prefix: string;
+  expires_at: string | null;
+  created_at: string;
+};
+
+type RotationRow = {
+  credential_id: string;
+  token_prefix: string;
+  expires_at: string | null;
+  created_at: string;
+  revoked_credential_ids: string[] | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRotationRow(value: unknown): value is RotationRow {
+  if (!isRecord(value)) return false;
+  return typeof value.credential_id === "string"
+    && typeof value.token_prefix === "string"
+    && (value.expires_at === null || typeof value.expires_at === "string")
+    && typeof value.created_at === "string"
+    && (value.revoked_credential_ids === null
+      || (Array.isArray(value.revoked_credential_ids)
+        && value.revoked_credential_ids.every((id) => typeof id === "string")));
+}
 
 function json(req: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -48,7 +79,8 @@ async function requireAdmin(
     .eq("organization_id", organizationId)
     .eq("user_id", userId)
     .maybeSingle();
-  return !error && Boolean(data && ["owner", "admin"].includes(String(data.role)));
+  if (error || !isRecord(data)) return false;
+  return ["owner", "admin"].includes(String(data.role));
 }
 
 async function createCredential(
@@ -57,7 +89,7 @@ async function createCredential(
   aiSystemId: string,
   userId: string,
   expiresAt: string | null,
-) {
+): Promise<{ credential: IssuedCredential; token: string }> {
   const rawToken = newMachineToken();
   const tokenHash = await sha256(rawToken);
   const { data, error } = await svc
@@ -72,8 +104,24 @@ async function createCredential(
     })
     .select("id, ai_system_id, token_prefix, expires_at, created_at")
     .single();
-  if (error) throw new Error(`CREATE_CREDENTIAL_FAILED:${error.message}`);
-  return { credential: data, token: rawToken };
+  if (error || !isRecord(data)
+      || typeof data.id !== "string"
+      || typeof data.ai_system_id !== "string"
+      || typeof data.token_prefix !== "string"
+      || (data.expires_at !== null && typeof data.expires_at !== "string")
+      || typeof data.created_at !== "string") {
+    throw new Error(`CREATE_CREDENTIAL_FAILED:${error?.message ?? "invalid database response"}`);
+  }
+  return {
+    credential: {
+      id: data.id,
+      ai_system_id: data.ai_system_id,
+      token_prefix: data.token_prefix,
+      expires_at: data.expires_at,
+      created_at: data.created_at,
+    },
+    token: rawToken,
+  };
 }
 
 async function writeAudit(
@@ -122,7 +170,7 @@ Deno.serve(async (req) => {
     return json(req, { error: "FORBIDDEN" }, 403);
   }
 
-  const svc = createClient(
+  const svc: ServiceClient = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
@@ -186,11 +234,14 @@ Deno.serve(async (req) => {
         })
         .select("id, organization_id, name, provider, system_identifier, model_version, system_type, deployment_environment, purpose, owner_user_id, lifecycle_status, risk_classification, external_identifier, created_at")
         .single();
-      if (error) throw error;
+      if (error || !isRecord(system) || typeof system.id !== "string") {
+        throw new Error(`CREATE_AI_SYSTEM_FAILED:${error?.message ?? "invalid database response"}`);
+      }
 
-      let issued: Awaited<ReturnType<typeof createCredential>> | null = null;
+      let issued: { credential: IssuedCredential; token: string } | null = null;
       try {
-        issued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
+        const newlyIssued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
+        issued = newlyIssued;
         await writeAudit(svc, {
           organization_id: organizationId,
           actor_id: userId,
@@ -199,16 +250,16 @@ Deno.serve(async (req) => {
           resource_type: "ai_system",
           resource_id: system.id,
           payload: {
-            provider: system.provider,
-            system_identifier: system.system_identifier,
-            model_version: system.model_version,
-            credential_id: issued.credential.id,
+            provider: system.provider ?? null,
+            system_identifier: system.system_identifier ?? null,
+            model_version: system.model_version ?? null,
+            credential_id: newlyIssued.credential.id,
           },
         });
         return json(req, {
           system,
-          credential: issued.credential,
-          token: issued.token,
+          credential: newlyIssued.credential,
+          token: newlyIssued.token,
           warning: "Store this token now. Quantivis stores only its SHA-256 digest and cannot reveal it again.",
         }, 201);
       } catch (createError) {
@@ -235,7 +286,7 @@ Deno.serve(async (req) => {
         .eq("organization_id", organizationId)
         .maybeSingle();
       if (systemError) throw systemError;
-      if (!system) return json(req, { error: "AI_SYSTEM_NOT_FOUND" }, 404);
+      if (!isRecord(system) || typeof system.id !== "string") return json(req, { error: "AI_SYSTEM_NOT_FOUND" }, 404);
       if (system.lifecycle_status === "retired") return json(req, { error: "AI_SYSTEM_RETIRED" }, 409);
 
       const rawToken = newMachineToken();
@@ -252,11 +303,9 @@ Deno.serve(async (req) => {
         })
         .single();
       if (rotationError) throw new Error(`ROTATION_FAILED:${rotationError.message}`);
-      if (!rotated) throw new Error("ROTATION_FAILED:NO_RESULT");
+      if (!isRotationRow(rotated)) throw new Error("ROTATION_FAILED:INVALID_RESULT");
 
-      const revokedCredentialIds = Array.isArray(rotated.revoked_credential_ids)
-        ? rotated.revoked_credential_ids.map((id) => String(id))
-        : [];
+      const revokedCredentialIds = rotated.revoked_credential_ids ?? [];
       return json(req, {
         credential: {
           id: rotated.credential_id,
@@ -281,7 +330,9 @@ Deno.serve(async (req) => {
         .eq("organization_id", organizationId)
         .maybeSingle();
       if (currentError) throw currentError;
-      if (!current) return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
+      if (!isRecord(current) || typeof current.id !== "string" || typeof current.ai_system_id !== "string") {
+        return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
+      }
       if (current.status === "revoked") {
         return json(req, { credential: current, idempotent_replay: true });
       }
@@ -294,7 +345,9 @@ Deno.serve(async (req) => {
         .eq("organization_id", organizationId)
         .select("id, ai_system_id, status, revoked_at")
         .single();
-      if (error) throw error;
+      if (error || !isRecord(credential) || typeof credential.id !== "string" || typeof credential.ai_system_id !== "string") {
+        throw new Error(`REVOKE_CREDENTIAL_FAILED:${error?.message ?? "invalid database response"}`);
+      }
 
       try {
         await writeAudit(svc, {
