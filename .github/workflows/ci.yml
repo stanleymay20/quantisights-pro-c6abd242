@@ -92,6 +92,8 @@ jobs:
           check_edge supabase/functions/deno.json supabase/functions/refresh-aggregates/index.ts
           check_edge supabase/functions/deno.json supabase/functions/ingest-csv-pipeline/index.ts
           check_edge supabase/functions/deno.json supabase/functions/ingest-external-signals/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/external-ai-decision-ingest/index.ts
+          check_edge supabase/functions/deno.json supabase/functions/ai-system-registry/index.ts
           check_edge supabase/functions/deno.json supabase/functions/connector-rest-sync/index.ts
           check_edge supabase/functions/deno.json supabase/functions/connector-pull/index.ts
           check_edge supabase/functions/deno.json supabase/functions/db-connector/index.ts
