@@ -1,0 +1,51 @@
+name: Lovable Tagger Source Audit
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/lovable-tagger-source-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Pack current Lovable tagger without installing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tagger
+          cd /tmp/tagger
+          npm pack lovable-tagger@1.3.5 --json > pack.json
+          TARBALL=$(node -e "const p=require('./pack.json'); console.log(p[0].filename)")
+          mkdir package-src
+          tar -xzf "$TARBALL" -C package-src
+          cd package-src/package
+          {
+            echo '=== package.json ==='
+            cat package.json
+            echo
+            echo '=== files ==='
+            find . -maxdepth 3 -type f | sort
+            echo
+            echo '=== tailwind references ==='
+            grep -Rni --exclude='*.map' 'tailwind\|resolveConfig' . || true
+            echo
+            echo '=== componentTagger references ==='
+            grep -Rni --exclude='*.map' 'componentTagger' . || true
+          } > "$GITHUB_WORKSPACE/lovable-tagger-source-audit.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lovable-tagger-source-audit
+          path: lovable-tagger-source-audit.txt
+          if-no-files-found: error
