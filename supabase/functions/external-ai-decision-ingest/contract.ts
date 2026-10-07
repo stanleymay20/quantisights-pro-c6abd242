@@ -97,16 +97,20 @@ export function validateExternalAIDecision(input: unknown): ContractResult {
     return { ok: false, error: "INVALID_DECISION_DESCRIPTOR", field: "decision" };
   }
 
+  let confidence: number | null = null;
   if (input.confidence !== undefined && input.confidence !== null) {
     if (typeof input.confidence !== "number" || !Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1) {
       return { ok: false, error: "INVALID_CONFIDENCE", field: "confidence" };
     }
+    confidence = input.confidence;
   }
 
+  let humanOversightState: string | null = null;
   if (input.human_oversight_state !== undefined && input.human_oversight_state !== null) {
     if (!boundedString(input.human_oversight_state, 1, 120)) {
       return { ok: false, error: "INVALID_HUMAN_OVERSIGHT_STATE", field: "human_oversight_state" };
     }
+    humanOversightState = input.human_oversight_state.trim();
   }
 
   const metadata = input.metadata ?? {};
@@ -126,8 +130,8 @@ export function validateExternalAIDecision(input: unknown): ContractResult {
       input_hash: inputHash,
       output_hash: outputHash,
       decision: input.decision,
-      confidence: input.confidence == null ? null : input.confidence,
-      human_oversight_state: input.human_oversight_state == null ? null : input.human_oversight_state.trim(),
+      confidence,
+      human_oversight_state: humanOversightState,
       metadata,
       provenance,
       idempotency_key: input.idempotency_key.trim(),
