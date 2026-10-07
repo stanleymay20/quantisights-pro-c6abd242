@@ -238,48 +238,36 @@ Deno.serve(async (req) => {
       if (!system) return json(req, { error: "AI_SYSTEM_NOT_FOUND" }, 404);
       if (system.lifecycle_status === "retired") return json(req, { error: "AI_SYSTEM_RETIRED" }, 409);
 
-      const { data: priorActive, error: priorError } = await svc
-        .from("ai_system_credentials")
-        .select("id")
-        .eq("organization_id", organizationId)
-        .eq("ai_system_id", system.id)
-        .eq("status", "active");
-      if (priorError) throw priorError;
-      const priorIds = (priorActive ?? []).map((row) => String(row.id));
+      const rawToken = newMachineToken();
+      const tokenHash = await sha256(rawToken);
+      const tokenPrefix = rawToken.slice(0, 14);
+      const { data: rotated, error: rotationError } = await svc
+        .rpc("rotate_ai_system_credential", {
+          p_organization_id: organizationId,
+          p_ai_system_id: system.id,
+          p_token_hash: tokenHash,
+          p_token_prefix: tokenPrefix,
+          p_expires_at: expiresAt,
+          p_created_by: userId,
+        })
+        .single();
+      if (rotationError) throw new Error(`ROTATION_FAILED:${rotationError.message}`);
+      if (!rotated) throw new Error("ROTATION_FAILED:NO_RESULT");
 
-      const issued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
-      try {
-        if (priorIds.length > 0) {
-          const { error: revokeError } = await svc
-            .from("ai_system_credentials")
-            .update({ status: "revoked", revoked_at: new Date().toISOString() })
-            .in("id", priorIds);
-          if (revokeError) throw new Error(`ROTATION_REVOKE_FAILED:${revokeError.message}`);
-        }
-
-        await writeAudit(svc, {
-          organization_id: organizationId,
-          actor_id: userId,
-          actor_type: "user",
-          action_type: "ai_system_credential_rotated",
-          resource_type: "ai_system",
-          resource_id: system.id,
-          payload: {
-            new_credential_id: issued.credential.id,
-            revoked_credential_ids: priorIds,
-          },
-        });
-      } catch (rotationError) {
-        await restoreCredentialsBestEffort(svc, priorIds);
-        await deleteCredentialBestEffort(svc, issued.credential.id);
-        throw rotationError;
-      }
-
+      const revokedCredentialIds = Array.isArray(rotated.revoked_credential_ids)
+        ? rotated.revoked_credential_ids.map((id) => String(id))
+        : [];
       return json(req, {
-        credential: issued.credential,
-        token: issued.token,
-        revoked_credential_ids: priorIds,
-        warning: "Rotation revoked all previously active credentials. Store this new token now; Quantivis cannot reveal it again.",
+        credential: {
+          id: rotated.credential_id,
+          ai_system_id: system.id,
+          token_prefix: rotated.token_prefix,
+          expires_at: rotated.expires_at,
+          created_at: rotated.created_at,
+        },
+        token: rawToken,
+        revoked_credential_ids: revokedCredentialIds,
+        warning: "Rotation is atomic and revoked all previously active credentials. Store this new token now; Quantivis cannot reveal it again.",
       }, 201);
     }
 
@@ -332,6 +320,9 @@ Deno.serve(async (req) => {
     if (message.includes("uq_ai_systems_org_external_identifier")) {
       return json(req, { error: "EXTERNAL_IDENTIFIER_ALREADY_EXISTS" }, 409);
     }
+    if (message.includes("AI_SYSTEM_NOT_FOUND")) return json(req, { error: "AI_SYSTEM_NOT_FOUND" }, 404);
+    if (message.includes("AI_SYSTEM_RETIRED")) return json(req, { error: "AI_SYSTEM_RETIRED" }, 409);
+    if (message.includes("INVALID_CREDENTIAL_EXPIRY")) return json(req, { error: "INVALID_CREDENTIAL_EXPIRY" }, 400);
     return json(req, { error: "REGISTRY_OPERATION_FAILED" }, 500);
   }
 });
