@@ -1,0 +1,64 @@
+name: Lovable Tagger Compatibility Probe
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/lovable-tagger-compatibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install exact repository lockfile
+        run: npm ci
+      - name: Replace tagger only in runner workspace
+        run: npm install --no-save --package-lock=false lovable-tagger@1.0.20
+      - name: Prove installed dependency shape
+        shell: bash
+        run: |
+          npm ls lovable-tagger tailwindcss --all > tagger-probe.txt 2>&1 || true
+          npm explain lovable-tagger >> tagger-probe.txt 2>&1 || true
+          node -e "import('lovable-tagger').then(m => { if (typeof m.componentTagger !== 'function') process.exit(2); console.log('componentTagger export: function') })" >> tagger-probe.txt 2>&1
+      - name: Development-mode build with componentTagger enabled
+        run: npm run build:dev
+      - name: Start Vite development server and smoke request
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 > /tmp/quantivis-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/ -o /tmp/quantivis-home.html; then
+              break
+            fi
+            sleep 1
+          done
+          test -s /tmp/quantivis-home.html
+          curl --fail --silent --show-error http://127.0.0.1:8080/src/main.tsx -o /tmp/quantivis-main.tsx
+          echo 'development server smoke: PASS' >> tagger-probe.txt
+          echo '--- vite log ---' >> tagger-probe.txt
+          cat /tmp/quantivis-vite.log >> tagger-probe.txt
+      - name: Audit after tagger-only replacement
+        shell: bash
+        run: |
+          npm audit --json > tagger-audit.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lovable-tagger-1.0.20-probe
+          path: |
+            tagger-probe.txt
+            tagger-audit.json
+          if-no-files-found: error
