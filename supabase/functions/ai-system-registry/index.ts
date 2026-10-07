@@ -6,10 +6,12 @@ import { isValidEnum, isValidString, isValidUUID } from "../_shared/input-valida
 const SYSTEM_TYPES = ["model", "agent", "workflow", "rules_engine", "other"] as const;
 const ENVIRONMENTS = ["development", "test", "staging", "production", "other"] as const;
 
+type ServiceClient = ReturnType<typeof createClient>;
+
 function json(req: Request, body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 }
 
@@ -36,7 +38,7 @@ function parseExpiry(value: unknown): string | null | undefined {
 }
 
 async function requireAdmin(
-  svc: ReturnType<typeof createClient>,
+  svc: ServiceClient,
   userId: string,
   organizationId: string,
 ): Promise<boolean> {
@@ -50,7 +52,7 @@ async function requireAdmin(
 }
 
 async function createCredential(
-  svc: ReturnType<typeof createClient>,
+  svc: ServiceClient,
   organizationId: string,
   aiSystemId: string,
   userId: string,
@@ -68,10 +70,32 @@ async function createCredential(
       expires_at: expiresAt,
       created_by: userId,
     })
-    .select("id, token_prefix, expires_at, created_at")
+    .select("id, ai_system_id, token_prefix, expires_at, created_at")
     .single();
-  if (error) throw error;
+  if (error) throw new Error(`CREATE_CREDENTIAL_FAILED:${error.message}`);
   return { credential: data, token: rawToken };
+}
+
+async function writeAudit(
+  svc: ServiceClient,
+  row: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await svc.from("audit_log").insert(row);
+  if (error) throw new Error(`AUDIT_WRITE_FAILED:${error.message}`);
+}
+
+async function deleteCredentialBestEffort(svc: ServiceClient, credentialId: string): Promise<void> {
+  const { error } = await svc.from("ai_system_credentials").delete().eq("id", credentialId);
+  if (error) console.error("credential compensation delete failed", error.message);
+}
+
+async function restoreCredentialsBestEffort(svc: ServiceClient, credentialIds: string[]): Promise<void> {
+  if (credentialIds.length === 0) return;
+  const { error } = await svc
+    .from("ai_system_credentials")
+    .update({ status: "active", revoked_at: null })
+    .in("id", credentialIds);
+  if (error) console.error("credential compensation restore failed", error.message);
 }
 
 Deno.serve(async (req) => {
@@ -164,9 +188,10 @@ Deno.serve(async (req) => {
         .single();
       if (error) throw error;
 
+      let issued: Awaited<ReturnType<typeof createCredential>> | null = null;
       try {
-        const issued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
-        await svc.from("audit_log").insert({
+        issued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
+        await writeAudit(svc, {
           organization_id: organizationId,
           actor_id: userId,
           actor_type: "user",
@@ -186,10 +211,15 @@ Deno.serve(async (req) => {
           token: issued.token,
           warning: "Store this token now. Quantivis stores only its SHA-256 digest and cannot reveal it again.",
         }, 201);
-      } catch (credentialError) {
-        // Avoid leaving a system that cannot authenticate during the create flow.
-        await svc.from("ai_systems").delete().eq("id", system.id).eq("organization_id", organizationId);
-        throw credentialError;
+      } catch (createError) {
+        if (issued) await deleteCredentialBestEffort(svc, issued.credential.id);
+        const { error: cleanupError } = await svc
+          .from("ai_systems")
+          .delete()
+          .eq("id", system.id)
+          .eq("organization_id", organizationId);
+        if (cleanupError) console.error("AI-system compensation delete failed", cleanupError.message);
+        throw createError;
       }
     }
 
@@ -198,54 +228,101 @@ Deno.serve(async (req) => {
       const expiresAt = parseExpiry(body.credential_expires_at);
       if (expiresAt === undefined) return json(req, { error: "INVALID_CREDENTIAL_EXPIRY" }, 400);
 
-      const { data: system } = await svc
+      const { data: system, error: systemError } = await svc
         .from("ai_systems")
         .select("id, lifecycle_status")
         .eq("id", body.ai_system_id)
         .eq("organization_id", organizationId)
         .maybeSingle();
+      if (systemError) throw systemError;
       if (!system) return json(req, { error: "AI_SYSTEM_NOT_FOUND" }, 404);
       if (system.lifecycle_status === "retired") return json(req, { error: "AI_SYSTEM_RETIRED" }, 409);
 
+      const { data: priorActive, error: priorError } = await svc
+        .from("ai_system_credentials")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .eq("ai_system_id", system.id)
+        .eq("status", "active");
+      if (priorError) throw priorError;
+      const priorIds = (priorActive ?? []).map((row) => String(row.id));
+
       const issued = await createCredential(svc, organizationId, system.id, userId, expiresAt);
-      await svc.from("audit_log").insert({
-        organization_id: organizationId,
-        actor_id: userId,
-        actor_type: "user",
-        action_type: "ai_system_credential_rotated",
-        resource_type: "ai_system",
-        resource_id: system.id,
-        payload: { credential_id: issued.credential.id },
-      });
+      try {
+        if (priorIds.length > 0) {
+          const { error: revokeError } = await svc
+            .from("ai_system_credentials")
+            .update({ status: "revoked", revoked_at: new Date().toISOString() })
+            .in("id", priorIds);
+          if (revokeError) throw new Error(`ROTATION_REVOKE_FAILED:${revokeError.message}`);
+        }
+
+        await writeAudit(svc, {
+          organization_id: organizationId,
+          actor_id: userId,
+          actor_type: "user",
+          action_type: "ai_system_credential_rotated",
+          resource_type: "ai_system",
+          resource_id: system.id,
+          payload: {
+            new_credential_id: issued.credential.id,
+            revoked_credential_ids: priorIds,
+          },
+        });
+      } catch (rotationError) {
+        await restoreCredentialsBestEffort(svc, priorIds);
+        await deleteCredentialBestEffort(svc, issued.credential.id);
+        throw rotationError;
+      }
+
       return json(req, {
         credential: issued.credential,
         token: issued.token,
-        warning: "Store this token now. Quantivis stores only its SHA-256 digest and cannot reveal it again.",
+        revoked_credential_ids: priorIds,
+        warning: "Rotation revoked all previously active credentials. Store this new token now; Quantivis cannot reveal it again.",
       }, 201);
     }
 
     if (action === "revoke_credential") {
       if (!isValidUUID(body.credential_id)) return json(req, { error: "INVALID_CREDENTIAL_ID" }, 400);
-      const { data: credential, error } = await svc
+
+      const { data: current, error: currentError } = await svc
         .from("ai_system_credentials")
-        .update({ status: "revoked", revoked_at: new Date().toISOString() })
+        .select("id, ai_system_id, status, revoked_at")
         .eq("id", body.credential_id)
         .eq("organization_id", organizationId)
-        .select("id, ai_system_id, status, revoked_at")
         .maybeSingle();
-      if (error) throw error;
-      if (!credential) return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
+      if (currentError) throw currentError;
+      if (!current) return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
+      if (current.status === "revoked") {
+        return json(req, { credential: current, idempotent_replay: true });
+      }
 
-      await svc.from("audit_log").insert({
-        organization_id: organizationId,
-        actor_id: userId,
-        actor_type: "user",
-        action_type: "ai_system_credential_revoked",
-        resource_type: "ai_system",
-        resource_id: credential.ai_system_id,
-        payload: { credential_id: credential.id },
-      });
-      return json(req, { credential });
+      const revokedAt = new Date().toISOString();
+      const { data: credential, error } = await svc
+        .from("ai_system_credentials")
+        .update({ status: "revoked", revoked_at: revokedAt })
+        .eq("id", current.id)
+        .eq("organization_id", organizationId)
+        .select("id, ai_system_id, status, revoked_at")
+        .single();
+      if (error) throw error;
+
+      try {
+        await writeAudit(svc, {
+          organization_id: organizationId,
+          actor_id: userId,
+          actor_type: "user",
+          action_type: "ai_system_credential_revoked",
+          resource_type: "ai_system",
+          resource_id: credential.ai_system_id,
+          payload: { credential_id: credential.id },
+        });
+      } catch (auditError) {
+        await restoreCredentialsBestEffort(svc, [credential.id]);
+        throw auditError;
+      }
+      return json(req, { credential, idempotent_replay: false });
     }
 
     return json(req, { error: "UNKNOWN_ACTION" }, 400);
