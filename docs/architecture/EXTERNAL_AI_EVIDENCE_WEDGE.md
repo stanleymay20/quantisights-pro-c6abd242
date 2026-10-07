@@ -33,10 +33,12 @@ This separation is intentional: producer identity, model version, event time and
 Admin/owner-authenticated actions:
 
 - `create_system` — creates the registry entry and issues the first machine credential.
-- `rotate_credential` — issues a new credential without exposing previous secrets.
+- `rotate_credential` — generates a replacement token, then calls the service-role-only `rotate_ai_system_credential(...)` transaction. The database row-locks the AI system, revokes every currently active credential, inserts the replacement, and writes the rotation audit event atomically.
 - `revoke_credential` — invalidates a credential.
 
 The raw `qv_ai_...` token is returned only when it is issued. The database stores `sha256:<digest>` plus a non-secret prefix for identification.
+
+Concurrent rotations for the same AI system serialize on the `ai_systems` row. The later committed rotation becomes the sole active credential rather than allowing two simultaneous requests to leave two valid tokens behind.
 
 Registry metadata includes organization, name, provider, system/model identifier, version, system type, deployment environment, purpose, human owner, lifecycle state, optional customer-provided risk classification, and optional external identifier.
 
@@ -108,6 +110,8 @@ Same identity + same canonical payload returns the original decision/evidence ID
 
 Same identity + different payload fails with HTTP 409 and never overwrites the original evidence.
 
+Concurrent retries are serialized before the replay lookup, so simultaneous copies of the same accepted event converge on one evidence record rather than racing the uniqueness constraint.
+
 ## Governance boundary
 
 Every newly ingested external AI event creates a normal `decision_ledger` row with:
@@ -138,7 +142,11 @@ The external protocol represents confidence in normalized `[0,1]` form. The immu
 - protocol version;
 - the linked Quantivis decision.
 
-RLS allows organization members to read their evidence. There are no client insert/update/delete policies. A database trigger rejects UPDATE and DELETE so the producer record cannot silently drift after acceptance.
+RLS allows organization members to read their evidence. There are no client insert/update/delete policies. A database trigger rejects normal UPDATE and DELETE so the producer record cannot silently drift after acceptance.
+
+The only evidence deletion exception is organization erasure. A database trigger on the owning organization deletes the external-AI subtree in dependency order inside the same PostgreSQL transaction. The evidence mutation guard accepts deletion only while that exact organization-erasure transaction is active. If the parent organization deletion rolls back, the evidence cleanup rolls back with it.
+
+This exception does not make ordinary service-role deletion legal and does not weaken append-only behavior during normal operation.
 
 ## Evidence Pack extension
 
@@ -179,9 +187,12 @@ Added tests cover:
 - rejection of caller-selected tenant/system identity;
 - canonical hashing stability;
 - append-only/RLS/security invariants;
+- organization-erasure-only evidence deletion;
 - idempotency and external-event uniqueness contracts;
+- serialized concurrent retry handling;
 - service-role-only atomic ingest;
 - one-way credential storage;
+- atomic, serialized credential rotation;
 - pending-only ledger projection;
 - deterministic external evidence-pack construction;
 - decision/tenant mismatch fail-closed behavior;
