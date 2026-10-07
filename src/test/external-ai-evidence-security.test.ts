@@ -6,6 +6,8 @@ const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 const migration = read("supabase/migrations/20261007160000_external_ai_evidence_wedge.sql");
+const confidenceBridge = read("supabase/migrations/20261007160500_external_ai_confidence_scale.sql");
+const concurrency = read("supabase/migrations/20261007161000_external_ai_ingest_concurrency.sql");
 const ingest = read("supabase/functions/external-ai-decision-ingest/index.ts");
 const registry = read("supabase/functions/ai-system-registry/index.ts");
 const config = read("supabase/config.toml");
@@ -27,14 +29,23 @@ describe("external AI evidence security invariants", () => {
   it("enforces replay identity at both idempotency-key and external-event levels", () => {
     expect(migration).toContain("UNIQUE (organization_id, ai_system_id, external_event_id)");
     expect(migration).toContain("UNIQUE (organization_id, ai_system_id, idempotency_key)");
-    expect(migration).toContain("IDEMPOTENCY_KEY_REUSE_WITH_DIFFERENT_PAYLOAD");
-    expect(migration).toContain("EXTERNAL_EVENT_REUSE_WITH_DIFFERENT_PAYLOAD");
+    expect(concurrency).toContain("IDEMPOTENCY_KEY_REUSE_WITH_DIFFERENT_PAYLOAD");
+    expect(concurrency).toContain("EXTERNAL_EVENT_REUSE_WITH_DIFFERENT_PAYLOAD");
+  });
+
+  it("serializes simultaneous retry identities before replay checks", () => {
+    expect(concurrency.match(/pg_advisory_xact_lock/g)).toHaveLength(2);
+    expect(concurrency).toContain("quantivis:external-ai:idem:");
+    expect(concurrency).toContain("quantivis:external-ai:event:");
+    expect(concurrency.indexOf("quantivis:external-ai:idem:")).toBeLessThan(
+      concurrency.indexOf("quantivis:external-ai:event:"),
+    );
   });
 
   it("limits the atomic ingest RPC to service_role", () => {
-    expect(migration).toContain("REVOKE ALL ON FUNCTION public.ingest_external_ai_decision");
-    expect(migration).toContain("FROM PUBLIC, anon, authenticated");
-    expect(migration).toContain("TO service_role");
+    expect(concurrency).toContain("REVOKE ALL ON FUNCTION public.ingest_external_ai_decision");
+    expect(concurrency).toContain("FROM PUBLIC, anon, authenticated");
+    expect(concurrency).toContain("TO service_role");
   });
 
   it("derives organization and system identity from the credential server-side", () => {
@@ -49,6 +60,12 @@ describe("external AI evidence security invariants", () => {
     expect(registry).toContain("const tokenHash = await sha256(rawToken)");
     expect(registry).toContain("token_hash: tokenHash");
     expect(registry).not.toContain("raw_token:");
+  });
+
+  it("keeps normalized external confidence while bridging the ledger projection to 0..100", () => {
+    expect(migration).toContain("confidence numeric CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1))");
+    expect(confidenceBridge).toContain("NEW.confidence_at_decision := NEW.confidence_at_decision * 100");
+    expect(confidenceBridge).toContain("NEW.decision_type = 'external_ai'");
   });
 
   it("keeps both new functions on manual authentication boundaries", () => {
