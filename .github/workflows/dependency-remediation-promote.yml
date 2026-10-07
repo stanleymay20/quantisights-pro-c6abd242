@@ -96,7 +96,7 @@ jobs:
             src/components/board-report/RiskAttribution.tsx \
             src/components/board-report/GovernanceActions.tsx \
             src/components/board-report/ConflictsSection.tsx \
-            vendor/lovable-tagger postcss.config.js
+            vendor/lovable-tagger
           # The repository globally ignores dist/. The local tagger package's
           # runtime entry points live under vendor/lovable-tagger/dist, so these
           # exact verified artifacts must be force-tracked for clone reproducibility.
