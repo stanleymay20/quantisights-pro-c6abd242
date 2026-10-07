@@ -11,6 +11,7 @@ const concurrency = read("supabase/migrations/20261007161000_external_ai_ingest_
 const orgErasure = read("supabase/migrations/20261007161500_external_ai_evidence_org_cascade.sql");
 const credentialRotation = read("supabase/migrations/20261007162000_atomic_ai_system_credential_rotation.sql");
 const dataApiHardening = read("supabase/migrations/20261007162500_external_ai_data_api_hardening.sql");
+const credentialRevoke = read("supabase/migrations/20261007163000_atomic_ai_system_credential_revoke.sql");
 const ingest = read("supabase/functions/external-ai-decision-ingest/index.ts");
 const registry = read("supabase/functions/ai-system-registry/index.ts");
 const config = read("supabase/config.toml");
@@ -67,6 +68,7 @@ describe("external AI evidence security invariants", () => {
   it("pins privileged database functions to an empty search_path", () => {
     expect(concurrency).toContain("SECURITY DEFINER\nSET search_path = ''");
     expect(credentialRotation).toContain("SECURITY DEFINER\nSET search_path = ''");
+    expect(credentialRevoke).toContain("SECURITY DEFINER\nSET search_path = ''");
     expect(orgErasure).toContain("SECURITY DEFINER\nSET search_path = ''");
   });
 
@@ -101,6 +103,24 @@ describe("external AI evidence security invariants", () => {
     expect(replacement).toBeLessThan(audit);
   });
 
+  it("serializes revoke against rotation and commits revoke + audit atomically", () => {
+    expect(registry).toContain('.rpc("revoke_ai_system_credential"');
+    expect(credentialRevoke).toContain("FROM public.ai_systems");
+    expect(credentialRevoke).toContain("FOR UPDATE");
+    expect(credentialRevoke).toContain("UPDATE public.ai_system_credentials");
+    expect(credentialRevoke).toContain("'ai_system_credential_revoked'");
+    expect(credentialRevoke).toContain("REVOKE ALL ON FUNCTION public.revoke_ai_system_credential");
+    expect(credentialRevoke).toContain("TO service_role");
+    expect(registry).not.toContain("credential compensation restore failed");
+
+    const systemLock = credentialRevoke.indexOf("FROM public.ai_systems");
+    const revoke = credentialRevoke.indexOf("UPDATE public.ai_system_credentials");
+    const audit = credentialRevoke.indexOf("INSERT INTO public.audit_log");
+    expect(systemLock).toBeGreaterThan(-1);
+    expect(systemLock).toBeLessThan(revoke);
+    expect(revoke).toBeLessThan(audit);
+  });
+
   it("prevents direct client registry writes and makes Data API grants explicit", () => {
     expect(dataApiHardening).toContain('DROP POLICY IF EXISTS "Admins owners can create AI systems"');
     expect(dataApiHardening).toContain('DROP POLICY IF EXISTS "Admins owners can update AI systems"');
@@ -113,11 +133,11 @@ describe("external AI evidence security invariants", () => {
     expect(dataApiHardening).toContain("TO authenticated\n  USING (public.is_org_member((select auth.uid()), organization_id))");
   });
 
-  it("treats non-rotation registry audit writes as required and compensates on failure", () => {
+  it("treats create-system audit writes as required and compensates failed setup", () => {
     expect(registry).toContain("AUDIT_WRITE_FAILED");
     expect(registry).toContain("await writeAudit");
-    expect(registry).toContain("credential compensation restore failed");
     expect(registry).toContain("credential compensation delete failed");
+    expect(registry).not.toContain("credential compensation restore failed");
   });
 
   it("keeps normalized external confidence while bridging the ledger projection to 0..100", () => {
