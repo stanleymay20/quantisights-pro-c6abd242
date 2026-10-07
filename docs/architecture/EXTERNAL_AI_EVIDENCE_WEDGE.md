@@ -1,17 +1,200 @@
 # External AI Evidence Wedge
 
-Status: implementation branch scaffold.
+Status: implemented on draft PR #59; merge is blocked until exact-head CI and forensic review pass.
 
-This branch introduces a vendor-neutral evidence path for externally produced AI decisions. The target flow is:
+## Product boundary
 
-external AI system -> registered AI identity -> authenticated decision intake -> decision ledger linkage -> audit trail -> evidence pack.
+Quantivis is the vendor-neutral evidence and governance layer around AI decisions. It does not need to replace the customer's model, agent, Claude, ChatGPT, Gemini, rules engine, or internal workflow.
 
-Design constraints:
-- preserve existing Quantivis decision, approval, execution, audit, and RLS behavior;
-- do not delete or freeze existing functions in this change;
-- prefer append-only provenance over mutable narrative fields;
-- raw prompts and outputs are optional; integrity hashes are first-class;
-- retries must be idempotent and cross-tenant references must fail closed;
-- regulatory mappings may identify supporting evidence but must not claim certification.
+The implemented path is:
 
-Implementation details are added in the migration, edge function, and tests on this branch.
+`external AI system → registered AI identity → machine credential → strict decision intake → append-only producer evidence → decision_ledger pending record → audit trail → existing governance/execution/outcome flow → external-AI Evidence Pack`
+
+No existing Keep/Freeze/Cut function was removed in this change.
+
+## Architecture decision
+
+External producer provenance is **not** stored as mutable columns on `decision_ledger`.
+
+Instead:
+
+- `ai_systems` is the organization-scoped producer registry.
+- `ai_system_credentials` stores only one-way SHA-256 token digests and is service-role only.
+- `external_ai_decision_evidence` is append-only producer/event provenance.
+- `decision_ledger` remains the canonical, evolving Quantivis governance record.
+- `ingest_external_ai_decision(...)` writes ledger + evidence + audit atomically.
+
+This separation is intentional: producer identity, model version, event time and integrity hashes are historical facts; approval, execution and outcome state can evolve after ingest.
+
+## AI-system registry
+
+`supabase/functions/ai-system-registry/index.ts`
+
+Admin/owner-authenticated actions:
+
+- `create_system` — creates the registry entry and issues the first machine credential.
+- `rotate_credential` — issues a new credential without exposing previous secrets.
+- `revoke_credential` — invalidates a credential.
+
+The raw `qv_ai_...` token is returned only when it is issued. The database stores `sha256:<digest>` plus a non-secret prefix for identification.
+
+Registry metadata includes organization, name, provider, system/model identifier, version, system type, deployment environment, purpose, human owner, lifecycle state, optional customer-provided risk classification, and optional external identifier.
+
+Quantivis deliberately does **not** infer a regulatory risk class.
+
+## External decision intake
+
+Endpoint implementation:
+
+`supabase/functions/external-ai-decision-ingest/index.ts`
+
+Protocol:
+
+`quantivis.external-ai-decision.v1`
+
+Authentication:
+
+`Authorization: Bearer qv_ai_<64 lowercase hex chars>`
+
+Example request:
+
+```json
+{
+  "protocol_version": "quantivis.external-ai-decision.v1",
+  "external_event_id": "decision-evt-123",
+  "occurred_at": "2026-10-07T12:00:00.000Z",
+  "input_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "output_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "decision": {
+    "action": "hold_supplier_payment",
+    "reason": "risk threshold exceeded"
+  },
+  "confidence": 0.91,
+  "human_oversight_state": "required",
+  "metadata": {
+    "workflow": "supplier_payment"
+  },
+  "provenance": {
+    "trace_id": "trace-123"
+  },
+  "idempotency_key": "customer-event-123"
+}
+```
+
+The caller may **not** send `organization_id`, `ai_system_id`, or `credential_id`. Quantivis derives all three from the machine credential.
+
+Raw prompts, raw inputs, tool arguments, and raw outputs are not required. Customers can retain sensitive content themselves while Quantivis records cryptographic integrity references.
+
+## Validation and replay behavior
+
+The intake contract:
+
+- accepts only the documented top-level fields;
+- requires an exact supported protocol version;
+- validates timestamps, normalized confidence, object sizes and identifier lengths;
+- normalizes SHA-256 references to `sha256:<64 lowercase hex>`;
+- rejects malformed hashes;
+- hashes the canonical validated payload;
+- limits request size;
+- rejects tenant/system identity in the body;
+- rejects inactive/expired/revoked credentials and inactive systems.
+
+Two independent replay identities are enforced:
+
+1. `(organization, ai_system, idempotency_key)`
+2. `(organization, ai_system, external_event_id)`
+
+Same identity + same canonical payload returns the original decision/evidence IDs as an idempotent replay.
+
+Same identity + different payload fails with HTTP 409 and never overwrites the original evidence.
+
+## Governance boundary
+
+Every newly ingested external AI event creates a normal `decision_ledger` row with:
+
+- `decision_type = 'external_ai'`
+- `decision_status = 'pending'`
+- `execution_status = 'not_started'`
+
+External AI output therefore cannot arrive as `approved` or `executable`.
+
+Existing Quantivis approval and `execute-decision-action` controls remain the authority for any governed outbound side effect.
+
+The external protocol represents confidence in normalized `[0,1]` form. The immutable evidence keeps that normalized value; a narrow insert trigger converts the derived ledger projection to Quantivis's existing `[0,100]` display convention.
+
+## Append-only evidence
+
+`external_ai_decision_evidence` contains:
+
+- producer/system snapshot;
+- model/deployment version;
+- external event ID;
+- event time and ingestion time separately;
+- input/output SHA-256 references;
+- canonical payload hash;
+- decision descriptor;
+- confidence and human-oversight state;
+- safe metadata/provenance;
+- protocol version;
+- the linked Quantivis decision.
+
+RLS allows organization members to read their evidence. There are no client insert/update/delete policies. A database trigger rejects UPDATE and DELETE so the producer record cannot silently drift after acceptance.
+
+## Evidence Pack extension
+
+The existing `quantivis.evidence-pack.v2` schema remains unchanged for compatibility.
+
+`src/lib/external-ai-evidence-pack.ts` composes that stable pack with an `External AI Provenance` section in a versioned envelope:
+
+`quantivis.external-ai-evidence-pack.v1`
+
+The envelope hash covers:
+
+- the existing evidence-pack hash;
+- producer identity;
+- model/system version;
+- external event identity;
+- event and ingestion timestamps;
+- input/output hashes;
+- canonical payload hash;
+- oversight state and provenance.
+
+The builder fails closed if the evidence row points to a different decision or organization.
+
+Hashes are integrity references, not proof that the underlying content is truthful. The pack explicitly states that it can support governance/regulatory obligations but is **not** a certification of legal compliance.
+
+## AgentShield
+
+See `AGENTSHIELD_QUANTIVIS_EVIDENCE_CONTRACT.md`.
+
+AgentShield uses the same generic ingest protocol. `ALLOW`, `REVIEW`, and `BLOCK` are evidence-bearing policy outcomes; none receives a privileged path around Quantivis governance.
+
+## Security/test gates
+
+Added tests cover:
+
+- valid payload normalization;
+- malformed hash rejection;
+- unsupported schema rejection;
+- rejection of caller-selected tenant/system identity;
+- canonical hashing stability;
+- append-only/RLS/security invariants;
+- idempotency and external-event uniqueness contracts;
+- service-role-only atomic ingest;
+- one-way credential storage;
+- pending-only ledger projection;
+- deterministic external evidence-pack construction;
+- decision/tenant mismatch fail-closed behavior;
+- evidence-pack integrity changes when immutable producer evidence changes;
+- explicit evidentiary/compliance limitations.
+
+## Destructive cleanup gate
+
+The 44 Claude-labelled `Cut` functions and 44 `Freeze` functions remain untouched.
+
+No destructive cleanup should begin until:
+
+1. this vertical slice passes exact-head CI;
+2. database migration behavior is validated in a safe environment;
+3. a real registered AI system can ingest a decision and reproduce the external-AI Evidence Pack;
+4. the complete 127-function triage is available for forensic review.
