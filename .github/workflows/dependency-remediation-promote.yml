@@ -97,6 +97,13 @@ jobs:
             src/components/board-report/GovernanceActions.tsx \
             src/components/board-report/ConflictsSection.tsx \
             vendor/lovable-tagger postcss.config.js
+          # The repository globally ignores dist/. The local tagger package's
+          # runtime entry points live under vendor/lovable-tagger/dist, so these
+          # exact verified artifacts must be force-tracked for clone reproducibility.
+          git add -f vendor/lovable-tagger/dist/index.js \
+            vendor/lovable-tagger/dist/index.cjs \
+            vendor/lovable-tagger/dist/index.d.ts \
+            vendor/lovable-tagger/dist/index.d.cts
           git diff --cached --exit-code && { echo 'No candidate changes to promote'; exit 0; } || true
-          git commit -m 'security: migrate dependency toolchain off vulnerable Tailwind 3 graph'
+          git commit -m 'security: make vendored Lovable tagger clone-reproducible'
           git push origin HEAD:security/dependency-audit-2026-10
