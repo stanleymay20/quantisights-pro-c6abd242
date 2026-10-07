@@ -1,0 +1,170 @@
+name: Dependency Visual Regression
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/dependency-visual-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_SHA: f6b3061c5d296f35c2befe112dabc0fa4e8efaeb
+    steps:
+      - name: Checkout baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: baseline
+          fetch-depth: 1
+
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: security/dependency-audit-2026-10
+          path: candidate
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Clean install baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd baseline && npm ci)
+          (cd candidate && npm ci)
+
+      - name: Build both trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd baseline && QUANTIVIS_BUILD_TIMESTAMP=2026-10-08T00:00:00.000Z npm run build)
+          (cd candidate && QUANTIVIS_BUILD_TIMESTAMP=2026-10-08T00:00:00.000Z npm run build)
+
+      - name: Install Chromium for deterministic capture
+        working-directory: candidate
+        run: npx playwright install --with-deps chromium
+
+      - name: Start baseline and candidate preview servers
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd baseline && nohup npx vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/baseline-preview.log 2>&1 & echo $! > /tmp/baseline-preview.pid)
+          (cd candidate && nohup npx vite preview --host 127.0.0.1 --port 4174 --strictPort > /tmp/candidate-preview.log 2>&1 & echo $! > /tmp/candidate-preview.pid)
+          for port in 4173 4174; do
+            ready=0
+            for i in $(seq 1 60); do
+              if curl --fail --silent "http://127.0.0.1:${port}/" >/dev/null; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "preview server on ${port} did not become ready"
+              cat /tmp/baseline-preview.log || true
+              cat /tmp/candidate-preview.log || true
+              exit 1
+            fi
+          done
+
+      - name: Capture matched desktop and mobile screenshots
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p visual-regression
+          cat > /tmp/capture-quantivis.mjs <<'NODE'
+          import { chromium } from '@playwright/test';
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+
+          const out = path.resolve('visual-regression');
+          const routes = [
+            ['home', '/'],
+            ['pricing', '/pricing'],
+            ['security', '/security'],
+            ['trust', '/trust'],
+            ['login', '/login'],
+            ['enterprise-contact', '/enterprise/contact'],
+            ['decision-platforms', '/decision-intelligence-platforms'],
+            ['de-datenschutz', '/de/datenschutz'],
+          ];
+          const viewports = [
+            ['desktop', { width: 1440, height: 1000 }],
+            ['mobile', { width: 390, height: 844 }],
+          ];
+          const targets = [
+            ['baseline', 'http://127.0.0.1:4173'],
+            ['candidate', 'http://127.0.0.1:4174'],
+          ];
+
+          const browser = await chromium.launch({ headless: true });
+          const manifest = [];
+          try {
+            for (const [viewportName, viewport] of viewports) {
+              for (const [targetName, origin] of targets) {
+                const context = await browser.newContext({
+                  viewport,
+                  colorScheme: 'light',
+                  reducedMotion: 'reduce',
+                  locale: 'en-GB',
+                  timezoneId: 'Europe/Berlin',
+                });
+                for (const [routeName, route] of routes) {
+                  const page = await context.newPage();
+                  const errors = [];
+                  page.on('pageerror', error => errors.push(String(error)));
+                  await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                  await page.waitForTimeout(1200);
+                  await page.evaluate(() => {
+                    document.querySelectorAll('video').forEach((video) => {
+                      try { video.pause(); video.currentTime = 0; } catch {}
+                    });
+                  });
+                  await page.addStyleTag({ content: `
+                    *, *::before, *::after {
+                      animation-duration: 0.001ms !important;
+                      animation-delay: 0s !important;
+                      transition-duration: 0s !important;
+                      caret-color: transparent !important;
+                    }
+                    video { visibility: hidden !important; }
+                  `});
+                  await page.waitForTimeout(100);
+                  const file = `${targetName}__${viewportName}__${routeName}.png`;
+                  await page.screenshot({ path: path.join(out, file), fullPage: true });
+                  manifest.push({ targetName, viewportName, routeName, route, file, pageErrors: errors });
+                  await page.close();
+                }
+                await context.close();
+              }
+            }
+          } finally {
+            await browser.close();
+          }
+          await fs.writeFile(path.join(out, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+          const pageErrors = manifest.filter(item => item.pageErrors.length > 0);
+          if (pageErrors.length) {
+            console.error(JSON.stringify(pageErrors, null, 2));
+            process.exitCode = 2;
+          }
+          NODE
+          node /tmp/capture-quantivis.mjs
+
+      - name: Upload matched visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-visual-regression
+          path: candidate/visual-regression
+          if-no-files-found: error
