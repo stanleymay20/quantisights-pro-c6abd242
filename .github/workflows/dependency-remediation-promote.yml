@@ -74,7 +74,16 @@ jobs:
           test -s src/tailwind.config.lov.json
           grep -q '"theme"' src/tailwind.config.lov.json
           rm -f src/tailwind.config.lov.json
-          npm ls braces --all | grep -q '(empty)'
+          if npm explain braces > /tmp/braces-explain.txt 2>&1; then
+            echo 'braces unexpectedly remains in the dependency graph'
+            cat /tmp/braces-explain.txt
+            exit 1
+          fi
+          if npm explain postcss-selector-parser > /tmp/postcss-selector-parser-explain.txt 2>&1; then
+            echo 'postcss-selector-parser unexpectedly remains in the dependency graph'
+            cat /tmp/postcss-selector-parser-explain.txt
+            exit 1
+          fi
           git diff --check
 
       - name: Commit candidate to isolated security branch
