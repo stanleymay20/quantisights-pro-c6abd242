@@ -35,7 +35,7 @@ const ConflictsSection = ({ conflicts }: ConflictsSectionProps) => {
           const bgClass = colors.split(" ")[1];
           return (
             <div key={i} className="border border-border/50 print:border-border rounded-xl p-5 flex items-start gap-4">
-              <div className={`w-3 h-3 rounded-full mt-1.5 flex-shrink-0 ${bgClass}`} />
+              <div className={`w-3 h-3 rounded-full mt-1.5 shrink-0 ${bgClass}`} />
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
                   <span className={`font-semibold text-sm uppercase tracking-wider ${textClass}`}>

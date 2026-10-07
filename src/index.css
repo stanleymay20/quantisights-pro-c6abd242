@@ -1,6 +1,39 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+/* Tailwind v3 -> v4 compatibility layer for existing Quantivis utility semantics. */
+@theme {
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --drop-shadow-sm: 0 1px 1px rgb(0 0 0 / 0.05);
+  --drop-shadow: 0 1px 2px rgb(0 0 0 / 0.1), 0 1px 1px rgb(0 0 0 / 0.06);
+  --blur-sm: 4px;
+  --blur: 8px;
+  --backdrop-blur-sm: 4px;
+  --default-ring-width: 3px;
+  --default-ring-color: rgb(59 130 246 / 0.5);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: #9ca3af;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@custom-variant hover (&:hover);
 
 /* Fonts preloaded in index.html for performance */
 
@@ -293,14 +326,14 @@
   }
 }
 
-@layer utilities {
-  .glass-card {
-    @apply backdrop-blur-xl rounded-xl;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--card) / 0.7);
-    box-shadow: var(--shadow-card);
-  }
+@utility glass-card {
+  @apply backdrop-blur-xl rounded-xl;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card) / 0.7);
+  box-shadow: var(--shadow-card);
+}
 
+@layer utilities {
   .glass-card-hover {
     @apply glass-card transition-all duration-300 hover:-translate-y-0.5;
     box-shadow: var(--shadow-card);

@@ -74,7 +74,7 @@ const RiskAttribution = ({ convergence }: RiskAttributionProps) => {
       <div className="space-y-6">
         {factors.map((f) => (
           <div key={f.label} className="flex items-center gap-6">
-            <div className={`w-4 h-4 rounded-full flex-shrink-0 ${f.colorClass.split(" ")[0]}`} />
+            <div className={`w-4 h-4 rounded-full shrink-0 ${f.colorClass.split(" ")[0]}`} />
             <div className="flex-1">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-semibold text-foreground/90 print:text-foreground">{f.label}</span>

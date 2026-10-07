@@ -128,7 +128,7 @@ const GovernanceActions = ({ governanceActions, aiNarrative, tier }: GovernanceA
                   <ol className="space-y-2">
                     {aiNarrative.recommended_actions.map((action, i) => (
                       <li key={i} className="flex gap-3 text-sm">
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 print:bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
+                        <span className="shrink-0 w-6 h-6 rounded-full bg-primary/20 print:bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
                           {i + 1}
                         </span>
                         <span className="text-foreground/80 print:text-foreground leading-relaxed">{action}</span>
