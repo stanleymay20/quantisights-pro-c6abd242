@@ -24,6 +24,14 @@ type RotationRow = {
   revoked_credential_ids: string[] | null;
 };
 
+type RevokeRow = {
+  credential_id: string;
+  ai_system_id: string;
+  status: string;
+  revoked_at: string | null;
+  idempotent_replay: boolean;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -37,6 +45,15 @@ function isRotationRow(value: unknown): value is RotationRow {
     && (value.revoked_credential_ids === null
       || (Array.isArray(value.revoked_credential_ids)
         && value.revoked_credential_ids.every((id) => typeof id === "string")));
+}
+
+function isRevokeRow(value: unknown): value is RevokeRow {
+  if (!isRecord(value)) return false;
+  return typeof value.credential_id === "string"
+    && typeof value.ai_system_id === "string"
+    && typeof value.status === "string"
+    && (value.revoked_at === null || typeof value.revoked_at === "string")
+    && typeof value.idempotent_replay === "boolean";
 }
 
 function json(req: Request, body: unknown, status = 200): Response {
@@ -135,15 +152,6 @@ async function writeAudit(
 async function deleteCredentialBestEffort(svc: ServiceClient, credentialId: string): Promise<void> {
   const { error } = await svc.from("ai_system_credentials").delete().eq("id", credentialId);
   if (error) console.error("credential compensation delete failed", error.message);
-}
-
-async function restoreCredentialsBestEffort(svc: ServiceClient, credentialIds: string[]): Promise<void> {
-  if (credentialIds.length === 0) return;
-  const { error } = await svc
-    .from("ai_system_credentials")
-    .update({ status: "active", revoked_at: null })
-    .in("id", credentialIds);
-  if (error) console.error("credential compensation restore failed", error.message);
 }
 
 Deno.serve(async (req) => {
@@ -323,47 +331,31 @@ Deno.serve(async (req) => {
     if (action === "revoke_credential") {
       if (!isValidUUID(body.credential_id)) return json(req, { error: "INVALID_CREDENTIAL_ID" }, 400);
 
-      const { data: current, error: currentError } = await svc
-        .from("ai_system_credentials")
-        .select("id, ai_system_id, status, revoked_at")
-        .eq("id", body.credential_id)
-        .eq("organization_id", organizationId)
-        .maybeSingle();
-      if (currentError) throw currentError;
-      if (!isRecord(current) || typeof current.id !== "string" || typeof current.ai_system_id !== "string") {
-        return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
-      }
-      if (current.status === "revoked") {
-        return json(req, { credential: current, idempotent_replay: true });
-      }
-
-      const revokedAt = new Date().toISOString();
-      const { data: credential, error } = await svc
-        .from("ai_system_credentials")
-        .update({ status: "revoked", revoked_at: revokedAt })
-        .eq("id", current.id)
-        .eq("organization_id", organizationId)
-        .select("id, ai_system_id, status, revoked_at")
+      const { data: revoked, error: revokeError } = await svc
+        .rpc("revoke_ai_system_credential", {
+          p_organization_id: organizationId,
+          p_credential_id: body.credential_id,
+          p_actor_id: userId,
+        })
         .single();
-      if (error || !isRecord(credential) || typeof credential.id !== "string" || typeof credential.ai_system_id !== "string") {
-        throw new Error(`REVOKE_CREDENTIAL_FAILED:${error?.message ?? "invalid database response"}`);
-      }
 
-      try {
-        await writeAudit(svc, {
-          organization_id: organizationId,
-          actor_id: userId,
-          actor_type: "user",
-          action_type: "ai_system_credential_revoked",
-          resource_type: "ai_system",
-          resource_id: credential.ai_system_id,
-          payload: { credential_id: credential.id },
-        });
-      } catch (auditError) {
-        await restoreCredentialsBestEffort(svc, [credential.id]);
-        throw auditError;
+      if (revokeError) {
+        if (revokeError.message?.includes("CREDENTIAL_NOT_FOUND")) {
+          return json(req, { error: "CREDENTIAL_NOT_FOUND" }, 404);
+        }
+        throw new Error(`REVOKE_CREDENTIAL_FAILED:${revokeError.message}`);
       }
-      return json(req, { credential, idempotent_replay: false });
+      if (!isRevokeRow(revoked)) throw new Error("REVOKE_CREDENTIAL_FAILED:INVALID_RESULT");
+
+      return json(req, {
+        credential: {
+          id: revoked.credential_id,
+          ai_system_id: revoked.ai_system_id,
+          status: revoked.status,
+          revoked_at: revoked.revoked_at,
+        },
+        idempotent_replay: revoked.idempotent_replay,
+      });
     }
 
     return json(req, { error: "UNKNOWN_ACTION" }, 400);
