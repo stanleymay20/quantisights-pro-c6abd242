@@ -12,7 +12,7 @@
 CREATE OR REPLACE FUNCTION public.prevent_external_ai_evidence_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_purge_org text;
@@ -37,7 +37,7 @@ CREATE OR REPLACE FUNCTION public.cleanup_external_ai_for_organization_delete()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 BEGIN
   -- Transaction-local and scoped to this exact organization. The evidence
