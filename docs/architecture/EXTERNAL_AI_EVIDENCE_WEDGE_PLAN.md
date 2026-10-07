@@ -1,1 +1,0 @@
-Implementation plan: reuse existing org/auth, decision ledger, audit log, evidence pack, and idempotency patterns. No destructive function cleanup in this PR.
