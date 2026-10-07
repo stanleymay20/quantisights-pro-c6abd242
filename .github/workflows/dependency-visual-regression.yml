@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p visual-regression
-          cat > /tmp/capture-quantivis.mjs <<'NODE'
+          cat > visual-regression/capture.mjs <<'NODE'
           import { chromium } from '@playwright/test';
           import fs from 'node:fs/promises';
           import path from 'node:path';
@@ -159,7 +159,7 @@ jobs:
             process.exitCode = 2;
           }
           NODE
-          node /tmp/capture-quantivis.mjs
+          node visual-regression/capture.mjs
 
       - name: Upload matched visual evidence
         if: always()
