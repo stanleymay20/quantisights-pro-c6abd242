@@ -10,6 +10,7 @@ const confidenceBridge = read("supabase/migrations/20261007160500_external_ai_co
 const concurrency = read("supabase/migrations/20261007161000_external_ai_ingest_concurrency.sql");
 const orgErasure = read("supabase/migrations/20261007161500_external_ai_evidence_org_cascade.sql");
 const credentialRotation = read("supabase/migrations/20261007162000_atomic_ai_system_credential_rotation.sql");
+const dataApiHardening = read("supabase/migrations/20261007162500_external_ai_data_api_hardening.sql");
 const ingest = read("supabase/functions/external-ai-decision-ingest/index.ts");
 const registry = read("supabase/functions/ai-system-registry/index.ts");
 const config = read("supabase/config.toml");
@@ -63,6 +64,12 @@ describe("external AI evidence security invariants", () => {
     expect(concurrency).toContain("TO service_role");
   });
 
+  it("pins privileged database functions to an empty search_path", () => {
+    expect(concurrency).toContain("SECURITY DEFINER\nSET search_path = ''");
+    expect(credentialRotation).toContain("SECURITY DEFINER\nSET search_path = ''");
+    expect(orgErasure).toContain("SECURITY DEFINER\nSET search_path = ''");
+  });
+
   it("derives organization and system identity from the credential server-side", () => {
     expect(ingest).toContain(".eq(\"token_hash\", tokenHash)");
     expect(ingest).toContain("credential.organization_id");
@@ -92,6 +99,18 @@ describe("external AI evidence security invariants", () => {
     expect(revoke).toBeGreaterThan(-1);
     expect(revoke).toBeLessThan(replacement);
     expect(replacement).toBeLessThan(audit);
+  });
+
+  it("prevents direct client registry writes and makes Data API grants explicit", () => {
+    expect(dataApiHardening).toContain('DROP POLICY IF EXISTS "Admins owners can create AI systems"');
+    expect(dataApiHardening).toContain('DROP POLICY IF EXISTS "Admins owners can update AI systems"');
+    expect(dataApiHardening).toContain("REVOKE ALL ON TABLE public.ai_systems FROM anon, authenticated");
+    expect(dataApiHardening).toContain("GRANT SELECT ON TABLE public.ai_systems TO authenticated");
+    expect(dataApiHardening).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_systems TO service_role");
+    expect(dataApiHardening).toContain("REVOKE ALL ON TABLE public.ai_system_credentials FROM anon, authenticated");
+    expect(dataApiHardening).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.ai_system_credentials TO service_role");
+    expect(dataApiHardening).toContain("GRANT SELECT ON TABLE public.external_ai_decision_evidence TO authenticated");
+    expect(dataApiHardening).toContain("TO authenticated\n  USING (public.is_org_member((select auth.uid()), organization_id))");
   });
 
   it("treats non-rotation registry audit writes as required and compensates on failure", () => {
