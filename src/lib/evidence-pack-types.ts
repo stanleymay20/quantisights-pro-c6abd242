@@ -1,17 +1,17 @@
 import type { ReviewableDecision } from "@/components/decisions/executive-review-flow";
 
 /**
- * EP-1 — Enterprise Decision Evidence Pack types.
+ * Enterprise Decision Evidence Pack types.
  *
  * The Evidence Pack is a presentation/export layer only. It packages
- * information that already exists on a decision_ledger row (and, where
- * supplied, its audit_log entries) into one deterministic, auditor-facing
- * artifact. It never calls a model, a runtime, or a queue, and it never
- * invents a value that isn't already present on the source record.
+ * information that already exists on persisted Quantivis records into one
+ * deterministic, auditor-facing artifact. It never calls a model, a runtime,
+ * or a queue, and it never invents a value that is not present on a source
+ * record.
  */
 
-// v2 adds the measured_outcome section (EP-2).
-export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v2";
+// v2 added measured_outcome. v3 adds immutable external-AI producer provenance.
+export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v3";
 
 /**
  * "complete"      — the section is fully backed by data on the decision.
@@ -21,17 +21,11 @@ export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v2";
  */
 export type EvidencePackSectionStatus = "complete" | "partial" | "unavailable" | "not_applicable";
 
-/**
- * Every Evidence Pack section carries these five fields so an auditor can
- * see, at a glance, what the section claims and exactly where it came from.
- */
 export interface EvidencePackSection {
   status: EvidencePackSectionStatus;
   title: string;
   summary: string;
-  /** Where this section's data was read from (e.g. "decision_ledger.explanation_metadata"). */
   source: string;
-  /** The specific fields/records used to generate this section. Empty when unavailable. */
   generated_from: string[];
   data: Record<string, unknown>;
 }
@@ -63,6 +57,7 @@ export interface EvidencePackGovernanceItem {
 
 export const EVIDENCE_PACK_SECTION_KEYS = [
   "decision_summary",
+  "external_ai_provenance",
   "business_context",
   "decision_recommendation",
   "confidence",
@@ -86,7 +81,6 @@ export const EVIDENCE_PACK_SECTION_KEYS = [
 ] as const;
 
 export type EvidencePackSectionKey = (typeof EVIDENCE_PACK_SECTION_KEYS)[number];
-
 export type EvidencePackSections = Record<EvidencePackSectionKey, EvidencePackSection>;
 
 export interface EvidencePack {
@@ -101,11 +95,6 @@ export interface EvidencePack {
   evidence_pack_hash: string;
 }
 
-/**
- * Decision input accepted by buildEvidencePack. Extends the same
- * ReviewableDecision shape UX-2 uses (a decision_ledger row), plus the
- * handful of additional decision_ledger columns EP-1 also reads.
- */
 export interface EvidencePackDecisionInput extends ReviewableDecision {
   linked_aicis_prediction_id?: string | null;
   linked_aicis_recommendation_id?: string | null;
@@ -115,10 +104,32 @@ export interface EvidencePackDecisionInput extends ReviewableDecision {
 }
 
 /**
- * A decision_outcomes row as written by the evaluate-outcomes Edge Function:
- * the metric the decision was expected to move, and the observed before/after
- * averages once its evaluation window has elapsed.
+ * Immutable external-AI producer evidence linked to a decision_ledger row.
+ * This shape intentionally excludes credential material. It is safe to render
+ * to an auditor-facing evidence pack.
  */
+export interface EvidencePackExternalAIEvidenceInput {
+  id: string;
+  ai_system_id: string;
+  system_name: string;
+  provider: string;
+  system_identifier: string;
+  model_version: string | null;
+  deployment_environment: string;
+  external_event_id: string;
+  occurred_at: string;
+  ingested_at: string;
+  input_hash: string;
+  output_hash: string;
+  decision_descriptor: Record<string, unknown>;
+  confidence: number | null;
+  human_oversight_state: string | null;
+  metadata: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+  payload_hash: string;
+  protocol_version: string;
+}
+
 export interface EvidencePackOutcomeInput {
   id: string;
   expected_metric: string;
@@ -146,14 +157,13 @@ export interface BuildEvidencePackOptions {
   isSimulation?: boolean;
   /** Pre-fetched decision_outcomes rows for this decision. */
   outcomes?: EvidencePackOutcomeInput[];
-  /**
-   * True when decision_outcomes could not be read. The pack then reports the
-   * outcome as unknown rather than claiming no outcome is tracked.
-   */
   outcomesReadFailed?: boolean;
+  /** Pre-fetched immutable producer evidence when decision_type = external_ai. */
+  externalAIEvidence?: EvidencePackExternalAIEvidenceInput | null;
+  /** True when the linked evidence row could not be read. */
+  externalAIEvidenceReadFailed?: boolean;
 }
 
-/** A single block in the PDF-ready data model, rendered by evidence-pack-pdf.ts. */
 export type EvidencePackPdfBlock =
   | { type: "heading"; level: 1 | 2; text: string }
   | { type: "status_line"; status: EvidencePackSectionStatus; text: string }
