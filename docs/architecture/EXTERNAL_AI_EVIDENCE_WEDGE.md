@@ -44,6 +44,18 @@ Registry metadata includes organization, name, provider, system/model identifier
 
 Quantivis deliberately does **not** infer a regulatory risk class.
 
+### Data API boundary
+
+The browser/Data API is intentionally read-only for this wedge:
+
+- authenticated organization members may `SELECT` their `ai_systems` registry rows through tenant RLS;
+- authenticated organization members may `SELECT` their `external_ai_decision_evidence` rows through tenant RLS;
+- authenticated and anonymous clients receive no direct INSERT/UPDATE/DELETE grants for registry, credential, or evidence tables;
+- credential-digest rows are never exposed to authenticated/anonymous clients;
+- service-role grants are explicit for the audited Edge/RPC paths.
+
+This prevents an admin client from bypassing `ai-system-registry` to create or mutate an unaudited AI-system record. The grants are explicit rather than relying on implicit public-schema Data API exposure.
+
 ## External decision intake
 
 Endpoint implementation:
@@ -148,6 +160,15 @@ The only evidence deletion exception is organization erasure. A database trigger
 
 This exception does not make ordinary service-role deletion legal and does not weaken append-only behavior during normal operation.
 
+## Privileged database functions
+
+The ingest, credential-rotation, and organization-erasure functions are privileged database boundaries. They:
+
+- use `SECURITY DEFINER` only where elevated access is required;
+- use an empty `search_path` and schema-qualified relations;
+- revoke execution from `PUBLIC`, `anon`, and `authenticated` where callable;
+- grant execution only to `service_role` for the machine-ingest and rotation RPCs.
+
 ## Evidence Pack extension
 
 The existing `quantivis.evidence-pack.v2` schema remains unchanged for compatibility.
@@ -193,6 +214,8 @@ Added tests cover:
 - service-role-only atomic ingest;
 - one-way credential storage;
 - atomic, serialized credential rotation;
+- explicit Data API grants and denial of direct client writes;
+- empty-search-path hardening for privileged database functions;
 - pending-only ledger projection;
 - deterministic external evidence-pack construction;
 - decision/tenant mismatch fail-closed behavior;
