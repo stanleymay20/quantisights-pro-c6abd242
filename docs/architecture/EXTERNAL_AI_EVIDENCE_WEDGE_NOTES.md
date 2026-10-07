@@ -1,1 +1,0 @@
-Temporary design notes. Implementation in progress on draft PR #59.
