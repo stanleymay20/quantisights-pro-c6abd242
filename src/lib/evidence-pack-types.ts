@@ -1,24 +1,19 @@
 import type { ReviewableDecision } from "@/components/decisions/executive-review-flow";
 
 /**
- * Enterprise Decision Evidence Pack types.
+ * EP-1 — Enterprise Decision Evidence Pack types.
  *
  * The Evidence Pack is a presentation/export layer only. It packages
- * information that already exists on persisted Quantivis records into one
- * deterministic, auditor-facing artifact. It never calls a model, a runtime,
- * or a queue, and it never invents a value that is not present on a source
- * record.
+ * information that already exists on a decision_ledger row (and, where
+ * supplied, its audit_log entries) into one deterministic, auditor-facing
+ * artifact. It never calls a model, a runtime, or a queue, and it never
+ * invents a value that isn't already present on the source record.
  */
 
-// v2 added measured_outcome. v3 adds immutable external-AI producer provenance.
-export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v3";
+// v2 adds the measured_outcome section (EP-2).
+export const EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.evidence-pack.v2";
+export const EXTERNAL_AI_EVIDENCE_PACK_SCHEMA_VERSION = "quantivis.external-ai-evidence-pack.v1";
 
-/**
- * "complete"      — the section is fully backed by data on the decision.
- * "partial"       — some but not all expected data is present.
- * "unavailable"   — the underlying data does not exist on this decision.
- * "not_applicable"— the section does not apply to this decision/state.
- */
 export type EvidencePackSectionStatus = "complete" | "partial" | "unavailable" | "not_applicable";
 
 export interface EvidencePackSection {
@@ -57,7 +52,6 @@ export interface EvidencePackGovernanceItem {
 
 export const EVIDENCE_PACK_SECTION_KEYS = [
   "decision_summary",
-  "external_ai_provenance",
   "business_context",
   "decision_recommendation",
   "confidence",
@@ -88,10 +82,8 @@ export interface EvidencePack {
   decision_id: string;
   organization_id: string | null;
   generated_at: string;
-  /** True for demo/unpersisted decisions — the pack is a simulation, not an audit artifact. */
   is_simulation: boolean;
   sections: EvidencePackSections;
-  /** Deterministic hash over every section except "hashes" and "digital_signature". */
   evidence_pack_hash: string;
 }
 
@@ -105,8 +97,7 @@ export interface EvidencePackDecisionInput extends ReviewableDecision {
 
 /**
  * Immutable external-AI producer evidence linked to a decision_ledger row.
- * This shape intentionally excludes credential material. It is safe to render
- * to an auditor-facing evidence pack.
+ * Credential material is deliberately excluded from the export shape.
  */
 export interface EvidencePackExternalAIEvidenceInput {
   id: string;
@@ -130,6 +121,25 @@ export interface EvidencePackExternalAIEvidenceInput {
   protocol_version: string;
 }
 
+/**
+ * Compatibility-preserving external-AI envelope. It contains the complete
+ * existing Evidence Pack plus one immutable producer-provenance section. The
+ * envelope hash covers the base pack hash and that new section, so existing
+ * EP-1/EP-2 consumers remain byte-compatible while external-AI exports gain a
+ * stronger chain of custody.
+ */
+export interface ExternalAIEvidencePack {
+  schema_version: typeof EXTERNAL_AI_EVIDENCE_PACK_SCHEMA_VERSION;
+  base_schema_version: typeof EVIDENCE_PACK_SCHEMA_VERSION;
+  decision_id: string;
+  organization_id: string | null;
+  generated_at: string;
+  is_simulation: boolean;
+  base_pack: EvidencePack;
+  external_ai_provenance: EvidencePackSection;
+  evidence_pack_hash: string;
+}
+
 export interface EvidencePackOutcomeInput {
   id: string;
   expected_metric: string;
@@ -149,19 +159,11 @@ export interface EvidencePackOutcomeInput {
 }
 
 export interface BuildEvidencePackOptions {
-  /** Injectable clock for deterministic tests; defaults to the wall clock. */
   now?: () => string;
-  /** Pre-fetched audit_log rows for this decision (resource_type = "decision"). */
   auditEntries?: EvidencePackAuditEntry[];
-  /** Overrides the simulation flag; defaults to decision_origin === "demo". */
   isSimulation?: boolean;
-  /** Pre-fetched decision_outcomes rows for this decision. */
   outcomes?: EvidencePackOutcomeInput[];
   outcomesReadFailed?: boolean;
-  /** Pre-fetched immutable producer evidence when decision_type = external_ai. */
-  externalAIEvidence?: EvidencePackExternalAIEvidenceInput | null;
-  /** True when the linked evidence row could not be read. */
-  externalAIEvidenceReadFailed?: boolean;
 }
 
 export type EvidencePackPdfBlock =
