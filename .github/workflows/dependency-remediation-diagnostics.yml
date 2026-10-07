@@ -1,0 +1,65 @@
+name: Dependency Remediation Diagnostics
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/dependency-remediation-diagnostics.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install exact lockfile
+        run: npm ci
+      - name: Capture dependency ownership and audit
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== node/npm ==='
+            node --version
+            npm --version
+            echo
+            echo '=== direct versions ==='
+            npm ls tailwindcss @tailwindcss/typography tailwindcss-animate lovable-tagger typescript-eslint --depth=1
+            echo
+            echo '=== explain tailwindcss ==='
+            npm explain tailwindcss
+            echo
+            echo '=== explain braces ==='
+            npm explain braces
+            echo
+            echo '=== explain dompurify ==='
+            npm explain dompurify
+            echo
+            echo '=== explain postcss-selector-parser ==='
+            npm explain postcss-selector-parser
+            echo
+            echo '=== explain typescript-eslint ==='
+            npm explain typescript-eslint
+            echo
+            echo '=== outdated ==='
+            npm outdated || true
+            echo
+            echo '=== audit ==='
+            npm audit --json || true
+          } > dependency-diagnostics.txt 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-remediation-diagnostics
+          path: dependency-diagnostics.txt
+          if-no-files-found: error
