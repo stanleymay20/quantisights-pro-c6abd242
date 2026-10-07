@@ -9,6 +9,7 @@ const migration = read("supabase/migrations/20261007160000_external_ai_evidence_
 const confidenceBridge = read("supabase/migrations/20261007160500_external_ai_confidence_scale.sql");
 const concurrency = read("supabase/migrations/20261007161000_external_ai_ingest_concurrency.sql");
 const orgErasure = read("supabase/migrations/20261007161500_external_ai_evidence_org_cascade.sql");
+const credentialRotation = read("supabase/migrations/20261007162000_atomic_ai_system_credential_rotation.sql");
 const ingest = read("supabase/functions/external-ai-decision-ingest/index.ts");
 const registry = read("supabase/functions/ai-system-registry/index.ts");
 const config = read("supabase/config.toml");
@@ -76,18 +77,28 @@ describe("external AI evidence security invariants", () => {
     expect(registry).not.toContain("raw_token:");
   });
 
-  it("makes credential rotation retire all previously active credentials", () => {
-    expect(registry).toContain('.eq("status", "active")');
-    expect(registry).toContain('update({ status: "revoked", revoked_at: new Date().toISOString() })');
-    expect(registry).toContain("revoked_credential_ids: priorIds");
-    expect(registry).toContain("restoreCredentialsBestEffort");
-    expect(registry).toContain("deleteCredentialBestEffort");
+  it("serializes credential rotation and commits revoke + replacement + audit atomically", () => {
+    expect(registry).toContain('.rpc("rotate_ai_system_credential"');
+    expect(credentialRotation).toContain("FOR UPDATE");
+    expect(credentialRotation).toContain("SET status = 'revoked'");
+    expect(credentialRotation).toContain("INSERT INTO public.ai_system_credentials");
+    expect(credentialRotation).toContain("'ai_system_credential_rotated'");
+    expect(credentialRotation).toContain("REVOKE ALL ON FUNCTION public.rotate_ai_system_credential");
+    expect(credentialRotation).toContain("TO service_role");
+
+    const revoke = credentialRotation.indexOf("UPDATE public.ai_system_credentials");
+    const replacement = credentialRotation.indexOf("INSERT INTO public.ai_system_credentials");
+    const audit = credentialRotation.indexOf("INSERT INTO public.audit_log");
+    expect(revoke).toBeGreaterThan(-1);
+    expect(revoke).toBeLessThan(replacement);
+    expect(replacement).toBeLessThan(audit);
   });
 
-  it("treats registry audit writes as required and compensates on failure", () => {
+  it("treats non-rotation registry audit writes as required and compensates on failure", () => {
     expect(registry).toContain("AUDIT_WRITE_FAILED");
     expect(registry).toContain("await writeAudit");
     expect(registry).toContain("credential compensation restore failed");
+    expect(registry).toContain("credential compensation delete failed");
   });
 
   it("keeps normalized external confidence while bridging the ledger projection to 0..100", () => {
