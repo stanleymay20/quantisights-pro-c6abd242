@@ -28,6 +28,7 @@ jobs:
           cd /tmp/tagger
           npm pack lovable-tagger@1.3.5 --json > pack.json
           TARBALL=$(node -e "const p=require('./pack.json'); console.log(p[0].filename)")
+          cp "$TARBALL" "$GITHUB_WORKSPACE/lovable-tagger-1.3.5.tgz"
           mkdir package-src
           tar -xzf "$TARBALL" -C package-src
           cd package-src/package
@@ -47,5 +48,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lovable-tagger-source-audit
-          path: lovable-tagger-source-audit.txt
+          path: |
+            lovable-tagger-source-audit.txt
+            lovable-tagger-1.3.5.tgz
           if-no-files-found: error
