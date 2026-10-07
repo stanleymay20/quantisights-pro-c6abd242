@@ -30,7 +30,6 @@ function machineToken(req: Request): string | null {
   const header = req.headers.get("Authorization");
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice("Bearer ".length).trim();
-  // qv_ai_ + 32 random bytes encoded as 64 lowercase hexadecimal chars.
   return /^qv_ai_[0-9a-f]{64}$/.test(token) ? token : null;
 }
 
@@ -77,7 +76,7 @@ Deno.serve(async (req) => {
   }
 
   const validated = validateExternalAIDecision(rawBody);
-  if (!validated.ok) {
+  if (validated.ok === false) {
     return json(req, {
       error: validated.error,
       ...(validated.field ? { field: validated.field } : {}),
@@ -107,8 +106,6 @@ Deno.serve(async (req) => {
     return json(req, { error: "INVALID_MACHINE_CREDENTIAL" }, 401);
   }
 
-  // Resolve tenant/system exclusively from the credential. Neither field is
-  // accepted from the caller's JSON payload.
   const { data: system, error: systemError } = await svc
     .from("ai_systems")
     .select("id, organization_id, lifecycle_status")
@@ -160,8 +157,6 @@ Deno.serve(async (req) => {
     return json(req, { error: "INGEST_FAILED" }, 500);
   }
 
-  // A replay is still authenticated traffic, so record credential use without
-  // mutating the immutable evidence row.
   await svc
     .from("ai_system_credentials")
     .update({ last_used_at: new Date().toISOString() })
