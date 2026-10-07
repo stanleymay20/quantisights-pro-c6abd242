@@ -1,0 +1,220 @@
+name: Dependency Remediation Candidate
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/dependency-remediation-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Build patched Lovable tagger from official 1.3.5 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf vendor/lovable-tagger /tmp/lovable-tagger-pack
+          mkdir -p vendor/lovable-tagger /tmp/lovable-tagger-pack
+          cd /tmp/lovable-tagger-pack
+          npm pack lovable-tagger@1.3.5 --json > pack.json
+          TARBALL=$(node -e "const p=require('./pack.json'); console.log(p[0].filename)")
+          echo "3631ad1f19e3c677f24f92c7a0e02b02614881f1324c1e1a475cd84c8e9db56f  $TARBALL" | sha256sum -c -
+          tar -xzf "$TARBALL" --strip-components=1 -C "$GITHUB_WORKSPACE/vendor/lovable-tagger"
+          cd "$GITHUB_WORKSPACE"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p = Path('vendor/lovable-tagger')
+          pkg = json.loads((p / 'package.json').read_text())
+          assert pkg['name'] == 'lovable-tagger' and pkg['version'] == '1.3.5'
+          pkg['version'] = '1.3.5-quantivis.1'
+          pkg['private'] = True
+          pkg['description'] = 'Security-patched local copy of lovable-tagger 1.3.5; Tailwind v3 resolver is lazy-loaded only for the v3 fallback.'
+          assert pkg['dependencies']['tailwindcss'] == '^3.4.17'
+          del pkg['dependencies']['tailwindcss']
+          pkg.pop('devDependencies', None)
+          pkg.pop('scripts', None)
+          (p / 'package.json').write_text(json.dumps(pkg, indent=2) + '\n')
+
+          esm = p / 'dist/index.js'
+          s = esm.read_text()
+          assert 'import resolveConfig from "tailwindcss/resolveConfig.js";' in s
+          assert 'const resolvedConfig = resolveConfig(userConfig.default);' in s
+          s = s.replace('import resolveConfig from "tailwindcss/resolveConfig.js";\n', '')
+          s = s.replace(
+              'const resolvedConfig = resolveConfig(userConfig.default);',
+              'const { default: resolveConfig } = await import("tailwindcss/resolveConfig.js");\n\t\t\t\tconst resolvedConfig = resolveConfig(userConfig.default);',
+              1,
+          )
+          esm.write_text(s)
+
+          cjs = p / 'dist/index.cjs'
+          s = cjs.read_text()
+          eager = 'let tailwindcss_resolveConfig_js = require("tailwindcss/resolveConfig.js");\ntailwindcss_resolveConfig_js = __toESM(tailwindcss_resolveConfig_js, 1);\n'
+          assert eager in s
+          assert 'const resolvedConfig = (0, tailwindcss_resolveConfig_js.default)(userConfig.default);' in s
+          s = s.replace(eager, '')
+          s = s.replace(
+              'const resolvedConfig = (0, tailwindcss_resolveConfig_js.default)(userConfig.default);',
+              'const { default: resolveConfig } = await import("tailwindcss/resolveConfig.js");\n\t\t\t\tconst resolvedConfig = resolveConfig(userConfig.default);',
+              1,
+          )
+          cjs.write_text(s)
+
+          (p / 'UPSTREAM.md').write_text('''# Upstream provenance\n\nThis directory is a security-patched local copy of `lovable-tagger@1.3.5`.\n\n- Upstream package: `lovable-tagger`\n- Upstream version: `1.3.5`\n- Upstream repository metadata: `https://github.com/lovablelabs/lovable`, directory `npm-packages/tagger`\n- Upstream npm tarball SHA-256: `3631ad1f19e3c677f24f92c7a0e02b02614881f1324c1e1a475cd84c8e9db56f`\n- Upstream license metadata: MIT\n\n## Quantivis patch\n\nUpstream eagerly imports `tailwindcss/resolveConfig.js` although it already has a separate Tailwind v4 path. The eager import forces Tailwind 3 into the dependency graph. Quantivis makes that resolver a dynamic import inside the v3-only fallback and removes the hard Tailwind dependency from the local package metadata. JSX tagging and Tailwind v4 extraction logic are unchanged.\n\nReplace this copy with upstream as soon as upstream ships an equivalent fix.\n''')
+          PY
+
+      - name: Apply dependency and Tailwind 4 candidate changes in runner only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          pkg_path = Path('package.json')
+          pkg = json.loads(pkg_path.read_text())
+          dev = pkg['devDependencies']
+          dev.pop('@tailwindcss/typography', None)
+          dev.pop('autoprefixer', None)
+          dev['@tailwindcss/vite'] = '^4.3.3'
+          dev['lovable-tagger'] = 'file:vendor/lovable-tagger'
+          dev['tailwindcss'] = '^4.3.3'
+          dev['typescript-eslint'] = '^8.71.1'
+          # Preserve existing targeted overrides and add only current advisory fixes.
+          overrides = pkg.setdefault('overrides', {})
+          overrides['dompurify'] = '^3.4.16'
+          overrides['source-map-js'] = '^1.2.2'
+          pkg_path.write_text(json.dumps(pkg, indent=2) + '\n')
+
+          vite = Path('vite.config.ts')
+          s = vite.read_text()
+          assert 'import react from "@vitejs/plugin-react-swc";' in s
+          assert 'import tailwindcss from "@tailwindcss/vite";' not in s
+          s = s.replace('import react from "@vitejs/plugin-react-swc";', 'import react from "@vitejs/plugin-react-swc";\nimport tailwindcss from "@tailwindcss/vite";', 1)
+          needle = 'plugins: [releaseProvenancePlugin(releaseMetadata), react(), mode === "development" && componentTagger()].filter(Boolean),'
+          assert needle in s
+          s = s.replace(needle, 'plugins: [releaseProvenancePlugin(releaseMetadata), tailwindcss(), react(), mode === "development" && componentTagger()].filter(Boolean),', 1)
+          vite.write_text(s)
+
+          tw = Path('tailwind.config.ts')
+          s = tw.read_text()
+          assert 'import type { Config } from "tailwindcss";' in s
+          assert 'plugins: [require("tailwindcss-animate")],' in s
+          s = s.replace('import type { Config } from "tailwindcss";', 'import type { Config } from "tailwindcss";\nimport tailwindcssAnimate from "tailwindcss-animate";', 1)
+          s = s.replace('plugins: [require("tailwindcss-animate")],', 'plugins: [tailwindcssAnimate],', 1)
+          tw.write_text(s)
+
+          css = Path('src/index.css')
+          s = css.read_text()
+          old = '@tailwind base;\n@tailwind components;\n@tailwind utilities;\n'
+          assert old in s
+          header = '''@import "tailwindcss";\n@config "../tailwind.config.ts";\n\n/* Tailwind v3 -> v4 compatibility layer for existing Quantivis utility semantics. */\n@theme {\n  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);\n  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);\n  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);\n  --drop-shadow-sm: 0 1px 1px rgb(0 0 0 / 0.05);\n  --drop-shadow: 0 1px 2px rgb(0 0 0 / 0.1), 0 1px 1px rgb(0 0 0 / 0.06);\n  --blur-sm: 4px;\n  --blur: 8px;\n  --backdrop-blur-sm: 4px;\n  --default-ring-width: 3px;\n  --default-ring-color: rgb(59 130 246 / 0.5);\n}\n\n@layer base {\n  *,\n  ::after,\n  ::before,\n  ::backdrop,\n  ::file-selector-button {\n    border-color: var(--color-gray-200, currentcolor);\n  }\n  input::placeholder,\n  textarea::placeholder {\n    color: #9ca3af;\n  }\n  button:not(:disabled),\n  [role="button"]:not(:disabled) {\n    cursor: pointer;\n  }\n}\n\n@custom-variant hover (&:hover);\n'''
+          s = s.replace(old, header, 1)
+          old_glass = '''@layer utilities {\n  .glass-card {\n    @apply backdrop-blur-xl rounded-xl;\n    border: 1px solid hsl(var(--border));\n    background: hsl(var(--card) / 0.7);\n    box-shadow: var(--shadow-card);\n  }\n\n'''
+          new_glass = '''@utility glass-card {\n  @apply backdrop-blur-xl rounded-xl;\n  border: 1px solid hsl(var(--border));\n  background: hsl(var(--card) / 0.7);\n  box-shadow: var(--shadow-card);\n}\n\n@layer utilities {\n'''
+          assert old_glass in s
+          s = s.replace(old_glass, new_glass, 1)
+          css.write_text(s)
+
+          for rel in [
+              'src/components/board-report/RiskAttribution.tsx',
+              'src/components/board-report/GovernanceActions.tsx',
+              'src/components/board-report/ConflictsSection.tsx',
+          ]:
+              p = Path(rel)
+              t = p.read_text()
+              assert 'flex-shrink-0' in t
+              p.write_text(t.replace('flex-shrink-0', 'shrink-0'))
+          PY
+          rm postcss.config.js
+
+      - name: Resolve dependencies and generate lockfile normally
+        run: npm install
+
+      - name: Prove clean reproducible install
+        run: npm ci
+
+      - name: Record dependency shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            node --version
+            npm --version
+            echo '=== key dependencies ==='
+            npm ls tailwindcss @tailwindcss/vite lovable-tagger typescript-eslint dompurify source-map-js --all
+            echo '=== braces ==='
+            npm ls braces --all || true
+            echo '=== postcss-selector-parser ==='
+            npm ls postcss-selector-parser --all || true
+          } | tee candidate-dependency-shape.txt
+
+      - name: Verify Lovable development integration on Tailwind 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOVABLE_DEV_SERVER=true npm run build:dev
+          test -s src/tailwind.config.lov.json
+          grep -q '"theme"' src/tailwind.config.lov.json
+          echo 'Lovable Tailwind v4 extraction: PASS' | tee candidate-lovable.txt
+          rm -f src/tailwind.config.lov.json
+
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Strict trusted-kernel typecheck
+        run: npm run typecheck:trusted
+      - name: Test
+        run: npm run test
+      - name: Evidence tests
+        run: npm run evidence:test
+      - name: Verify security configuration
+        run: npm run verify:security-config
+      - name: Production build
+        run: npm run build
+      - name: Dependency audit must be fully clean
+        run: npm audit
+
+      - name: Capture candidate diff
+        shell: bash
+        if: always()
+        run: |
+          git status --short > candidate-status.txt
+          git diff -- . ':!.github/workflows/dependency-remediation-candidate.yml' > candidate.diff || true
+          npm audit --json > candidate-audit.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-remediation-candidate
+          path: |
+            package.json
+            package-lock.json
+            vite.config.ts
+            tailwind.config.ts
+            src/index.css
+            src/components/board-report/RiskAttribution.tsx
+            src/components/board-report/GovernanceActions.tsx
+            src/components/board-report/ConflictsSection.tsx
+            vendor/lovable-tagger
+            candidate-dependency-shape.txt
+            candidate-lovable.txt
+            candidate-status.txt
+            candidate.diff
+            candidate-audit.json
+          if-no-files-found: warn
