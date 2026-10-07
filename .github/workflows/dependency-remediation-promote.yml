@@ -1,0 +1,93 @@
+name: Promote Verified Dependency Candidate
+
+on:
+  push:
+    branches:
+      - security/dependency-audit-2026-10
+    paths:
+      - '.github/workflows/dependency-remediation-promote.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_RUN_ID: '37696557830'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Download exact successful candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/verified-candidate
+          mkdir -p /tmp/verified-candidate
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name dependency-remediation-candidate --dir /tmp/verified-candidate
+          test -f /tmp/verified-candidate/candidate-audit.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('/tmp/verified-candidate/candidate-audit.json', 'utf8'));
+          if (audit?.metadata?.vulnerabilities?.total !== 0) {
+            throw new Error(`Candidate is not audit-clean: ${JSON.stringify(audit?.metadata?.vulnerabilities)}`);
+          }
+          NODE
+
+      - name: Copy only the verified candidate files
+        run: |
+          set -euo pipefail
+          C=/tmp/verified-candidate
+          install -m 0644 "$C/package.json" package.json
+          install -m 0644 "$C/package-lock.json" package-lock.json
+          install -m 0644 "$C/vite.config.ts" vite.config.ts
+          install -m 0644 "$C/tailwind.config.ts" tailwind.config.ts
+          install -m 0644 "$C/src/index.css" src/index.css
+          install -m 0644 "$C/src/components/board-report/RiskAttribution.tsx" src/components/board-report/RiskAttribution.tsx
+          install -m 0644 "$C/src/components/board-report/GovernanceActions.tsx" src/components/board-report/GovernanceActions.tsx
+          install -m 0644 "$C/src/components/board-report/ConflictsSection.tsx" src/components/board-report/ConflictsSection.tsx
+          rm -rf vendor/lovable-tagger
+          mkdir -p vendor
+          cp -R "$C/vendor/lovable-tagger" vendor/lovable-tagger
+          rm -f postcss.config.js
+
+      - name: Reverify promoted tree before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit
+          npm run typecheck
+          npm run typecheck:trusted
+          npm run build
+          LOVABLE_DEV_SERVER=true npm run build:dev
+          test -s src/tailwind.config.lov.json
+          grep -q '"theme"' src/tailwind.config.lov.json
+          rm -f src/tailwind.config.lov.json
+          npm ls braces --all | grep -q '(empty)'
+          git diff --check
+
+      - name: Commit candidate to isolated security branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json vite.config.ts tailwind.config.ts src/index.css \
+            src/components/board-report/RiskAttribution.tsx \
+            src/components/board-report/GovernanceActions.tsx \
+            src/components/board-report/ConflictsSection.tsx \
+            vendor/lovable-tagger postcss.config.js
+          git diff --cached --exit-code && { echo 'No candidate changes to promote'; exit 0; } || true
+          git commit -m 'security: migrate dependency toolchain off vulnerable Tailwind 3 graph'
+          git push origin HEAD:security/dependency-audit-2026-10
