@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,40 +28,69 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Generate candidate lock with newer npm
+      - name: Apply candidate dependency repair in workspace
         run: |
           set -Eeuo pipefail
-          npm pkg delete "devDependencies.@tailwindcss/typography"
-          npm pkg set \
-            "devDependencies.typescript-eslint=8.71.2" \
-            "devDependencies.postcss=8.5.30" \
-            "devDependencies.lovable-tagger=1.3.5" \
-            "devDependencies.tailwindcss=4.3.3" \
-            "devDependencies.@tailwindcss/postcss=4.3.3" \
-            "dependencies.posthog-js=1.438.12"
-          rm -rf node_modules package-lock.json
-          npx --yes npm@11 install --package-lock-only --ignore-scripts
+          node <<'NODE'
+          const fs = require('node:fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          delete p.devDependencies['lovable-tagger'];
+          delete p.devDependencies['@tailwindcss/typography'];
+          p.devDependencies['typescript-eslint'] = '8.71.2';
+          p.devDependencies['braces'] = 'file:vendor/braces-patched';
+          p.overrides ||= {};
+          p.overrides.braces = '$braces';
+          p.overrides['source-map-js'] = '1.2.2';
+          p.overrides.dompurify = '3.4.16';
+          p.overrides['postcss-selector-parser'] = '7.1.6';
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('vite.config.ts')
+          s = path.read_text()
+          s = s.replace('import { componentTagger } from "lovable-tagger";\n', '')
+          s = s.replace('releaseProvenancePlugin(releaseMetadata), react(), mode === "development" && componentTagger()', 'releaseProvenancePlugin(releaseMetadata), react()')
+          path.write_text(s)
+          PY
 
-      - name: Capture candidate dependency evidence
+      - name: Regenerate lock with repository npm
         run: |
-          set +e
-          mkdir -p artifacts/dependency-diagnostic
-          cp package.json package-lock.json artifacts/dependency-diagnostic/
-          npx --yes npm@11 ls braces chokidar micromatch fast-glob postcss-selector-parser source-map-js dompurify typescript-eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin @typescript-eslint/typescript-estree tailwindcss @tailwindcss/postcss lovable-tagger posthog-js --all --json > artifacts/dependency-diagnostic/npm-ls.json 2> artifacts/dependency-diagnostic/npm-ls.stderr
-          npx --yes npm@11 audit --json > artifacts/dependency-diagnostic/npm-audit.json 2> artifacts/dependency-diagnostic/npm-audit.stderr
-          npx --yes npm@11 audit --audit-level=moderate > artifacts/dependency-diagnostic/npm-audit.txt 2>&1
-          echo $? > artifacts/dependency-diagnostic/npm-audit-exit-code.txt
-          set -e
+          set -Eeuo pipefail
+          rm -rf node_modules
+          npm install --package-lock-only --ignore-scripts
 
-      - name: Validate generated lock with npm 11
-        run: npx --yes npm@11 ci
+      - name: Install exact candidate graph
+        run: npm ci
 
-      - name: Record npm 10 compatibility
+      - name: Prove patched braces resolution
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('braces/package.json'); if(p.version!=='3.0.4-quantivis.1') throw new Error('wrong braces version '+p.version); console.log(p.version)"
+          if npm ls braces --all | grep -E 'braces@3\.0\.3($|[^-])'; then
+            echo 'Unpatched braces remains in dependency graph' >&2
+            exit 1
+          fi
+          npm ls braces --all
+          npx vitest run src/test/patched-braces-security.test.ts
+
+      - name: Audit repaired dependency graph
+        run: npm audit --audit-level=moderate
+
+      - name: Full repository release gate
+        run: npm run release-gate
+
+      - name: Capture candidate evidence
         if: always()
         run: |
           set +e
-          npm ci > artifacts/dependency-diagnostic/npm10-ci.txt 2>&1
-          echo $? > artifacts/dependency-diagnostic/npm10-ci-exit-code.txt
+          mkdir -p artifacts/dependency-diagnostic
+          cp package.json package-lock.json vite.config.ts artifacts/dependency-diagnostic/
+          npm ls braces chokidar micromatch fast-glob postcss-selector-parser source-map-js dompurify typescript-eslint tailwindcss tailwindcss-animate --all --json > artifacts/dependency-diagnostic/npm-ls.json 2> artifacts/dependency-diagnostic/npm-ls.stderr
+          npm audit --json > artifacts/dependency-diagnostic/npm-audit.json 2> artifacts/dependency-diagnostic/npm-audit.stderr
+          npm audit --audit-level=moderate > artifacts/dependency-diagnostic/npm-audit.txt 2>&1
+          echo $? > artifacts/dependency-diagnostic/npm-audit-exit-code.txt
+          git diff -- package.json package-lock.json vite.config.ts > artifacts/dependency-diagnostic/candidate.diff
           set -e
 
       - name: Upload diagnostic artifact
