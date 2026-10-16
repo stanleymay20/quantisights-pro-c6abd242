@@ -31,7 +31,9 @@ function json(body: unknown, status: number, headers: Record<string, string>) {
 }
 
 function hasSensitiveKey(value: unknown, depth = 0): boolean {
-  if (depth > 8 || value === null || typeof value !== "object") return false;
+  // Fail closed on unexpectedly deep payloads rather than skipping secret scans.
+  if (depth > 8) return true;
+  if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some((entry) => hasSensitiveKey(entry, depth + 1));
   return Object.entries(value as Record<string, unknown>).some(([key, nested]) =>
     SENSITIVE_KEY.test(key) || hasSensitiveKey(nested, depth + 1)
@@ -56,7 +58,7 @@ function parseRequest(input: unknown): GovernedActionRequest {
   if (!ACTION_TYPE.test(actionType)) throw new Error("action_type is invalid");
   if (!IDEMPOTENCY_KEY.test(idempotencyKey)) throw new Error("idempotency_key is invalid");
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("payload must be an object");
-  if (hasSensitiveKey(payload)) throw new Error("payload contains credential-like fields");
+  if (hasSensitiveKey(payload)) throw new Error("payload contains credential-like fields or is too deeply nested");
 
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
   if (payloadBytes > MAX_PAYLOAD_BYTES) throw new Error("payload exceeds 64 KiB");
@@ -109,6 +111,17 @@ serve(async (req) => {
     });
     if (memberError) return json({ error: "Membership verification failed" }, 503, cors);
     if (!isMember) return json({ error: "Forbidden" }, 403, cors);
+
+    // Real external writes are an elevated operation even when the referenced
+    // decision is already approved. Dry-runs remain available to org members.
+    if (!action.dry_run) {
+      const { data: isElevated, error: elevatedError } = await serviceClient.rpc("exec_require_elevated_role", {
+        _user_id: user.id,
+        _org_id: action.organization_id,
+      });
+      if (elevatedError) return json({ error: "Role verification failed" }, 503, cors);
+      if (!isElevated) return json({ error: "Elevated role required", code: "elevated_role_required" }, 403, cors);
+    }
 
     const [{ data: decision, error: decisionError }, { data: connector, error: connectorError }] = await Promise.all([
       serviceClient
@@ -164,14 +177,15 @@ serve(async (req) => {
       }, 200, cors);
     }
 
-    const status = action.dry_run
-      ? "dry_run"
+    // Tranche 1 intentionally contains no external write adapter. Even if a
+    // policy is accidentally upgraded, the absence of an adapter must fail
+    // closed rather than leaving an "executing" row or implying a provider call.
+    const failureCode = action.dry_run
+      ? null
       : executionPolicy.allowed
-        ? "executing"
-        : "failed";
-    const failureCode = !action.dry_run && !executionPolicy.allowed
-      ? "connector_write_not_proven"
-      : null;
+        ? "write_adapter_missing"
+        : "connector_write_not_proven";
+    const status = action.dry_run ? "dry_run" : "failed";
 
     const { data: inserted, error: insertError } = await serviceClient
       .from("governed_action_requests")
@@ -189,7 +203,9 @@ serve(async (req) => {
         reversible: executionPolicy.reversible,
         failure_code: failureCode,
         failure_message: failureCode
-          ? `No proven write adapter exists for ${connectorType}:${action.action_type}`
+          ? failureCode === "write_adapter_missing"
+            ? `Policy permits ${connectorType}:${action.action_type}, but no reviewed write adapter is deployed.`
+            : `No proven write adapter exists for ${connectorType}:${action.action_type}.`
           : null,
       })
       .select("id,status,dry_run,reversible,failure_code")
@@ -206,7 +222,19 @@ serve(async (req) => {
         .eq("action_type", action.action_type)
         .eq("idempotency_key", action.idempotency_key)
         .maybeSingle();
-      if (retryRead.data) return json({ reused: true, action_id: retryRead.data.id, ...retryRead.data }, 200, cors);
+      if (retryRead.data) {
+        return json({
+          reused: true,
+          action_id: retryRead.data.id,
+          status: retryRead.data.status,
+          dry_run: retryRead.data.dry_run,
+          reversible: retryRead.data.reversible,
+          provider_receipt_id: retryRead.data.provider_receipt_id,
+          response_digest: retryRead.data.response_digest,
+          verified_at: retryRead.data.verified_at,
+          failure_code: retryRead.data.failure_code,
+        }, 200, cors);
+      }
       return json({ error: "Unable to persist governed action request" }, 503, cors);
     }
 
@@ -226,16 +254,18 @@ serve(async (req) => {
       {
         organization_id: action.organization_id,
         action_request_id: inserted.id,
-        event_type: action.dry_run ? "dry_run_validated" : executionPolicy.allowed ? "attempted" : "failed",
+        event_type: action.dry_run ? "dry_run_validated" : "failed",
         actor_id: user.id,
         details: action.dry_run
           ? {
               policy_result: executionPolicy.reason,
               note: "No external provider call was made.",
             }
-          : executionPolicy.allowed
-            ? { note: "Write-capable adapter dispatch is not implemented in tranche 1." }
-            : { failure_code: failureCode, policy_result: executionPolicy.reason },
+          : {
+              failure_code: failureCode,
+              policy_result: executionPolicy.reason,
+              provider_called: false,
+            },
       },
     ];
 
@@ -258,27 +288,15 @@ serve(async (req) => {
       }, 200, cors);
     }
 
-    if (!executionPolicy.allowed) {
-      return json({
-        action_id: inserted.id,
-        status: "failed",
-        code: failureCode,
-        connector_type: connectorType,
-        connector_capability: policy?.capability ?? "unsupported",
-        policy_reason: executionPolicy.reason,
-        provider_called: false,
-      }, 409, cors);
-    }
-
-    // No policy currently reaches this branch. When the first connector earns
-    // approve_execute, its adapter must be added in the same reviewed change and
-    // must persist a provider receipt before returning success.
     return json({
       action_id: inserted.id,
-      status: "unknown",
-      code: "write_adapter_missing",
+      status: "failed",
+      code: failureCode,
+      connector_type: connectorType,
+      connector_capability: policy?.capability ?? "unsupported",
+      policy_reason: executionPolicy.reason,
       provider_called: false,
-    }, 501, cors);
+    }, executionPolicy.allowed ? 501 : 409, cors);
   } catch (error) {
     console.error("governed-action error:", error instanceof Error ? error.message : String(error));
     return json({ error: "Governed action request failed" }, 500, cors);
