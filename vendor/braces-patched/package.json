@@ -1,0 +1,16 @@
+{
+  "name": "braces",
+  "version": "3.0.4-quantivis.1",
+  "description": "Quantivis-controlled security patch of braces 3.0.3 with bounded AST nesting.",
+  "main": "index.js",
+  "files": ["index.js", "lib"],
+  "license": "MIT",
+  "engines": {"node": ">=8.3"},
+  "dependencies": {"fill-range": "^7.1.1"},
+  "quantivisProvenance": {
+    "upstream": "micromatch/braces@3.0.3",
+    "securityPatchSource": "FSDevelop/braces@28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
+    "advisory": "GHSA-vfj7-8cjw-p6xm",
+    "changes": "Bound parser and recursive AST processing to max depth 100; reject cyclic parent chains; remove fork debug logging; guard invalid-brace helper for undefined parent."
+  }
+}
