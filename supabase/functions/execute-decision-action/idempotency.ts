@@ -112,6 +112,7 @@ export async function completeExecutionReceipt(
     responseStatus?: number | null;
     responseMetadata?: JsonRecord;
     errorMessage?: string | null;
+    externalReference?: string | null;
   } = {},
 ): Promise<void> {
   const { error } = await supabase
@@ -121,6 +122,7 @@ export async function completeExecutionReceipt(
       response_status: options.responseStatus ?? null,
       response_metadata: options.responseMetadata ?? {},
       error_message: options.errorMessage ? options.errorMessage.slice(0, 2000) : null,
+      external_reference: options.externalReference?.slice(0, 500) || null,
       completed_at: new Date().toISOString(),
     })
     .eq("id", receiptId)
