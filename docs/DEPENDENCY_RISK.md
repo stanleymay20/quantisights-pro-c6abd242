@@ -1,15 +1,45 @@
 # Dependency advisory risk
 
-The August 13, 2026 remediation upgraded the affected toolchain and removed an
-unpatchable dormant export dependency. `npm audit --audit-level=moderate` now
-reports zero vulnerabilities.
+Quantivis keeps the repository dependency audit fail-closed at
+`npm audit --audit-level=moderate`. Security advisories are remediated in the
+dependency graph rather than allowlisted or hidden by lowering the audit
+threshold.
+
+## October 16, 2026 dependency repair
+
+The October 2026 audit exposed a new high-severity `braces` stack-exhaustion
+advisory together with transitive advisories in the development toolchain.
+The repaired graph:
+
+- removes the development-only `lovable-tagger` integration and the unused
+  `@tailwindcss/typography` dependency instead of carrying their vulnerable
+  transitive trees;
+- upgrades `typescript-eslint` to 8.71.2;
+- pins patched `source-map-js`, `dompurify`, and `postcss-selector-parser`
+  versions through npm overrides;
+- routes every `braces` consumer through `vendor/braces-patched`.
+
+The vendored `braces` package is a controlled Quantivis patch of upstream
+3.0.3 for GHSA-vfj7-8cjw-p6xm. Its security changes are based on reviewed
+commit `FSDevelop/braces@28d440b5dd449dbf1fe6f3506cf94ecca4d02660`:
+brace/parenthesis nesting and recursive AST traversal are bounded to 100
+levels and cyclic parent chains are rejected. Quantivis records the patch
+provenance in `vendor/braces-patched/package.json` and
+`vendor/braces-patched/README.quantivis.md`, preserves the upstream MIT
+license, removes a patch-fork debug log, and adds regression tests for normal
+expansion plus adversarial nesting.
+
+This is not represented as an official upstream `braces` release. Replace the
+controlled patch with an official patched upstream release when one becomes
+available and passes the complete Quantivis release gate.
 
 ## Vite and esbuild
 
-Resolved by upgrading to Vite 8, Vitest 4, the compatible Vite React plugin,
-and `lovable-tagger` 1.3.3. The full unit suite and production build pass on the
-upgraded toolchain. The development server must still never be exposed to an
-untrusted network.
+The earlier Vite/esbuild advisory set was resolved by upgrading to Vite 8,
+Vitest 4 and the compatible Vite React plugin. The October 2026 remediation
+also removes `lovable-tagger`; Quantivis no longer needs that development-only
+component tagging plugin. The development server must still never be exposed
+to an untrusted network.
 
 ## PowerPoint export parser
 
