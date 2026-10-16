@@ -38,6 +38,7 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/connector-s3-pull/index.ts",
       "supabase/functions/executive-orchestration/index.ts",
       "supabase/functions/execution-intelligence/index.ts",
+      "supabase/functions/execute-decision-action/index.ts",
       "supabase/functions/predictive-forecast/index.ts",
       "supabase/functions/supplier-risk-runtime-ingest/index.ts",
       "supabase/functions/detect-executive-contradictions/index.ts",

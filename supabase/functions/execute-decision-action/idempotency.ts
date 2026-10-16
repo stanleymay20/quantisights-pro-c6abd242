@@ -19,6 +19,8 @@ export interface ExecutionReceipt {
 }
 
 const RECEIPT_SELECT = "id, organization_id, execution_plan_id, decision_id, action_type, idempotency_key, request_fingerprint, status, response_status, response_metadata, error_message, reconciled_at, reconciled_by, reconciliation_note, external_reference";
+const PROVIDER_EVIDENCE_VERSION = "v1";
+const PROVIDER_EVIDENCE_PREFIX = "provider_evidence_";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -36,6 +38,12 @@ async function sha256Hex(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function sanitizeProviderMetadata(metadata: JsonRecord): JsonRecord {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => !key.startsWith(PROVIDER_EVIDENCE_PREFIX)),
+  );
 }
 
 export function validateIdempotencyKey(value: unknown): value is string {
@@ -112,15 +120,47 @@ export async function completeExecutionReceipt(
     responseStatus?: number | null;
     responseMetadata?: JsonRecord;
     errorMessage?: string | null;
+    externalReference?: string | null;
   } = {},
 ): Promise<void> {
+  const responseStatus = options.responseStatus ?? null;
+  const responseMetadata = sanitizeProviderMetadata(options.responseMetadata ?? {});
+  const errorMessage = options.errorMessage ? options.errorMessage.slice(0, 2000) : null;
+  const externalReference = options.externalReference?.slice(0, 500) || null;
+
+  // This envelope is an immutable observation of the provider/transport result.
+  // A later governed reconciliation may change receipt.status or external_reference,
+  // but these evidence fields remain the original facts used to derive the digest.
+  const providerEvidence = {
+    version: PROVIDER_EVIDENCE_VERSION,
+    observed_status: status,
+    response_status: responseStatus,
+    response_metadata: responseMetadata,
+    error_message: errorMessage,
+    external_reference: externalReference,
+  };
+  const evidenceDigest = await sha256Hex({
+    receipt_id: receiptId,
+    ...providerEvidence,
+  });
+  const durableMetadata = {
+    ...responseMetadata,
+    provider_evidence_version: providerEvidence.version,
+    provider_evidence_observed_status: providerEvidence.observed_status,
+    provider_evidence_response_status: providerEvidence.response_status,
+    provider_evidence_error_message: providerEvidence.error_message,
+    provider_evidence_external_reference: providerEvidence.external_reference,
+    provider_evidence_digest: evidenceDigest,
+  };
+
   const { error } = await supabase
     .from("execution_action_receipts")
     .update({
       status,
-      response_status: options.responseStatus ?? null,
-      response_metadata: options.responseMetadata ?? {},
-      error_message: options.errorMessage ? options.errorMessage.slice(0, 2000) : null,
+      response_status: responseStatus,
+      response_metadata: durableMetadata,
+      error_message: errorMessage,
+      external_reference: externalReference,
       completed_at: new Date().toISOString(),
     })
     .eq("id", receiptId)
