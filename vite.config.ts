@@ -3,7 +3,6 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { componentTagger } from "lovable-tagger";
 import {
   PRODUCTION_PUBLIC_CLIENT_CONFIG,
   STAGING_PUBLIC_CLIENT_CONFIG,
@@ -125,7 +124,7 @@ export default defineConfig(({ mode }) => {
       },
     },
   },
-  plugins: [releaseProvenancePlugin(releaseMetadata), react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [releaseProvenancePlugin(releaseMetadata), react()].filter(Boolean),
   define: {
     __QUANTIVIS_RELEASE__: JSON.stringify(releaseMetadata),
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(publicClientConfig.supabaseUrl),
