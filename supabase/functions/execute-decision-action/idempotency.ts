@@ -115,12 +115,26 @@ export async function completeExecutionReceipt(
     externalReference?: string | null;
   } = {},
 ): Promise<void> {
+  const responseStatus = options.responseStatus ?? null;
+  const responseMetadata = options.responseMetadata ?? {};
+  const evidenceDigest = await sha256Hex({
+    receipt_id: receiptId,
+    outcome_status: status,
+    response_status: responseStatus,
+    response_metadata: responseMetadata,
+  });
+  const durableMetadata = {
+    ...responseMetadata,
+    provider_evidence_version: "v1",
+    provider_evidence_digest: evidenceDigest,
+  };
+
   const { error } = await supabase
     .from("execution_action_receipts")
     .update({
       status,
-      response_status: options.responseStatus ?? null,
-      response_metadata: options.responseMetadata ?? {},
+      response_status: responseStatus,
+      response_metadata: durableMetadata,
       error_message: options.errorMessage ? options.errorMessage.slice(0, 2000) : null,
       external_reference: options.externalReference?.slice(0, 500) || null,
       completed_at: new Date().toISOString(),
