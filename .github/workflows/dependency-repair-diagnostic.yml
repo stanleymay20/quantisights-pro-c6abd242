@@ -42,21 +42,30 @@ jobs:
           rm -rf node_modules package-lock.json
           npx --yes npm@11 install --package-lock-only --ignore-scripts
 
-      - name: Validate generated lock with repository npm
-        run: npm ci
-
-      - name: Capture candidate evidence
+      - name: Capture candidate dependency evidence
         run: |
           set +e
           mkdir -p artifacts/dependency-diagnostic
           cp package.json package-lock.json artifacts/dependency-diagnostic/
-          npm ls braces chokidar micromatch fast-glob postcss-selector-parser source-map-js dompurify typescript-eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin @typescript-eslint/typescript-estree tailwindcss @tailwindcss/postcss lovable-tagger posthog-js --all --json > artifacts/dependency-diagnostic/npm-ls.json 2> artifacts/dependency-diagnostic/npm-ls.stderr
-          npm audit --json > artifacts/dependency-diagnostic/npm-audit.json 2> artifacts/dependency-diagnostic/npm-audit.stderr
-          npm audit --audit-level=moderate > artifacts/dependency-diagnostic/npm-audit.txt 2>&1
+          npx --yes npm@11 ls braces chokidar micromatch fast-glob postcss-selector-parser source-map-js dompurify typescript-eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin @typescript-eslint/typescript-estree tailwindcss @tailwindcss/postcss lovable-tagger posthog-js --all --json > artifacts/dependency-diagnostic/npm-ls.json 2> artifacts/dependency-diagnostic/npm-ls.stderr
+          npx --yes npm@11 audit --json > artifacts/dependency-diagnostic/npm-audit.json 2> artifacts/dependency-diagnostic/npm-audit.stderr
+          npx --yes npm@11 audit --audit-level=moderate > artifacts/dependency-diagnostic/npm-audit.txt 2>&1
           echo $? > artifacts/dependency-diagnostic/npm-audit-exit-code.txt
           set -e
 
+      - name: Validate generated lock with npm 11
+        run: npx --yes npm@11 ci
+
+      - name: Record npm 10 compatibility
+        if: always()
+        run: |
+          set +e
+          npm ci > artifacts/dependency-diagnostic/npm10-ci.txt 2>&1
+          echo $? > artifacts/dependency-diagnostic/npm10-ci-exit-code.txt
+          set -e
+
       - name: Upload diagnostic artifact
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dependency-repair-candidate-${{ github.sha }}
