@@ -1,9 +1,17 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
   extractSlackExternalReference,
   extractWebhookExternalReference,
 } from "../../supabase/functions/execute-decision-action/provider-reference.ts";
+
+const root = resolve(__dirname, "../..");
+const executorSource = readFileSync(
+  resolve(root, "supabase/functions/execute-decision-action/index.ts"),
+  "utf8",
+);
 
 describe("provider-native execution references", () => {
   describe("Slack chat.postMessage", () => {
@@ -54,12 +62,18 @@ describe("provider-native execution references", () => {
       });
     });
 
-    it("rejects oversized or non-opaque header values instead of truncating them", () => {
+    it("rejects oversized, URL-like, delimiter-bearing, or non-opaque header values instead of truncating them", () => {
       const oversized = new Headers({ "x-request-id": "a".repeat(201) });
       expect(extractWebhookExternalReference(oversized)).toEqual({ externalReference: null, sourceHeader: null });
 
       const whitespace = new Headers({ "x-request-id": "request id with spaces" });
       expect(extractWebhookExternalReference(whitespace)).toEqual({ externalReference: null, sourceHeader: null });
+
+      const urlLike = new Headers({ "x-request-id": "https://provider.example/receipt" });
+      expect(extractWebhookExternalReference(urlLike)).toEqual({ externalReference: null, sourceHeader: null });
+
+      const delimiter = new Headers({ "x-request-id": "req:spoofed-component" });
+      expect(extractWebhookExternalReference(delimiter)).toEqual({ externalReference: null, sourceHeader: null });
     });
 
     it("can use a lower-priority allowlisted identifier when a higher-priority value is invalid", () => {
@@ -73,5 +87,20 @@ describe("provider-native execution references", () => {
         sourceHeader: "x-trace-id",
       });
     });
+  });
+
+  it("wires provider references into the existing canonical executor and receipt digest path", () => {
+    expect(executorSource).toContain('from "./provider-reference.ts"');
+    expect(executorSource).toContain("extractWebhookExternalReference(webhookResp.headers)");
+    expect(executorSource).toContain("externalReference: webhookReference.externalReference");
+    expect(executorSource).toContain("provider_reference_header: webhookReference.sourceHeader");
+    expect(executorSource).toContain("extractSlackExternalReference(data)");
+    expect(executorSource).toContain("externalReference,");
+    expect(executorSource).toContain("provider_reference_recorded: externalReference !== null");
+  });
+
+  it("does not create another outbound execution endpoint", () => {
+    expect(executorSource.match(/case \"trigger_webhook\"/g)).toHaveLength(1);
+    expect(executorSource.match(/case \"notify_slack\"/g)).toHaveLength(1);
   });
 });
