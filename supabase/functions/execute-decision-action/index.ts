@@ -12,6 +12,10 @@ import {
   classifyHttpOutcome,
   dispatchWithBoundedRateLimitRetries,
 } from "./retry-policy.ts";
+import {
+  extractSlackExternalReference,
+  extractWebhookExternalReference,
+} from "./provider-reference.ts";
 
 /** Require owner/admin role for sensitive execution actions */
 async function requirePrivilegedRole(
@@ -576,6 +580,7 @@ Deno.serve(async (req) => {
           });
 
           const webhookResp = dispatch.response;
+          const webhookReference = extractWebhookExternalReference(webhookResp.headers);
           const outcome = classifyHttpOutcome(webhookResp.status);
           const success = outcome === "success";
           const uncertain = outcome === "uncertain";
@@ -583,8 +588,10 @@ Deno.serve(async (req) => {
 
           await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
             responseStatus: webhookResp.status,
+            externalReference: webhookReference.externalReference,
             responseMetadata: {
               webhook_url,
+              provider_reference_header: webhookReference.sourceHeader,
               status_code: webhookResp.status,
               success,
               uncertain,
@@ -783,6 +790,7 @@ Deno.serve(async (req) => {
             data = { parse_error: true };
           }
 
+          const externalReference = extractSlackExternalReference(data);
           const httpOutcome = classifyHttpOutcome(resp.status);
           const uncertain = httpOutcome === "uncertain";
           const success = httpOutcome === "success" && data?.ok !== false;
@@ -790,8 +798,10 @@ Deno.serve(async (req) => {
 
           await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
             responseStatus: resp.status,
+            externalReference,
             responseMetadata: {
               channel: normalizedChannel,
+              provider_reference_recorded: externalReference !== null,
               success,
               uncertain,
               response_ok: data?.ok ?? null,
