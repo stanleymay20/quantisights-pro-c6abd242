@@ -26,93 +26,67 @@ jobs:
           path = Path("supabase/functions/execute-decision-action/index.ts")
           text = path.read_text()
 
-          replacements = []
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Refusing patch: expected exactly one {label} match, found {count}")
+              text = text.replace(old, new, 1)
 
-          old = '''import {
-            classifyHttpOutcome,
-            dispatchWithBoundedRateLimitRetries,
-          } from "./retry-policy.ts";
-          '''
-          new = old + '''import {
-            extractSlackExternalReference,
-            extractWebhookExternalReference,
-          } from "./provider-reference.ts";
-          '''
-          replacements.append((old, new, "provider-reference import"))
+          retry_import = '} from "./retry-policy.ts";\n'
+          replace_once(
+              retry_import,
+              retry_import
+              + 'import {\n'
+              + '  extractSlackExternalReference,\n'
+              + '  extractWebhookExternalReference,\n'
+              + '} from "./provider-reference.ts";\n',
+              "retry-policy import boundary",
+          )
 
-          old = '''          const webhookResp = dispatch.response;
-          const outcome = classifyHttpOutcome(webhookResp.status);
-          '''
-          new = '''          const webhookResp = dispatch.response;
-          const webhookReference = extractWebhookExternalReference(webhookResp.headers);
-          const outcome = classifyHttpOutcome(webhookResp.status);
-          '''
-          replacements.append((old, new, "webhook reference extraction"))
+          webhook_response = '          const webhookResp = dispatch.response;\n'
+          replace_once(
+              webhook_response,
+              webhook_response + '          const webhookReference = extractWebhookExternalReference(webhookResp.headers);\n',
+              "webhook response",
+          )
 
-          old = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
-            responseStatus: webhookResp.status,
-            responseMetadata: {
-              webhook_url,
-          '''
-          new = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
-            responseStatus: webhookResp.status,
-            externalReference: webhookReference.externalReference,
-            responseMetadata: {
-              webhook_url,
-              provider_reference_header: webhookReference.sourceHeader,
-          '''
-          replacements.append((old, new, "webhook receipt reference"))
+          webhook_receipt = (
+              '            responseStatus: webhookResp.status,\n'
+              '            responseMetadata: {\n'
+              '              webhook_url,\n'
+          )
+          replace_once(
+              webhook_receipt,
+              '            responseStatus: webhookResp.status,\n'
+              '            externalReference: webhookReference.externalReference,\n'
+              '            responseMetadata: {\n'
+              '              webhook_url,\n'
+              '              provider_reference_header: webhookReference.sourceHeader,\n',
+              "webhook receipt completion",
+          )
 
-          old = '''            status_code: webhookResp.status,
-            receipt_id: receipt.id,
-            attempts: dispatch.attempts,
-          '''
-          new = '''            status_code: webhookResp.status,
-            receipt_id: receipt.id,
-            external_reference: webhookReference.externalReference,
-            attempts: dispatch.attempts,
-          '''
-          replacements.append((old, new, "webhook response reference"))
+          slack_outcome = '          const httpOutcome = classifyHttpOutcome(resp.status);\n'
+          replace_once(
+              slack_outcome,
+              '          const externalReference = extractSlackExternalReference(data);\n' + slack_outcome,
+              "Slack outcome classification",
+          )
 
-          old = '''          const httpOutcome = classifyHttpOutcome(resp.status);
-          const uncertain = httpOutcome === "uncertain";
-          '''
-          new = '''          const externalReference = extractSlackExternalReference(data);
-          const httpOutcome = classifyHttpOutcome(resp.status);
-          const uncertain = httpOutcome === "uncertain";
-          '''
-          replacements.append((old, new, "Slack reference extraction"))
-
-          old = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
-            responseStatus: resp.status,
-            responseMetadata: {
-              channel: normalizedChannel,
-          '''
-          new = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
-            responseStatus: resp.status,
-            externalReference,
-            responseMetadata: {
-              channel: normalizedChannel,
-              provider_reference_recorded: externalReference !== null,
-          '''
-          replacements.append((old, new, "Slack receipt reference"))
-
-          old = '''            data,
-            receipt_id: receipt.id,
-            attempts: dispatch.attempts,
-          '''
-          new = '''            data,
-            receipt_id: receipt.id,
-            external_reference: externalReference,
-            attempts: dispatch.attempts,
-          '''
-          replacements.append((old, new, "Slack response reference"))
-
-          for old, new, label in replacements:
-            count = text.count(old)
-            if count != 1:
-              raise SystemExit(f"Refusing patch: expected exactly one {label} match, found {count}")
-            text = text.replace(old, new, 1)
+          slack_receipt = (
+              '            responseStatus: resp.status,\n'
+              '            responseMetadata: {\n'
+              '              channel: normalizedChannel,\n'
+          )
+          replace_once(
+              slack_receipt,
+              '            responseStatus: resp.status,\n'
+              '            externalReference,\n'
+              '            responseMetadata: {\n'
+              '              channel: normalizedChannel,\n'
+              '              provider_reference_recorded: externalReference !== null,\n',
+              "Slack receipt completion",
+          )
 
           path.write_text(text)
 
