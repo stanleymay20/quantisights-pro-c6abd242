@@ -29,6 +29,13 @@ describe("source-persisted outbound reconciliation evidence", () => {
     expect(migration).toContain("TO authenticated, service_role");
   });
 
+  it("pins every new function to an empty search_path and removes direct client execution on the trigger helper", () => {
+    expect(migration.match(/SET search_path = ''/g)).toHaveLength(3);
+    expect(migration).not.toContain("SET search_path = public, pg_temp");
+    expect(migration).toContain("REVOKE ALL ON FUNCTION public.protect_execution_reconciliation_evidence()");
+    expect(migration).toContain("FROM PUBLIC, anon, authenticated");
+  });
+
   it("binds reconciliation to the original provider digest and exact reviewed facts", () => {
     expect(migration).toContain("provider_evidence_digest");
     expect(migration).toContain("'receipt_id', v_receipt.id");
