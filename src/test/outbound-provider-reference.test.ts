@@ -100,7 +100,7 @@ describe("provider-native execution references", () => {
   });
 
   it("does not create another outbound execution endpoint", () => {
-    expect(executorSource.match(/case \"trigger_webhook\"/g)).toHaveLength(1);
-    expect(executorSource.match(/case \"notify_slack\"/g)).toHaveLength(1);
+    expect(executorSource.match(/case "trigger_webhook"/g)).toHaveLength(1);
+    expect(executorSource.match(/case "notify_slack"/g)).toHaveLength(1);
   });
 });
