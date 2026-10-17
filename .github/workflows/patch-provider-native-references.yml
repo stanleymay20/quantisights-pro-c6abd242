@@ -1,0 +1,129 @@
+name: Patch provider-native references
+
+on:
+  push:
+    branches:
+      - hardening/provider-native-references-20261017
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hardening/provider-native-references-20261017
+          fetch-depth: 0
+
+      - name: Patch canonical executor fail-closed
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("supabase/functions/execute-decision-action/index.ts")
+          text = path.read_text()
+
+          replacements = []
+
+          old = '''import {
+            classifyHttpOutcome,
+            dispatchWithBoundedRateLimitRetries,
+          } from "./retry-policy.ts";
+          '''
+          new = old + '''import {
+            extractSlackExternalReference,
+            extractWebhookExternalReference,
+          } from "./provider-reference.ts";
+          '''
+          replacements.append((old, new, "provider-reference import"))
+
+          old = '''          const webhookResp = dispatch.response;
+          const outcome = classifyHttpOutcome(webhookResp.status);
+          '''
+          new = '''          const webhookResp = dispatch.response;
+          const webhookReference = extractWebhookExternalReference(webhookResp.headers);
+          const outcome = classifyHttpOutcome(webhookResp.status);
+          '''
+          replacements.append((old, new, "webhook reference extraction"))
+
+          old = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
+            responseStatus: webhookResp.status,
+            responseMetadata: {
+              webhook_url,
+          '''
+          new = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
+            responseStatus: webhookResp.status,
+            externalReference: webhookReference.externalReference,
+            responseMetadata: {
+              webhook_url,
+              provider_reference_header: webhookReference.sourceHeader,
+          '''
+          replacements.append((old, new, "webhook receipt reference"))
+
+          old = '''            status_code: webhookResp.status,
+            receipt_id: receipt.id,
+            attempts: dispatch.attempts,
+          '''
+          new = '''            status_code: webhookResp.status,
+            receipt_id: receipt.id,
+            external_reference: webhookReference.externalReference,
+            attempts: dispatch.attempts,
+          '''
+          replacements.append((old, new, "webhook response reference"))
+
+          old = '''          const httpOutcome = classifyHttpOutcome(resp.status);
+          const uncertain = httpOutcome === "uncertain";
+          '''
+          new = '''          const externalReference = extractSlackExternalReference(data);
+          const httpOutcome = classifyHttpOutcome(resp.status);
+          const uncertain = httpOutcome === "uncertain";
+          '''
+          replacements.append((old, new, "Slack reference extraction"))
+
+          old = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
+            responseStatus: resp.status,
+            responseMetadata: {
+              channel: normalizedChannel,
+          '''
+          new = '''          await completeExecutionReceipt(supabase, receipt.id, finalStatus, {
+            responseStatus: resp.status,
+            externalReference,
+            responseMetadata: {
+              channel: normalizedChannel,
+              provider_reference_recorded: externalReference !== null,
+          '''
+          replacements.append((old, new, "Slack receipt reference"))
+
+          old = '''            data,
+            receipt_id: receipt.id,
+            attempts: dispatch.attempts,
+          '''
+          new = '''            data,
+            receipt_id: receipt.id,
+            external_reference: externalReference,
+            attempts: dispatch.attempts,
+          '''
+          replacements.append((old, new, "Slack response reference"))
+
+          for old, new, label in replacements:
+            count = text.count(old)
+            if count != 1:
+              raise SystemExit(f"Refusing patch: expected exactly one {label} match, found {count}")
+            text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+      - name: Remove one-shot patch workflow
+        run: git rm .github/workflows/patch-provider-native-references.yml
+
+      - name: Commit patched canonical executor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Execution: wire provider-native references"
+          git push origin HEAD:hardening/provider-native-references-20261017
