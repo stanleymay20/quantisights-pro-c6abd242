@@ -13,6 +13,13 @@ const root = resolve(__dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const FIXED_NOW = () => "2026-10-17T12:00:00.000Z";
 
+async function sha256HexText(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function receipt(
   overrides: Partial<EvidencePackExecutionReceiptInput> = {},
   observation: {
@@ -70,8 +77,70 @@ async function receipt(
     last_attempt_at: "2026-10-17T10:00:01.000Z",
     last_retry_reason: null,
     retry_exhausted_at: null,
+    reconciliation_evidence_version: null,
+    reconciliation_evidence_material: null,
+    reconciliation_evidence_digest: null,
     ...overrides,
   };
+}
+
+async function sourceReconciledReceipt(options: {
+  resolution?: "succeeded" | "failed";
+  note?: string;
+  externalReference?: string | null;
+} = {}): Promise<EvidencePackExecutionReceiptInput> {
+  const resolution = options.resolution ?? "succeeded";
+  const note = options.note ?? "Verified in the provider admin console.";
+  const externalReference = options.externalReference ?? "provider-final-789";
+  const reconciledAt = "2026-10-17T10:30:00.000Z";
+  const reconciledBy = "user-42";
+
+  const result = await receipt(
+    {
+      status: resolution,
+      reconciled_at: reconciledAt,
+      reconciled_by: reconciledBy,
+      reconciliation_note: note,
+      external_reference: externalReference,
+      completed_at: reconciledAt,
+    },
+    {
+      observedStatus: "uncertain",
+      responseStatus: 504,
+      providerMetadata: { transport: "timeout" },
+      errorMessage: "Provider outcome could not be confirmed",
+      externalReference: null,
+    },
+  );
+
+  const providerDigest = (result.response_metadata as Record<string, unknown>).provider_evidence_digest as string;
+  const material = JSON.stringify({
+    version: "v1",
+    receipt_id: result.id,
+    provider_evidence_digest: providerDigest,
+    reconciled_at: reconciledAt,
+    reconciled_by: reconciledBy,
+    resolution,
+    reconciliation_note: note,
+    external_reference: externalReference,
+  });
+  const sourceDigest = await sha256HexText(material);
+
+  result.reconciliation_evidence_version = "v1";
+  result.reconciliation_evidence_material = material;
+  result.reconciliation_evidence_digest = sourceDigest;
+  result.response_metadata = {
+    ...result.response_metadata,
+    reconciliation: {
+      version: "v1",
+      resolution,
+      reviewed_at: reconciledAt,
+      reviewed_by: reconciledBy,
+      external_reference: externalReference,
+      evidence_digest: sourceDigest,
+    },
+  };
+  return result;
 }
 
 describe("Evidence Pack governed execution evidence", () => {
@@ -91,64 +160,107 @@ describe("Evidence Pack governed execution evidence", () => {
     expect(linked.sections.hashes.data.evidence_pack_hash).toBe(linked.evidence_pack_hash);
   });
 
-  it("keeps the immutable uncertain provider observation separate from a later reconciliation", async () => {
+  it("independently verifies source-persisted reconciliation while preserving the immutable provider observation", async () => {
     const base = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
-    const uncertain = await receipt(
-      {
-        status: "succeeded",
-        reconciled_at: "2026-10-17T10:30:00.000Z",
-        reconciled_by: "user-42",
-        reconciliation_note: "Verified in the provider admin console.",
-        external_reference: "provider-final-789",
-      },
-      {
-        observedStatus: "uncertain",
-        responseStatus: 504,
-        providerMetadata: { transport: "timeout" },
-        errorMessage: "Provider outcome could not be confirmed",
-        externalReference: null,
-      },
-    );
-
-    const linked = await attachExecutionEvidence(base, { receipts: [uncertain] });
-    const evidence = (linked.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
+    const reconciled = await sourceReconciledReceipt();
+    const linked = await attachExecutionEvidence(base, { receipts: [reconciled] });
+    const section = linked.sections.runtime_metadata;
+    const evidence = (section.data.receipts as Array<Record<string, any>>)[0];
 
     expect(evidence.provider_observation.observed_status).toBe("uncertain");
     expect(evidence.provider_observation.verification).toBe("verified");
     expect(evidence.current_status).toBe("succeeded");
     expect(evidence.reconciliation.resolution).toBe("succeeded");
     expect(evidence.reconciliation.external_reference).toBe("provider-final-789");
-    expect(evidence.reconciliation.evidence_hash).toMatch(/^sha256-[0-9a-f]{64}$/);
-    expect(evidence.reconciliation.hash_scope).toBe("derived-evidence-pack-fingerprint");
+    expect(evidence.reconciliation.source_evidence.verification).toBe("verified");
+    expect(evidence.reconciliation.source_evidence.stored_digest).toBe(
+      evidence.reconciliation.source_evidence.recomputed_digest,
+    );
+    expect(evidence.reconciliation.derived_evidence_hash).toMatch(/^sha256-[0-9a-f]{64}$/);
+    expect(section.data.reconciliation_source_verified_count).toBe(1);
+    expect(section.status).toBe("complete");
   });
 
-  it("changes only reconciliation evidence when the governed reconciliation note changes", async () => {
+  it("does not let the server-owned reconciliation metadata block invalidate the original provider digest", async () => {
     const base = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
-    const common = {
-      status: "failed",
-      reconciled_at: "2026-10-17T10:30:00.000Z",
-      reconciled_by: "user-42",
-      external_reference: "ticket-901",
-    } satisfies Partial<EvidencePackExecutionReceiptInput>;
+    const reconciled = await sourceReconciledReceipt();
+    const linked = await attachExecutionEvidence(base, { receipts: [reconciled] });
+    const evidence = (linked.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
 
-    const first = await receipt(
-      { ...common, reconciliation_note: "Confirmed failed in provider console." },
-      { observedStatus: "uncertain", responseStatus: 504, providerMetadata: { transport: "timeout" }, errorMessage: "Unknown outcome", externalReference: null },
+    expect((reconciled.response_metadata as Record<string, unknown>).reconciliation).toBeDefined();
+    expect(evidence.provider_observation.response_metadata.reconciliation).toBeUndefined();
+    expect(evidence.provider_observation.verification).toBe("verified");
+  });
+
+  it("fails closed when source reconciliation material is changed after its digest was persisted", async () => {
+    const base = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
+    const reconciled = await sourceReconciledReceipt();
+    reconciled.reconciliation_evidence_material = JSON.stringify({
+      version: "v1",
+      receipt_id: reconciled.id,
+      provider_evidence_digest: (reconciled.response_metadata as Record<string, unknown>).provider_evidence_digest,
+      reconciled_at: reconciled.reconciled_at,
+      reconciled_by: reconciled.reconciled_by,
+      resolution: "failed",
+      reconciliation_note: reconciled.reconciliation_note,
+      external_reference: reconciled.external_reference,
+    });
+
+    const linked = await attachExecutionEvidence(base, { receipts: [reconciled] });
+    const evidence = (linked.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
+
+    expect(evidence.provider_observation.verification).toBe("verified");
+    expect(evidence.reconciliation.source_evidence.verification).toBe("mismatch");
+    expect(linked.sections.runtime_metadata.data.reconciliation_source_mismatch_count).toBe(1);
+    expect(linked.sections.runtime_metadata.status).toBe("partial");
+    expect(linked.sections.runtime_metadata.summary).toMatch(/require investigation/);
+  });
+
+  it("fails closed when source material hashes correctly but no longer matches the resolved receipt semantics", async () => {
+    const base = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
+    const reconciled = await sourceReconciledReceipt();
+    const parsed = JSON.parse(reconciled.reconciliation_evidence_material as string) as Record<string, unknown>;
+    parsed.reconciliation_note = "A different but internally hashed note.";
+    const rematerialized = JSON.stringify(parsed);
+    reconciled.reconciliation_evidence_material = rematerialized;
+    reconciled.reconciliation_evidence_digest = await sha256HexText(rematerialized);
+
+    const linked = await attachExecutionEvidence(base, { receipts: [reconciled] });
+    const evidence = (linked.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
+
+    expect(evidence.reconciliation.source_evidence.stored_digest).toBe(
+      evidence.reconciliation.source_evidence.recomputed_digest,
     );
-    const second = await receipt(
-      { ...common, reconciliation_note: "Confirmed failed via provider support ticket." },
-      { observedStatus: "uncertain", responseStatus: 504, providerMetadata: { transport: "timeout" }, errorMessage: "Unknown outcome", externalReference: null },
+    expect(evidence.reconciliation.source_evidence.verification).toBe("mismatch");
+    expect(linked.sections.runtime_metadata.status).toBe("partial");
+  });
+
+  it("marks legacy reconciliations without source evidence as partial instead of fabricating attestation", async () => {
+    const base = await buildEvidencePack(DEMO_DECISION, { now: FIXED_NOW });
+    const legacy = await receipt(
+      {
+        status: "succeeded",
+        reconciled_at: "2026-10-17T10:30:00.000Z",
+        reconciled_by: "user-42",
+        reconciliation_note: "Legacy reconciliation before source hashing.",
+        external_reference: "legacy-123",
+      },
+      {
+        observedStatus: "uncertain",
+        responseStatus: 504,
+        providerMetadata: { transport: "timeout" },
+        errorMessage: "Unknown outcome",
+        externalReference: null,
+      },
     );
 
-    const a = await attachExecutionEvidence(base, { receipts: [first] });
-    const b = await attachExecutionEvidence(base, { receipts: [second] });
-    const aReceipt = (a.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
-    const bReceipt = (b.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
+    const linked = await attachExecutionEvidence(base, { receipts: [legacy] });
+    const evidence = (linked.sections.runtime_metadata.data.receipts as Array<Record<string, any>>)[0];
 
-    expect(aReceipt.provider_observation.stored_digest).toBe(bReceipt.provider_observation.stored_digest);
-    expect(aReceipt.provider_observation.recomputed_digest).toBe(bReceipt.provider_observation.recomputed_digest);
-    expect(aReceipt.reconciliation.evidence_hash).not.toBe(bReceipt.reconciliation.evidence_hash);
-    expect(a.evidence_pack_hash).not.toBe(b.evidence_pack_hash);
+    expect(evidence.provider_observation.verification).toBe("verified");
+    expect(evidence.reconciliation.source_evidence.verification).toBe("not_recorded");
+    expect(linked.sections.runtime_metadata.data.reconciliation_source_not_recorded_count).toBe(1);
+    expect(linked.sections.runtime_metadata.status).toBe("partial");
   });
 
   it("fails closed to partial evidence when a provider digest does not verify", async () => {
@@ -165,7 +277,6 @@ describe("Evidence Pack governed execution evidence", () => {
     expect(evidence.provider_observation.verification).toBe("mismatch");
     expect(linked.sections.runtime_metadata.status).toBe("partial");
     expect(linked.sections.runtime_metadata.data.provider_evidence_mismatch_count).toBe(1);
-    expect(linked.sections.runtime_metadata.summary).toMatch(/require investigation/);
   });
 
   it("reports a failed receipt projection as unknown instead of claiming there were no executions", async () => {

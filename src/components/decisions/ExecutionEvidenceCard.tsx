@@ -25,28 +25,34 @@ interface ExecutionReceiptEvidenceView {
     resolution: string;
     note: string | null;
     external_reference: string | null;
-    evidence_hash: string;
+    source_evidence: {
+      version: string | null;
+      stored_digest: string | null;
+      recomputed_digest: string | null;
+      verification: Verification;
+    };
+    derived_evidence_hash: string;
   };
 }
 
-function VerificationBadge({ verification }: { verification: Verification }) {
+function VerificationBadge({ verification, label }: { verification: Verification; label?: string }) {
   if (verification === "verified") {
     return (
       <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 text-success">
-        <CheckCircle2 className="h-3 w-3" /> Verified
+        <CheckCircle2 className="h-3 w-3" /> {label ?? "Verified"}
       </Badge>
     );
   }
   if (verification === "mismatch") {
     return (
       <Badge variant="outline" className="gap-1 border-destructive/30 bg-destructive/10 text-destructive">
-        <AlertTriangle className="h-3 w-3" /> Digest mismatch
+        <AlertTriangle className="h-3 w-3" /> {label ?? "Digest mismatch"}
       </Badge>
     );
   }
   return (
     <Badge variant="outline" className="gap-1 text-muted-foreground">
-      <CircleHelp className="h-3 w-3" /> Not recorded
+      <CircleHelp className="h-3 w-3" /> {label ?? "Not recorded"}
     </Badge>
   );
 }
@@ -89,7 +95,7 @@ export default function ExecutionEvidenceCard({ pack }: { pack: EvidencePack }) 
                   <p className="text-sm font-semibold">{receipt.action_type}</p>
                   <p className="font-mono text-[11px] text-muted-foreground">{receipt.receipt_id}</p>
                 </div>
-                <VerificationBadge verification={receipt.provider_observation.verification} />
+                <VerificationBadge verification={receipt.provider_observation.verification} label="Provider evidence" />
               </div>
 
               <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
@@ -116,12 +122,23 @@ export default function ExecutionEvidenceCard({ pack }: { pack: EvidencePack }) 
 
               {receipt.reconciliation && (
                 <div className="mt-3 rounded-md border border-border/50 bg-muted/20 p-2.5">
-                  <p className="text-xs font-semibold">Governed reconciliation: {receipt.reconciliation.resolution}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold">Governed reconciliation: {receipt.reconciliation.resolution}</p>
+                    <VerificationBadge
+                      verification={receipt.reconciliation.source_evidence.verification}
+                      label={receipt.reconciliation.source_evidence.verification === "not_recorded" ? "Legacy source evidence" : "Reconciliation evidence"}
+                    />
+                  </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {receipt.reconciliation.note || "No reconciliation note recorded."}
                   </p>
+                  {receipt.reconciliation.source_evidence.stored_digest && (
+                    <p className="mt-2 break-all font-mono text-[10px] text-muted-foreground">
+                      Source reconciliation digest: {receipt.reconciliation.source_evidence.stored_digest}
+                    </p>
+                  )}
                   <p className="mt-2 break-all font-mono text-[10px] text-muted-foreground">
-                    Reconciliation fingerprint: {receipt.reconciliation.evidence_hash}
+                    Evidence Pack fingerprint: {receipt.reconciliation.derived_evidence_hash}
                   </p>
                 </div>
               )}

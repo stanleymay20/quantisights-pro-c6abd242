@@ -21,6 +21,7 @@ export interface ExecutionReceipt {
 const RECEIPT_SELECT = "id, organization_id, execution_plan_id, decision_id, action_type, idempotency_key, request_fingerprint, status, response_status, response_metadata, error_message, reconciled_at, reconciled_by, reconciliation_note, external_reference";
 const PROVIDER_EVIDENCE_VERSION = "v1";
 const PROVIDER_EVIDENCE_PREFIX = "provider_evidence_";
+const SERVER_OWNED_METADATA_KEYS = new Set(["reconciliation"]);
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -42,7 +43,9 @@ async function sha256Hex(value: unknown): Promise<string> {
 
 function sanitizeProviderMetadata(metadata: JsonRecord): JsonRecord {
   return Object.fromEntries(
-    Object.entries(metadata).filter(([key]) => !key.startsWith(PROVIDER_EVIDENCE_PREFIX)),
+    Object.entries(metadata).filter(([key]) =>
+      !key.startsWith(PROVIDER_EVIDENCE_PREFIX) && !SERVER_OWNED_METADATA_KEYS.has(key)
+    ),
   );
 }
 
@@ -131,6 +134,8 @@ export async function completeExecutionReceipt(
   // This envelope is an immutable observation of the provider/transport result.
   // A later governed reconciliation may change receipt.status or external_reference,
   // but these evidence fields remain the original facts used to derive the digest.
+  // `reconciliation` is also server-owned and intentionally excluded from the
+  // provider observation so a later governed resolution cannot invalidate it.
   const providerEvidence = {
     version: PROVIDER_EVIDENCE_VERSION,
     observed_status: status,

@@ -2,6 +2,7 @@ import { canonicalHash } from "@/lib/evidence-pack";
 import type { EvidencePack, EvidencePackSection } from "@/lib/evidence-pack-types";
 
 const PROVIDER_EVIDENCE_PREFIX = "provider_evidence_";
+const SERVER_OWNED_METADATA_KEYS = new Set(["reconciliation"]);
 
 export interface EvidencePackExecutionReceiptInput {
   id: string;
@@ -23,6 +24,9 @@ export interface EvidencePackExecutionReceiptInput {
   last_attempt_at?: string | null;
   last_retry_reason?: string | null;
   retry_exhausted_at?: string | null;
+  reconciliation_evidence_version?: string | null;
+  reconciliation_evidence_material?: string | null;
+  reconciliation_evidence_digest?: string | null;
 }
 
 export interface AttachExecutionEvidenceOptions {
@@ -30,7 +34,7 @@ export interface AttachExecutionEvidenceOptions {
   readFailed?: boolean;
 }
 
-export type ProviderEvidenceVerification = "verified" | "mismatch" | "not_recorded";
+export type EvidenceVerification = "verified" | "mismatch" | "not_recorded";
 
 interface VerifiedReceiptEvidence {
   receipt_id: string;
@@ -55,7 +59,7 @@ interface VerifiedReceiptEvidence {
     external_reference: string | null;
     stored_digest: string | null;
     recomputed_digest: string | null;
-    verification: ProviderEvidenceVerification;
+    verification: EvidenceVerification;
   };
   reconciliation: null | {
     reconciled_at: string;
@@ -63,8 +67,14 @@ interface VerifiedReceiptEvidence {
     resolution: string;
     note: string | null;
     external_reference: string | null;
-    evidence_hash: string;
-    hash_scope: "derived-evidence-pack-fingerprint";
+    source_evidence: {
+      version: string | null;
+      material: string | null;
+      stored_digest: string | null;
+      recomputed_digest: string | null;
+      verification: EvidenceVerification;
+    };
+    derived_evidence_hash: string;
   };
 }
 
@@ -77,7 +87,9 @@ function metadataOf(receipt: EvidencePackExecutionReceiptInput): Record<string, 
 function providerMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(metadata)
-      .filter(([key]) => !key.startsWith(PROVIDER_EVIDENCE_PREFIX))
+      .filter(([key]) =>
+        !key.startsWith(PROVIDER_EVIDENCE_PREFIX) && !SERVER_OWNED_METADATA_KEYS.has(key)
+      )
       .sort(([a], [b]) => a.localeCompare(b)),
   );
 }
@@ -88,6 +100,49 @@ function stringOrNull(value: unknown): string | null {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+async function sha256HexText(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function parseMaterial(material: string | null): Record<string, unknown> | null {
+  if (!material) return null;
+  try {
+    const parsed = JSON.parse(material) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameInstant(left: unknown, right: string | null): boolean {
+  if (typeof left !== "string" || !right) return false;
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
+}
+
+function reconciliationMaterialMatches(
+  material: Record<string, unknown> | null,
+  receipt: EvidencePackExecutionReceiptInput,
+  providerEvidenceDigest: string | null,
+  version: string | null,
+): boolean {
+  if (!material || !receipt.reconciled_at || !version) return false;
+  return material.version === version
+    && material.receipt_id === receipt.id
+    && (material.provider_evidence_digest ?? null) === providerEvidenceDigest
+    && sameInstant(material.reconciled_at, receipt.reconciled_at)
+    && (material.reconciled_by ?? null) === receipt.reconciled_by
+    && material.resolution === receipt.status
+    && (material.reconciliation_note ?? null) === receipt.reconciliation_note
+    && (material.external_reference ?? null) === receipt.external_reference;
 }
 
 async function verifyReceipt(receipt: EvidencePackExecutionReceiptInput): Promise<VerifiedReceiptEvidence> {
@@ -101,7 +156,7 @@ async function verifyReceipt(receipt: EvidencePackExecutionReceiptInput): Promis
   const observedExternalReference = stringOrNull(metadata.provider_evidence_external_reference);
 
   let recomputedDigest: string | null = null;
-  let verification: ProviderEvidenceVerification = "not_recorded";
+  let verification: EvidenceVerification = "not_recorded";
 
   if (storedDigest && version && observedStatus) {
     const digest = await canonicalHash({
@@ -119,7 +174,26 @@ async function verifyReceipt(receipt: EvidencePackExecutionReceiptInput): Promis
 
   let reconciliation: VerifiedReceiptEvidence["reconciliation"] = null;
   if (receipt.reconciled_at) {
-    const evidenceHash = await canonicalHash({
+    const sourceVersion = receipt.reconciliation_evidence_version ?? null;
+    const sourceMaterial = receipt.reconciliation_evidence_material ?? null;
+    const sourceStoredDigest = receipt.reconciliation_evidence_digest ?? null;
+    let sourceRecomputedDigest: string | null = null;
+    let sourceVerification: EvidenceVerification = "not_recorded";
+
+    if (sourceVersion && sourceMaterial && sourceStoredDigest) {
+      sourceRecomputedDigest = await sha256HexText(sourceMaterial);
+      const semanticMatch = reconciliationMaterialMatches(
+        parseMaterial(sourceMaterial),
+        receipt,
+        storedDigest,
+        sourceVersion,
+      );
+      sourceVerification = sourceRecomputedDigest === sourceStoredDigest && semanticMatch
+        ? "verified"
+        : "mismatch";
+    }
+
+    const derivedEvidenceHash = await canonicalHash({
       receipt_id: receipt.id,
       provider_evidence_digest: storedDigest,
       reconciled_at: receipt.reconciled_at,
@@ -128,14 +202,21 @@ async function verifyReceipt(receipt: EvidencePackExecutionReceiptInput): Promis
       reconciliation_note: receipt.reconciliation_note,
       external_reference: receipt.external_reference,
     });
+
     reconciliation = {
       reconciled_at: receipt.reconciled_at,
       reconciled_by: receipt.reconciled_by,
       resolution: receipt.status,
       note: receipt.reconciliation_note,
       external_reference: receipt.external_reference,
-      evidence_hash: evidenceHash,
-      hash_scope: "derived-evidence-pack-fingerprint",
+      source_evidence: {
+        version: sourceVersion,
+        material: sourceMaterial,
+        stored_digest: sourceStoredDigest,
+        recomputed_digest: sourceRecomputedDigest,
+        verification: sourceVerification,
+      },
+      derived_evidence_hash: derivedEvidenceHash,
     };
   }
 
@@ -176,13 +257,18 @@ function sectionStatus(
   if (readFailed) return base.status === "not_applicable" ? "unavailable" : "partial";
   if (receipts.length === 0) return base.status;
 
-  const hasMismatch = receipts.some((receipt) => receipt.provider_observation.verification === "mismatch");
-  const hasIncomplete = receipts.some((receipt) =>
+  const hasProviderMismatch = receipts.some((receipt) => receipt.provider_observation.verification === "mismatch");
+  const hasIncompleteProviderEvidence = receipts.some((receipt) =>
     receipt.current_status === "claimed"
     || receipt.current_status === "uncertain"
     || receipt.provider_observation.verification === "not_recorded"
   );
-  return hasMismatch || hasIncomplete ? "partial" : "complete";
+  const hasIncompleteReconciliationEvidence = receipts.some((receipt) =>
+    receipt.reconciliation !== null && receipt.reconciliation.source_evidence.verification !== "verified"
+  );
+  return hasProviderMismatch || hasIncompleteProviderEvidence || hasIncompleteReconciliationEvidence
+    ? "partial"
+    : "complete";
 }
 
 function buildExecutionSection(
@@ -191,8 +277,17 @@ function buildExecutionSection(
   readFailed: boolean,
 ): EvidencePackSection {
   const verifiedCount = receipts.filter((receipt) => receipt.provider_observation.verification === "verified").length;
-  const mismatchCount = receipts.filter((receipt) => receipt.provider_observation.verification === "mismatch").length;
-  const reconciliationCount = receipts.filter((receipt) => receipt.reconciliation !== null).length;
+  const providerMismatchCount = receipts.filter((receipt) => receipt.provider_observation.verification === "mismatch").length;
+  const reconciliations = receipts.filter((receipt) => receipt.reconciliation !== null);
+  const reconciliationVerifiedCount = reconciliations.filter(
+    (receipt) => receipt.reconciliation?.source_evidence.verification === "verified",
+  ).length;
+  const reconciliationMismatchCount = reconciliations.filter(
+    (receipt) => receipt.reconciliation?.source_evidence.verification === "mismatch",
+  ).length;
+  const reconciliationNotRecordedCount = reconciliations.filter(
+    (receipt) => receipt.reconciliation?.source_evidence.verification === "not_recorded",
+  ).length;
   const uncertainCount = receipts.filter((receipt) => receipt.current_status === "uncertain").length;
 
   let summary: string;
@@ -201,13 +296,15 @@ function buildExecutionSection(
       "Execution receipts could not be read when this pack was generated. Execution outcome evidence is therefore unknown; this does not mean no execution occurred.";
   } else if (receipts.length === 0) {
     summary = `${base.summary} No governed outbound execution receipt is recorded for this decision.`;
-  } else if (mismatchCount > 0) {
+  } else if (providerMismatchCount > 0 || reconciliationMismatchCount > 0) {
     summary =
-      `${receipts.length} governed execution receipt(s) are linked. ${mismatchCount} provider evidence digest mismatch(es) require investigation before this pack can be treated as complete.`;
+      `${receipts.length} governed execution receipt(s) are linked. ` +
+      `${providerMismatchCount} provider evidence mismatch(es) and ${reconciliationMismatchCount} reconciliation evidence mismatch(es) require investigation before this pack can be treated as complete.`;
   } else {
     summary =
       `${receipts.length} governed execution receipt(s) are linked; ${verifiedCount} provider observation(s) independently re-verified` +
-      `${reconciliationCount > 0 ? ` and ${reconciliationCount} reconciliation event(s) separately fingerprinted` : ""}.` +
+      `${reconciliations.length > 0 ? ` and ${reconciliationVerifiedCount} source reconciliation record(s) independently re-verified` : ""}.` +
+      `${reconciliationNotRecordedCount > 0 ? ` ${reconciliationNotRecordedCount} legacy reconciliation(s) do not carry source evidence.` : ""}` +
       `${uncertainCount > 0 ? ` ${uncertainCount} receipt(s) remain uncertain.` : ""}`;
   }
 
@@ -226,12 +323,15 @@ function buildExecutionSection(
       execution_receipts_read_failed: readFailed,
       receipt_count: receipts.length,
       provider_evidence_verified_count: verifiedCount,
-      provider_evidence_mismatch_count: mismatchCount,
+      provider_evidence_mismatch_count: providerMismatchCount,
       uncertain_receipt_count: uncertainCount,
-      reconciliation_count: reconciliationCount,
+      reconciliation_count: reconciliations.length,
+      reconciliation_source_verified_count: reconciliationVerifiedCount,
+      reconciliation_source_mismatch_count: reconciliationMismatchCount,
+      reconciliation_source_not_recorded_count: reconciliationNotRecordedCount,
       receipts,
       reconciliation_hash_note:
-        "Reconciliation hashes are deterministic Evidence Pack fingerprints derived from the tenant-scoped receipt projection. They are separate from, and do not replace, the server-persisted provider evidence digest.",
+        "Reconciliation source evidence is SHA-256 hashed and persisted atomically by the governed database RPC, then independently verified by this pack. A separate derived Evidence Pack fingerprint is retained for export determinism and legacy receipts.",
     },
   };
 }
@@ -271,13 +371,11 @@ async function rehashPack(pack: EvidencePack, runtimeMetadata: EvidencePackSecti
 }
 
 /**
- * EP execution extension.
- *
  * Adds governed outbound execution truth to the existing runtime_metadata
  * section without changing the Evidence Pack schema or opening direct client
- * access to execution_action_receipts. Provider observations are re-verified
- * against the server-persisted Tranche 1 digest. Later reconciliation is kept
- * separate and receives its own deterministic Evidence Pack fingerprint.
+ * access to execution_action_receipts. Provider observations and source-side
+ * reconciliation evidence are independently re-verified; neither is rewritten
+ * to make a later lifecycle state look cleaner than the evidence actually is.
  */
 export async function attachExecutionEvidence(
   pack: EvidencePack,
