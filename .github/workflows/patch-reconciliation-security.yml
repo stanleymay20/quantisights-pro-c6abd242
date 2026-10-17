@@ -1,0 +1,65 @@
+name: Patch reconciliation SQL security
+
+on:
+  push:
+    branches:
+      - hardening/reconciliation-source-evidence-20261017
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hardening/reconciliation-source-evidence-20261017
+          fetch-depth: 0
+
+      - name: Apply fail-closed SQL hardening
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("supabase/migrations/20261017153000_add_reconciliation_source_evidence.sql")
+          text = path.read_text()
+
+          old_search_path = "SET search_path = public, pg_temp"
+          if text.count(old_search_path) != 3:
+              raise SystemExit(f"Expected exactly three pinned search_path clauses, found {text.count(old_search_path)}")
+          text = text.replace(old_search_path, "SET search_path = ''")
+
+          anchor = """END;
+          $$;
+
+          DROP TRIGGER IF EXISTS protect_execution_reconciliation_evidence
+"""
+          replacement = """END;
+          $$;
+
+          -- Trigger execution is internal to the table lifecycle. Clients do not
+          -- need direct EXECUTE permission on this helper function.
+          REVOKE ALL ON FUNCTION public.protect_execution_reconciliation_evidence()
+            FROM PUBLIC, anon, authenticated;
+
+          DROP TRIGGER IF EXISTS protect_execution_reconciliation_evidence
+"""
+          if text.count(anchor) != 1:
+              raise SystemExit(f"Expected one trigger-helper anchor, found {text.count(anchor)}")
+          text = text.replace(anchor, replacement, 1)
+
+          path.write_text(text)
+
+      - name: Remove one-shot patch workflow
+        run: git rm .github/workflows/patch-reconciliation-security.yml
+
+      - name: Commit SQL hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Security: pin reconciliation RPC search paths"
+          git push origin HEAD:hardening/reconciliation-source-evidence-20261017
