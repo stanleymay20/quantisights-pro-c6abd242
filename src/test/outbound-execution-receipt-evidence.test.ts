@@ -154,4 +154,28 @@ describe("outbound execution receipt provider evidence", () => {
     expect(spoofedMetadata.provider_evidence_digest).toMatch(/^[a-f0-9]{64}$/);
     expect(digestOf(spoofed)).toBe(digestOf(clean));
   });
+
+  it("keeps top-level reconciliation metadata server-owned and outside the provider observation digest", async () => {
+    const clean = await captureCompletedReceipt({
+      responseStatus: 200,
+      responseMetadata: { channel: "C123", success: true },
+    });
+
+    const spoofed = await captureCompletedReceipt({
+      responseStatus: 200,
+      responseMetadata: {
+        channel: "C123",
+        success: true,
+        reconciliation: {
+          resolution: "failed",
+          reviewed_by: "attacker",
+          evidence_digest: "fake",
+        },
+      },
+    });
+
+    const metadata = spoofed.response_metadata as Record<string, unknown>;
+    expect(metadata.reconciliation).toBeUndefined();
+    expect(digestOf(spoofed)).toBe(digestOf(clean));
+  });
 });
