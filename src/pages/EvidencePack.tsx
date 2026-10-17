@@ -7,7 +7,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { SidebarMobileToggle } from "@/components/layout/ProtectedShell";
 import { Button } from "@/components/ui/button";
 import EvidencePackPreview from "@/components/decisions/EvidencePackPreview";
+import ExecutionEvidenceCard from "@/components/decisions/ExecutionEvidenceCard";
 import { buildEvidencePack } from "@/lib/evidence-pack";
+import {
+  attachExecutionEvidence,
+  type EvidencePackExecutionReceiptInput,
+} from "@/lib/evidence-pack-execution";
 import type {
   EvidencePack as EvidencePackModel,
   EvidencePackAuditEntry,
@@ -24,10 +29,11 @@ export const EVIDENCE_PACK_UNAVAILABLE_MESSAGE = "Evidence Pack unavailable";
 /**
  * EP-1 Evidence Pack page (/evidence-pack/:decisionId).
  *
- * Loads the decision (and, best-effort, its audit log entries) that already
- * exist in Quantivis and packages them into one deterministic Evidence Pack.
- * If the decision cannot be found, this shows a clearly-labelled unavailable
- * state — it never fabricates a pack from missing data.
+ * Loads the decision and its deterministic evidence inputs. Governed outbound
+ * execution receipts remain service-role-only at the table layer and are read
+ * only through the existing tenant-checking list_execution_action_receipts RPC.
+ * Missing or failed reads are reported as unknown; the page never fabricates
+ * execution evidence from an empty or failed response.
  */
 const EvidencePackPage = () => {
   const { decisionId } = useParams<{ decisionId: string }>();
@@ -38,6 +44,8 @@ const EvidencePackPage = () => {
   const [auditEntries, setAuditEntries] = useState<EvidencePackAuditEntry[]>([]);
   const [outcomes, setOutcomes] = useState<EvidencePackOutcomeInput[]>([]);
   const [outcomesReadFailed, setOutcomesReadFailed] = useState(false);
+  const [executionReceipts, setExecutionReceipts] = useState<EvidencePackExecutionReceiptInput[]>([]);
+  const [executionReceiptsReadFailed, setExecutionReceiptsReadFailed] = useState(false);
   const [loading, setLoading] = useState(!isDemo);
   const [notFound, setNotFound] = useState(false);
   const [pack, setPack] = useState<EvidencePackModel | null>(null);
@@ -48,6 +56,8 @@ const EvidencePackPage = () => {
     const load = async () => {
       setLoading(true);
       setNotFound(false);
+      setExecutionReceipts([]);
+      setExecutionReceiptsReadFailed(false);
 
       const { data: decisionRow, error: decisionError } = await supabase
         .from("decision_ledger")
@@ -84,21 +94,34 @@ const EvidencePackPage = () => {
         })),
       );
 
-      // Measured outcomes written by the evaluate-outcomes Edge Function. A
-      // failed read is reported as unknown, never as "no outcome tracked".
-      const { data: outcomeRows, error: outcomeError } = await supabase
-        .from("decision_outcomes")
-        .select(
-          "id, expected_metric, expected_direction, expected_change, evaluation_window_days, outcome_status, observed_value_before, observed_value_after, accuracy_score, evaluation_date, evidence_regime, calibration_eligible, eligibility_reason, notes, created_at",
-        )
-        .eq("organization_id", currentOrgId)
-        .eq("decision_id", decisionId);
+      // Measured outcomes and governed execution receipts are independent
+      // evidence projections. A failed read must stay distinguishable from a
+      // valid empty result so "unknown" never becomes "nothing happened".
+      const [outcomeResult, receiptResult] = await Promise.all([
+        supabase
+          .from("decision_outcomes")
+          .select(
+            "id, expected_metric, expected_direction, expected_change, evaluation_window_days, outcome_status, observed_value_before, observed_value_after, accuracy_score, evaluation_date, evidence_regime, calibration_eligible, eligibility_reason, notes, created_at",
+          )
+          .eq("organization_id", currentOrgId)
+          .eq("decision_id", decisionId),
+        (supabase as any).rpc("list_execution_action_receipts", {
+          p_organization_id: currentOrgId,
+          p_decision_id: decisionId,
+        }),
+      ]);
 
-      setOutcomes((outcomeRows ?? []) as EvidencePackOutcomeInput[]);
-      setOutcomesReadFailed(Boolean(outcomeError));
+      setOutcomes((outcomeResult.data ?? []) as EvidencePackOutcomeInput[]);
+      setOutcomesReadFailed(Boolean(outcomeResult.error));
+
+      const receiptPayloadIsValid = Array.isArray(receiptResult.data);
+      setExecutionReceipts(
+        receiptPayloadIsValid ? (receiptResult.data as EvidencePackExecutionReceiptInput[]) : [],
+      );
+      setExecutionReceiptsReadFailed(Boolean(receiptResult.error) || !receiptPayloadIsValid);
       setLoading(false);
     };
-    load();
+    void load();
   }, [decisionId, currentOrgId, isDemo]);
 
   useEffect(() => {
@@ -108,7 +131,21 @@ const EvidencePackPage = () => {
     }
     let cancelled = false;
     setPackBuilding(true);
-    buildEvidencePack(decision, { auditEntries, outcomes, outcomesReadFailed, isSimulation: isDemo || undefined })
+
+    const build = async () => {
+      const basePack = await buildEvidencePack(decision, {
+        auditEntries,
+        outcomes,
+        outcomesReadFailed,
+        isSimulation: isDemo || undefined,
+      });
+      return attachExecutionEvidence(basePack, {
+        receipts: executionReceipts,
+        readFailed: executionReceiptsReadFailed,
+      });
+    };
+
+    void build()
       .then((built) => {
         if (!cancelled) setPack(built);
       })
@@ -118,7 +155,15 @@ const EvidencePackPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [decision, auditEntries, outcomes, outcomesReadFailed, isDemo]);
+  }, [
+    decision,
+    auditEntries,
+    outcomes,
+    outcomesReadFailed,
+    executionReceipts,
+    executionReceiptsReadFailed,
+    isDemo,
+  ]);
 
   return (
     <div className="mx-auto max-w-4xl px-3 py-4 sm:px-6 sm:py-6">
@@ -141,7 +186,7 @@ const EvidencePackPage = () => {
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">Enterprise Decision Evidence Pack</h1>
         <p className="text-sm text-muted-foreground">
-          The complete, deterministic record of why this decision was recommended and approved.
+          The complete, deterministic record of why this decision was recommended, approved, executed and measured.
         </p>
       </div>
 
@@ -151,7 +196,10 @@ const EvidencePackPage = () => {
           Building Evidence Pack…
         </div>
       ) : pack ? (
-        <EvidencePackPreview pack={pack} />
+        <div className="space-y-4">
+          <ExecutionEvidenceCard pack={pack} />
+          <EvidencePackPreview pack={pack} />
+        </div>
       ) : (
         <div
           className="flex flex-col items-center gap-3 rounded-xl border border-border/50 p-10 text-center"
