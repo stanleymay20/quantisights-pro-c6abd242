@@ -6,9 +6,9 @@ function boundedOpaqueComponent(value: unknown, maxLength = MAX_PROVIDER_COMPONE
   const normalized = value.trim();
   if (!normalized || normalized.length > maxLength) return null;
   // Provider identifiers are treated as opaque evidence, never as URLs or
-  // executable material. Reject control characters, whitespace and delimiter
-  // characters used by our own reference format.
-  if (!/^[A-Za-z0-9._:@+=/-]+$/.test(normalized)) return null;
+  // executable material. Reject control characters, whitespace, path/URL
+  // separators and the ':' delimiter used by our own reference format.
+  if (!/^[A-Za-z0-9._@+=-]+$/.test(normalized)) return null;
   return normalized;
 }
 
