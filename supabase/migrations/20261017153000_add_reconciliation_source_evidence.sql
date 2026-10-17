@@ -77,7 +77,7 @@ COMMENT ON COLUMN public.execution_action_receipts.reconciliation_evidence_diges
 CREATE OR REPLACE FUNCTION public.protect_execution_reconciliation_evidence()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 BEGIN
   IF OLD.reconciliation_evidence_digest IS NOT NULL AND (
@@ -96,6 +96,11 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Trigger execution is internal to the table lifecycle. Clients do not need
+-- direct EXECUTE permission on this helper function.
+REVOKE ALL ON FUNCTION public.protect_execution_reconciliation_evidence()
+  FROM PUBLIC, anon, authenticated;
 
 DROP TRIGGER IF EXISTS protect_execution_reconciliation_evidence
   ON public.execution_action_receipts;
@@ -118,7 +123,7 @@ CREATE OR REPLACE FUNCTION public.reconcile_execution_action_receipt(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 DECLARE
   v_user_id uuid := auth.uid();
@@ -335,7 +340,7 @@ RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 STABLE
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 DECLARE
   v_user_id uuid := auth.uid();
