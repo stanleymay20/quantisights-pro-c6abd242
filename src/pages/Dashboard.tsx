@@ -11,6 +11,7 @@ import { useInsights } from "@/hooks/useInsights";
 import { filterCriticalInsights } from "@/lib/insight-filters";
 import { supabase } from "@/integrations/supabase/client";
 import { invokeWithRetry } from "@/lib/edge-function-retry";
+import { useCheckoutConfirmation } from "@/hooks/useCheckoutConfirmation";
 
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
@@ -21,6 +22,7 @@ import DemoBanner from "@/components/dashboard/DemoBanner";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 
 const Dashboard = () => {
+  useCheckoutConfirmation();
   const { user, profile, signOut } = useAuth();
   const { organizations, currentOrgId, currentOrg, switchOrganization, loading: orgLoading } = useOrganization();
   const { currentWorkspaceId, loading: workspaceLoading } = useWorkspace();

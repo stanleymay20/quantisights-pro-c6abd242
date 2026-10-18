@@ -16,7 +16,8 @@ describe("commercial source of truth", () => {
   it("keeps the paid Stripe checkout trial separate from the no-card pilot", () => {
     const checkout = read("supabase/functions/create-checkout/index.ts");
     expect(checkout).toContain(`trial_period_days: ${COMMERCIAL_TERMS.trialDays}`);
-    expect(checkout).toContain("hadTrial ? {} :");
+    expect(checkout).toContain("const trialAlreadyUsed = Boolean(pilotRecord) || hadRecordedTrial || hadTrustedStripeTrial");
+    expect(checkout).toContain("...(trialAlreadyUsed ? {} : { trial_period_days: 14 })");
 
     expect(PILOT_TERMS.days).toBe(30);
     expect(PILOT_TERMS.tier).toBe("growth");
