@@ -3,6 +3,10 @@ project_id = "quantivis-local"
 [functions]
   [functions.adaptive-calibration]
     verify_jwt = true
+  [functions.ai-system-registry]
+    verify_jwt = false
+  [functions.external-ai-decision-ingest]
+    verify_jwt = false
   [functions.ai-kpi-analysis]
     verify_jwt = false
   [functions.ai-scenario-analysis]

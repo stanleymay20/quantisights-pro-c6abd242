@@ -24,6 +24,8 @@ describe("privileged Edge CI coverage", () => {
       "supabase/functions/refresh-aggregates/index.ts",
       "supabase/functions/ingest-csv-pipeline/index.ts",
       "supabase/functions/ingest-external-signals/index.ts",
+      "supabase/functions/external-ai-decision-ingest/index.ts",
+      "supabase/functions/ai-system-registry/index.ts",
       "supabase/functions/connector-rest-sync/index.ts",
       "supabase/functions/connector-pull/index.ts",
       "supabase/functions/db-connector/index.ts",
