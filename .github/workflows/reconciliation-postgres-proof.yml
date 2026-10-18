@@ -1,0 +1,72 @@
+name: Reconciliation PostgreSQL proof
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# This test uses only a disposable PostgreSQL service with synthetic tenant data.
+# It must never connect to Quantivis staging or production.
+permissions:
+  contents: read
+
+concurrency:
+  group: reconciliation-db-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  postgres-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local-ci-only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact candidate checkout
+        env:
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Install PostgreSQL client
+        run: |
+          set -Eeuo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+
+      - name: Execute actual Tranche 4 migration and governed behavior tests
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGDATABASE: postgres
+          PGUSER: postgres
+          PGPASSWORD: local-ci-only
+        run: |
+          set -Eeuo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f tests/postgres/reconciliation-fixtures.sql
+          psql -X -v ON_ERROR_STOP=1 -f supabase/migrations/20261017153000_add_reconciliation_source_evidence.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/postgres/verify-reconciliation.sql
+          echo "Isolated PostgreSQL reconciliation proof passed"
