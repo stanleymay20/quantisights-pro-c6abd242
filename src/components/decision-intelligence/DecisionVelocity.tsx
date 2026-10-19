@@ -1,84 +1,47 @@
 import { useMemo } from "react";
-import { Timer, TrendingDown, TrendingUp, Minus } from "lucide-react";
+import { Timer, TrendingDown, TrendingUp, Minus, AlertTriangle } from "lucide-react";
 import { getSystemConfig } from "@/lib/system-config";
+import {
+  calculateDecisionVelocity,
+  formatVelocityDays,
+  type DecisionVelocityRecord,
+  type TimedSample,
+} from "@/lib/decision-velocity-metrics";
 
-interface Decision {
-  id: string;
-  created_at: string;
-  decided_at: string | null;
-  decision_status: string;
-  execution_started_at: string | null;
-  execution_completed_at: string | null;
-}
+const VelocityMetric = ({
+  label, metric,
+}: {
+  label: string;
+  metric: TimedSample;
+}) => (
+  <div className="text-center bg-muted/20 rounded-lg p-3">
+    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
+    <p className="text-xl font-bold tracking-tight text-primary">
+      {formatVelocityDays(metric.medianDays)}
+    </p>
+    <p className="text-[10px] text-muted-foreground mt-1">
+      {metric.count} valid {metric.count === 1 ? "record" : "records"}
+    </p>
+  </div>
+);
 
 /**
- * Decision Velocity Tracker.
- * All trend thresholds configurable via system-config.
+ * Read-only internal lifecycle timing. This reuses the canonical Decision
+ * Intelligence screen; it does NOT infer external provider confirmation.
+ * The parent must supply rows from a successful, tenant-scoped query.
  */
-const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
-  const metrics = useMemo(() => {
-    const cfg = getSystemConfig().decisionIntelligence.velocity;
-    const decided = decisions.filter(
-      (d) => d.decided_at && d.decision_status !== "pending"
-    );
+const DecisionVelocity = ({ decisions }: { decisions: DecisionVelocityRecord[] }) => {
+  const metrics = useMemo(
+    () => calculateDecisionVelocity(
+      decisions,
+      Date.now(),
+      getSystemConfig().decisionIntelligence.velocity,
+    ),
+    [decisions],
+  );
+  const { slowWarningDays } = getSystemConfig().decisionIntelligence.velocity;
 
-    if (decided.length === 0) return null;
-
-    const calcDays = (start: string, end: string) =>
-      (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 60 * 60 * 24);
-
-    const ttdValues = decided.map((d) => calcDays(d.created_at, d.decided_at!));
-    const avgTTD = ttdValues.reduce((s, v) => s + v, 0) / ttdValues.length;
-
-    const executed = decided.filter(
-      (d) => d.execution_completed_at && d.execution_started_at
-    );
-    const tteValues = executed.map((d) =>
-      calcDays(d.execution_started_at!, d.execution_completed_at!)
-    );
-    const avgTTE = tteValues.length > 0
-      ? tteValues.reduce((s, v) => s + v, 0) / tteValues.length
-      : null;
-
-    const completed = decided.filter((d) => d.execution_completed_at);
-    const cycleValues = completed.map((d) =>
-      calcDays(d.created_at, d.execution_completed_at!)
-    );
-    const avgCycle = cycleValues.length > 0
-      ? cycleValues.reduce((s, v) => s + v, 0) / cycleValues.length
-      : null;
-
-    let trend: "improving" | "stable" | "degrading" = "stable";
-    if (ttdValues.length >= cfg.minDecisionsForTrend) {
-      const mid = Math.floor(ttdValues.length / 2);
-      const firstHalf = ttdValues.slice(0, mid).reduce((s, v) => s + v, 0) / mid;
-      const secondHalf =
-        ttdValues.slice(mid).reduce((s, v) => s + v, 0) / (ttdValues.length - mid);
-      if (secondHalf < firstHalf * cfg.improvingThreshold) trend = "improving";
-      else if (secondHalf > firstHalf * cfg.degradingThreshold) trend = "degrading";
-    }
-
-    const pending = decisions.filter((d) => d.decision_status === "pending");
-    const pendingAges = pending.map((d) =>
-      calcDays(d.created_at, new Date().toISOString())
-    );
-    const avgPendingAge = pendingAges.length > 0
-      ? pendingAges.reduce((s, v) => s + v, 0) / pendingAges.length
-      : 0;
-
-    return {
-      avgTTD,
-      avgTTE,
-      avgCycle,
-      trend,
-      totalDecided: decided.length,
-      avgPendingAge,
-      pendingCount: pending.length,
-      slowWarningDays: cfg.slowWarningDays,
-    };
-  }, [decisions]);
-
-  if (!metrics) {
+  if (metrics.observedRows === 0) {
     return (
       <div className="glass-card p-6 rounded-xl">
         <div className="flex items-center gap-2 mb-4">
@@ -86,24 +49,25 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
           <h3 className="text-sm font-semibold">Decision Velocity</h3>
         </div>
         <p className="text-xs text-muted-foreground">
-          No resolved decisions yet. Velocity tracks time from recommendation to action.
+          No decision records available. Recorded decision and execution timing is not yet measurable.
         </p>
       </div>
     );
   }
 
-  const TrendIcon =
-    metrics.trend === "improving"
-      ? TrendingDown
-      : metrics.trend === "degrading"
+  const trendAvailable = metrics.trend !== "insufficient";
+  const TrendIcon = metrics.trend === "improving"
+    ? TrendingDown
+    : metrics.trend === "degrading"
       ? TrendingUp
       : Minus;
-  const trendLabel =
-    metrics.trend === "improving"
-      ? "Accelerating"
-      : metrics.trend === "degrading"
-      ? "Slowing"
-      : "Stable";
+  const trendLabel = metrics.trend === "improving"
+    ? "Recent decisions quicker"
+    : metrics.trend === "degrading"
+      ? "Recent decisions slower"
+      : metrics.trend === "stable"
+        ? "No material timing shift"
+        : "Trend unavailable";
 
   return (
     <div className="glass-card p-6 rounded-xl">
@@ -112,11 +76,9 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
         <h3 className="text-sm font-semibold">Decision Velocity</h3>
         <span
           className={`text-[10px] px-2 py-0.5 rounded-full ml-auto flex items-center gap-1 ${
-            metrics.trend === "improving"
-              ? "bg-emerald-500/10 text-emerald-400"
-              : metrics.trend === "degrading"
-              ? "bg-destructive/10 text-destructive"
-              : "bg-muted text-muted-foreground"
+            metrics.trend === "improving" ? "bg-success/10 text-success"
+              : metrics.trend === "degrading" ? "bg-warning/10 text-warning"
+                : "bg-muted text-muted-foreground"
           }`}
         >
           <TrendIcon className="w-3 h-3" />
@@ -124,64 +86,67 @@ const DecisionVelocity = ({ decisions }: { decisions: Decision[] }) => {
         </span>
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">
-        Organizational speed from recommendation → action → outcome
+        Internal lifecycle timing from stored decision timestamps, not event detection or
+        independently verified external execution.
       </p>
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <div className="text-center bg-muted/20 rounded-lg p-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-            Avg. Time to Decision
-          </p>
-          <p className="text-xl font-bold tracking-tight text-primary">
-            {metrics.avgTTD.toFixed(1)}d
-          </p>
-        </div>
-        <div className="text-center bg-muted/20 rounded-lg p-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-            Avg. Execution Time
-          </p>
-          <p className="text-xl font-bold tracking-tight">
-            {metrics.avgTTE != null ? `${metrics.avgTTE.toFixed(1)}d` : "—"}
-          </p>
-        </div>
-        <div className="text-center bg-muted/20 rounded-lg p-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-            Total Cycle Time
-          </p>
-          <p className="text-xl font-bold tracking-tight">
-            {metrics.avgCycle != null ? `${metrics.avgCycle.toFixed(1)}d` : "—"}
-          </p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+        <VelocityMetric label="Median created → decided" metric={metrics.timeToDecision} />
+        <VelocityMetric label="Median decided → execution started" metric={metrics.decisionToExecutionStart} />
+        <VelocityMetric label="Median execution started → internally completed" metric={metrics.internalExecutionTime} />
+        <VelocityMetric label="Median created → internally completed" metric={metrics.internalCycleTime} />
       </div>
 
       <div className="space-y-2 text-xs">
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Decisions Resolved</span>
-          <span className="font-mono font-semibold">{metrics.totalDecided}</span>
+          <span className="text-muted-foreground">Decisions sampled</span>
+          <span className="font-mono font-semibold">{metrics.observedRows}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Pending Decisions</span>
+          <span className="text-muted-foreground">Decision timestamps available</span>
+          <span className="font-mono font-semibold">{metrics.timeToDecision.count}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Pending decisions</span>
           <span className="font-mono font-semibold">{metrics.pendingCount}</span>
         </div>
         {metrics.pendingCount > 0 && (
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Avg. Pending Age</span>
-            <span
-              className={`font-mono font-semibold ${
-                metrics.avgPendingAge > 7 ? "text-warning" : ""
-              }`}
-            >
-              {metrics.avgPendingAge.toFixed(1)}d
+            <span className="text-muted-foreground">Median pending age (valid dates)</span>
+            <span className="font-mono font-semibold">
+              {formatVelocityDays(metrics.pendingAge.medianDays)}
             </span>
+          </div>
+        )}
+        {metrics.missingDecisionTimeCount > 0 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Resolved rows missing timing evidence</span>
+            <span className="font-mono font-semibold">{metrics.missingDecisionTimeCount}</span>
           </div>
         )}
       </div>
 
-      {metrics.avgTTD > metrics.slowWarningDays && (
-        <div className="mt-3 p-2.5 rounded-lg bg-warning/10 text-warning text-xs font-medium">
-          ⚠ Average decision time exceeds {metrics.slowWarningDays} days — consider streamlining approval workflows
+      {metrics.invalidRecordCount > 0 && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-warning/10 text-warning p-2.5 text-xs">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {metrics.invalidRecordCount} invalid lifecycle {metrics.invalidRecordCount === 1 ? "record was" : "records were"}
+          {" "}excluded from timing calculations; investigate source timestamps.
         </div>
       )}
+      {metrics.timeToDecision.medianDays !== null
+        && metrics.timeToDecision.medianDays > slowWarningDays && (
+        <div className="mt-3 p-2.5 rounded-lg bg-warning/10 text-warning text-xs font-medium">
+          Median time from record creation to decision exceeds {slowWarningDays} days.
+          Review approval bottlenecks before proposing an intervention.
+        </div>
+      )}
+      <p className="text-[10px] text-muted-foreground mt-3 border-t border-border/40 pt-2">
+        Median computed from {metrics.timeToDecision.count} valid decision intervals;
+        {trendAvailable
+          ? " trend compares the older half with the newer half by creation timestamp."
+          : " too few valid observations for a trend."}
+        {" "}Incomplete milestones remain unknown. An internal completion timestamp does not prove an external provider completed its action.
+      </p>
     </div>
   );
 };
