@@ -29,6 +29,7 @@ export type VelocityTrend = "improving" | "stable" | "degrading" | "insufficient
 
 export interface DecisionVelocitySummary {
   timeToDecision: TimedSample;
+  decisionToExecutionStart: TimedSample;
   internalExecutionTime: TimedSample;
   internalCycleTime: TimedSample;
   pendingAge: TimedSample;
@@ -85,6 +86,7 @@ export function calculateDecisionVelocity(
   thresholds: VelocityThresholds,
 ): DecisionVelocitySummary {
   const decisionDurations: number[] = [];
+  const handoffDurations: number[] = [];
   const internalDurations: number[] = [];
   const cycleDurations: number[] = [];
   const pendingAges: number[] = [];
@@ -138,6 +140,12 @@ export function calculateDecisionVelocity(
       missingDecisionTimeCount += 1;
     }
 
+    // Handoff time is the lag between a recorded decision and internal
+    // execution start; no external dispatch is implied.
+    if (!pending && decided !== null && started !== null && started >= decided) {
+      handoffDurations.push((started - decided) / DAY_MS);
+    }
+
     // A complete *internal* execution duration requires an ordered decided ->
     // started -> completed chain. It does not prove an external provider acted.
     if (row.decision_status !== "pending" && decided !== null && started !== null
@@ -173,6 +181,7 @@ export function calculateDecisionVelocity(
 
   return {
     timeToDecision: sample(decisionDurations),
+    decisionToExecutionStart: sample(handoffDurations),
     internalExecutionTime: sample(internalDurations),
     internalCycleTime: sample(cycleDurations),
     pendingAge: sample(pendingAges),
