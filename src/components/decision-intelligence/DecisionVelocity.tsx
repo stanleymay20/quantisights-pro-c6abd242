@@ -90,8 +90,9 @@ const DecisionVelocity = ({ decisions }: { decisions: DecisionVelocityRecord[] }
         independently verified external execution.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         <VelocityMetric label="Median created → decided" metric={metrics.timeToDecision} />
+        <VelocityMetric label="Median decided → execution started" metric={metrics.decisionToExecutionStart} />
         <VelocityMetric label="Median execution started → internally completed" metric={metrics.internalExecutionTime} />
         <VelocityMetric label="Median created → internally completed" metric={metrics.internalCycleTime} />
       </div>
