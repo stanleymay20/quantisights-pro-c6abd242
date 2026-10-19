@@ -114,13 +114,22 @@ export function calculateDecisionVelocity(
       invalid = true;
     }
 
-    if (row.decision_status === "pending") {
+    const pending = row.decision_status === "pending";
+    if (pending && (created === null || !Number.isFinite(nowMs) || nowMs < created)) {
+      invalid = true;
+    }
+
+    // Exclude malformed or reversed event sequences from every aggregate,
+    // rather than reporting valid-looking timings from a corrupted row.
+    if (invalid) {
+      invalidRecordCount += 1;
+      if (pending) pendingCount += 1;
+      continue;
+    }
+
+    if (pending) {
       pendingCount += 1;
-      if (created !== null && Number.isFinite(nowMs) && nowMs >= created) {
-        pendingAges.push((nowMs - created) / DAY_MS);
-      } else {
-        invalid = true;
-      }
+      pendingAges.push((nowMs - created!) / DAY_MS);
     } else if (created !== null && decided !== null && decided >= created) {
       const days = (decided - created) / DAY_MS;
       decisionDurations.push(days);
@@ -139,7 +148,7 @@ export function calculateDecisionVelocity(
       }
     }
 
-    if (invalid) invalidRecordCount += 1;
+
   }
 
   // Database callers retrieve newest-first. Sort explicitly by *created* time;
