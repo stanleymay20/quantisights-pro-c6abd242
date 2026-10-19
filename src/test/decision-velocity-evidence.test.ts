@@ -45,6 +45,8 @@ describe("Decision velocity: canonical lifecycle evidence", () => {
 
     expect(r.timeToDecision.count).toBe(1);
     expect(r.timeToDecision.medianDays! * 24).toBeCloseTo(10);
+    expect(r.decisionToExecutionStart.count).toBe(1);
+    expect(r.decisionToExecutionStart.medianDays! * 24).toBeCloseTo(2);
     expect(r.internalExecutionTime.medianDays! * 24).toBeCloseTo(2);
     expect(r.internalCycleTime.medianDays! * 24).toBeCloseTo(14);
     expect(r.invalidRecordCount).toBe(0);
@@ -61,6 +63,7 @@ describe("Decision velocity: canonical lifecycle evidence", () => {
     expect(r.missingDecisionTimeCount).toBe(1);
     expect(r.timeToDecision).toEqual({ medianDays: null, count: 0 });
     expect(r.internalExecutionTime.medianDays).toBeNull();
+    expect(r.decisionToExecutionStart.medianDays).toBeNull();
     expect(r.trend).toBe("insufficient");
   });
 
