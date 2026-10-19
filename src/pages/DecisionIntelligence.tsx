@@ -296,21 +296,54 @@ const DecisionIntelligence = () => {
   const [decisions, setDecisions] = useState<any[]>([]);
   const [simulations, setSimulations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
   const { performance: performanceData, loading: perfLoading } = useDecisionPerformance(currentOrgId);
 
   useEffect(() => {
-    if (!currentOrgId) { setLoading(false); return; }
-    const fetch = async () => {
-      setLoading(true);
-      const [decRes, simRes] = await Promise.all([
-        supabase.from("decision_ledger").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
-        supabase.from("decision_simulations").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
-      ]);
-      setDecisions(decRes.data || []);
-      setSimulations(simRes.data || []);
+    let active = true;
+    if (!currentOrgId) {
+      setDecisions([]);
+      setSimulations([]);
+      setReadError(null);
+      setLoadedOrgId(null);
       setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setReadError(null);
+    const fetch = async () => {
+      try {
+        const [decRes, simRes] = await Promise.all([
+          supabase.from("decision_ledger").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
+          supabase.from("decision_simulations").select("*").eq("organization_id", currentOrgId).order("created_at", { ascending: false }),
+        ]);
+        if (!active) return;
+        // A failed tenant-scoped read must not become an empty/healthy dashboard.
+        if (decRes.error || simRes.error || !decRes.data || !simRes.data) {
+          setDecisions([]);
+          setSimulations([]);
+          setReadError("Decision evidence is unavailable. Check the data connection or access permissions.");
+        } else {
+          setDecisions(decRes.data);
+          setSimulations(simRes.data);
+          setReadError(null);
+        }
+      } catch {
+        if (!active) return;
+        setDecisions([]);
+        setSimulations([]);
+        setReadError("Decision evidence is unavailable. Check the data connection or access permissions.");
+      } finally {
+        if (active) {
+          setLoadedOrgId(currentOrgId);
+          setLoading(false);
+        }
+      }
     };
-    fetch();
+    void fetch();
+    return () => { active = false; };
   }, [currentOrgId]);
 
   return (
@@ -328,9 +361,13 @@ const DecisionIntelligence = () => {
         <main className="flex-1 p-8 overflow-auto">
           <IntelligenceDisclaimer variant="banner" context="advisory" />
 
-          {loading ? (
+          {loading || loadedOrgId !== currentOrgId ? (
             <div className="flex items-center justify-center py-20">
               <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : readError ? (
+            <div role="alert" className="rounded-lg border border-destructive/30 p-6 text-sm text-destructive">
+              {readError} Decision velocity and outcome analytics cannot be calculated from missing evidence.
             </div>
           ) : (
             <div className="space-y-6 max-w-[1400px]">
