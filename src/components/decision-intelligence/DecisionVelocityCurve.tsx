@@ -1,94 +1,73 @@
 import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Gauge, ArrowRight, Clock, Zap, AlertTriangle, BookOpen } from "lucide-react";
+import { Gauge, AlertTriangle, BookOpen } from "lucide-react";
 
 /**
- * Decision Velocity Curve & Risk Trade-Off Analysis
- * 
- * From "Decision Intelligence" by Stanley Osei-Wusu (Chapter 1).
- * Finds the optimal point where sufficient information drives a timely,
- * high-quality choice — balancing analysis paralysis vs. hasty decisions.
+ * Descriptive speed buckets. No optimal zone is inferred from a small sample.
+ * Raw outcome_delta is not a universal success target: some KPIs should fall.
  */
-
-interface DecisionVelocityProps {
-  decisions: Array<{ created_at: string; status?: string; [key: string]: any }>; // eslint-disable-line @typescript-eslint/no-explicit-any
+interface DecisionTimingRow {
+  created_at: string;
+  decided_at?: string | null;
+  decision_status?: string | null;
+  prediction_accuracy_score?: number | null;
 }
 
-const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
+interface TimingBucket {
+  label: string;
+  count: number;
+  avgHours: number | null;
+  avgAccuracy: number | null;
+}
+
+const DecisionVelocityCurve = ({ decisions }: { decisions: DecisionTimingRow[] }) => {
   const analysis = useMemo(() => {
-    if (decisions.length === 0) return null;
+    const now = Date.now();
+    const completed = decisions.flatMap((d) => {
+      if (!d.created_at || !d.decided_at || d.decision_status === "pending") return [];
+      const created = Date.parse(d.created_at);
+      const decided = Date.parse(d.decided_at);
+      const hours = (decided - created) / 3_600_000;
+      if (!Number.isFinite(hours) || hours < 0) return [];
+      const n = d.prediction_accuracy_score;
+      const accuracy = typeof n === "number" && Number.isFinite(n)
+        && n >= 0 && n <= 100 ? n : null;
+      return [{ hours, accuracy }];
+    });
 
-    // Categorize decisions by speed
-    const withTiming = decisions
-      .filter(d => d.created_at && d.decided_at)
-      .map(d => {
-        const created = new Date(d.created_at).getTime();
-        const decided = new Date(d.decided_at).getTime();
-        const hoursToDecide = (decided - created) / (1000 * 60 * 60);
-        const accuracy = Number(d.prediction_accuracy_score) || null;
-        const success = d.outcome_delta != null ? (Number(d.outcome_delta) >= 0) : null;
-        return { ...d, hoursToDecide, accuracy, success };
-      })
-      .filter(d => d.hoursToDecide > 0);
+    if (completed.length < 3) return null;
 
-    if (withTiming.length < 3) return null;
-
-    // Bucket into speed categories
-    const fast = withTiming.filter(d => d.hoursToDecide < 24);
-    const moderate = withTiming.filter(d => d.hoursToDecide >= 24 && d.hoursToDecide < 168);
-    const slow = withTiming.filter(d => d.hoursToDecide >= 168);
-
-    const bucketStats = (bucket: typeof fast, label: string) => {
-      const count = bucket.length;
-      const withAccuracy = bucket.filter(d => d.accuracy !== null);
-      const avgAccuracy = withAccuracy.length > 0
-        ? withAccuracy.reduce((s, d) => s + d.accuracy!, 0) / withAccuracy.length
-        : null;
-      const withSuccess = bucket.filter(d => d.success !== null);
-      const successRate = withSuccess.length > 0
-        ? (withSuccess.filter(d => d.success).length / withSuccess.length) * 100
-        : null;
-      const avgHours = count > 0
-        ? bucket.reduce((s, d) => s + d.hoursToDecide, 0) / count
-        : 0;
-      return { label, count, avgAccuracy, successRate, avgHours };
+    const buildBucket = (label: string, min: number, max: number): TimingBucket => {
+      const rows = completed.filter((d) => d.hours >= min && d.hours < max);
+      const recorded = rows.filter((d) => d.accuracy !== null);
+      return {
+        label,
+        count: rows.length,
+        avgHours: rows.length
+          ? rows.reduce((sum, row) => sum + row.hours, 0) / rows.length : null,
+        avgAccuracy: recorded.length
+          ? recorded.reduce((sum, row) => sum + row.accuracy!, 0) / recorded.length : null,
+      };
     };
 
-    const buckets = [
-      bucketStats(fast, "< 24h"),
-      bucketStats(moderate, "1-7 days"),
-      bucketStats(slow, "> 7 days"),
-    ];
-
-    // Overall velocity metrics
-    const avgDecisionTime = withTiming.reduce((s, d) => s + d.hoursToDecide, 0) / withTiming.length;
-    const pending = decisions.filter(d => d.decision_status === "pending");
-    const stale = pending.filter(d => {
-      const age = (Date.now() - new Date(d.created_at).getTime()) / (1000 * 60 * 60 * 24);
-      return age > 7;
-    });
-
-    // Analysis paralysis score
-    const paralysisScore = Math.min(100, Math.round(
-      (stale.length / Math.max(1, pending.length)) * 50 +
-      Math.min(50, avgDecisionTime / 24 * 5)
-    ));
-
-    // Optimal zone detection
-    const bestBucket = buckets.reduce((best, b) => {
-      const score = (b.successRate || 0) * 0.6 + (b.avgAccuracy || 0) * 0.4;
-      const bestScore = (best.successRate || 0) * 0.6 + (best.avgAccuracy || 0) * 0.4;
-      return score > bestScore ? b : best;
-    });
+    const pending = decisions.filter((d) => d.decision_status === "pending");
+    const stalePending = pending.filter((d) => {
+      const timestamp = Date.parse(d.created_at);
+      return Number.isFinite(timestamp) && timestamp <= now
+        && now - timestamp > 7 * 86_400_000;
+    }).length;
 
     return {
-      buckets,
-      avgDecisionTime,
-      paralysisScore,
-      stalePending: stale.length,
-      totalDecided: withTiming.length,
-      optimalZone: bestBucket.label,
+      totalDecided: completed.length,
+      avgDecisionHours: completed.reduce((sum, row) => sum + row.hours, 0) / completed.length,
+      accuracyCount: completed.filter((row) => row.accuracy !== null).length,
+      stalePending,
+      buckets: [
+        buildBucket("< 24 h", 0, 24),
+        buildBucket("1–7 days", 24, 168),
+        buildBucket("7+ days", 168, Infinity),
+      ],
     };
   }, [decisions]);
 
@@ -98,16 +77,13 @@ const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
         <CardContent className="p-6 text-center">
           <Gauge className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">
-            Decision Velocity Curve requires decisions with timestamps and outcome measurements.
+            Decision timing distribution requires at least 3 valid recorded
+            created-to-decided intervals.
           </p>
         </CardContent>
       </Card>
     );
   }
-
-  const paralysisColor = analysis.paralysisScore >= 60 ? "text-destructive"
-    : analysis.paralysisScore >= 30 ? "text-warning"
-    : "text-success";
 
   return (
     <Card>
@@ -116,34 +92,40 @@ const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
           <Gauge className="w-4 h-4 text-primary" />
           Decision Velocity Curve
           <Badge variant="outline" className="ml-auto text-[10px]">
-            {analysis.totalDecided} decisions analyzed
+            {analysis.totalDecided} timed decisions
           </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Top metrics */}
+        <p className="text-xs text-muted-foreground">
+          Descriptive timing distribution. It cannot identify a causally optimal
+          decision speed or prove that execution was completed externally.
+        </p>
         <div className="grid grid-cols-3 gap-3">
           <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 text-center">
             <div className="text-lg font-bold text-primary">
-              {analysis.avgDecisionTime < 24
-                ? `${Math.round(analysis.avgDecisionTime)}h`
-                : `${(analysis.avgDecisionTime / 24).toFixed(1)}d`}
+              {analysis.avgDecisionHours < 24
+                ? `${analysis.avgDecisionHours.toFixed(1)} h`
+                : `${(analysis.avgDecisionHours / 24).toFixed(1)} d`}
             </div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">Avg Time to Decide</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">
+              Avg created → decided
+            </p>
           </div>
           <div className="p-3 rounded-lg bg-muted/50 text-center">
-            <div className={`text-lg font-bold ${paralysisColor}`}>
-              {analysis.paralysisScore}
-            </div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">Paralysis Index</p>
+            <div className="text-lg font-bold">{analysis.stalePending}</div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">
+              Pending over 7 days
+            </p>
           </div>
           <div className="p-3 rounded-lg bg-muted/50 text-center">
-            <div className="text-lg font-bold text-primary">{analysis.optimalZone}</div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">Optimal Zone</p>
+            <div className="text-lg font-bold">{analysis.accuracyCount}</div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">
+              Recorded accuracy samples
+            </p>
           </div>
         </div>
 
-        {/* Velocity buckets */}
         <div className="space-y-2">
           {analysis.buckets.map((bucket) => (
             <div key={bucket.label} className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/30">
@@ -154,9 +136,9 @@ const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
                   <span className="font-semibold">{bucket.count}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Success: </span>
-                  <span className={`font-semibold ${(bucket.successRate || 0) >= 60 ? "text-success" : "text-warning"}`}>
-                    {bucket.successRate !== null ? `${bucket.successRate.toFixed(0)}%` : "—"}
+                  <span className="text-muted-foreground">Avg: </span>
+                  <span className="font-semibold">
+                    {bucket.avgHours !== null ? `${bucket.avgHours.toFixed(1)}h` : "—"}
                   </span>
                 </div>
                 <div>
@@ -166,20 +148,16 @@ const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
                   </span>
                 </div>
               </div>
-              {bucket.label === analysis.optimalZone && (
-                <Badge variant="default" className="text-[9px] shrink-0">Optimal</Badge>
-              )}
             </div>
           ))}
         </div>
 
-        {/* Paralysis alert */}
-        {analysis.paralysisScore >= 40 && (
+        {analysis.stalePending > 0 && (
           <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
             <p className="text-xs text-warning">
-              {analysis.stalePending} decisions stale &gt;7 days. The pursuit of absolute certainty 
-              leads to Analysis Paralysis — find the optimal point on the Decision Velocity Curve.
+              {analysis.stalePending} pending decisions exceed 7 days.
+              Check ownership, missing evidence and approval queues before assigning a cause.
             </p>
           </div>
         )}
@@ -187,8 +165,9 @@ const DecisionVelocityCurve = ({ decisions }: DecisionVelocityProps) => {
         <div className="flex items-start gap-2 pt-2 border-t border-border/50">
           <BookOpen className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 shrink-0" />
           <p className="text-[10px] text-muted-foreground/60">
-            Decision Velocity Curve from <em>"Decision Intelligence"</em> Ch. 1 — "The challenge is to find the optimal 
-            point where sufficient information drives a timely, high-quality choice."
+            Decision Velocity framework: speed must be assessed alongside validated
+            decision quality. No optimal-speed or success-rate claim is made without
+            outcome-direction, measured quality and adequate evidence.
           </p>
         </div>
       </CardContent>
