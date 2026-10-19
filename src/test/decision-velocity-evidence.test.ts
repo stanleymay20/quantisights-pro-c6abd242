@@ -86,10 +86,6 @@ describe("Decision velocity: canonical lifecycle evidence", () => {
     });
     expect(calculateDecisionVelocity([...rows].reverse(), now, thresholds).trend).toBe("degrading");
     expect(calculateDecisionVelocity([...rows], now, thresholds).trend).toBe("degrading");
-    expect(calculateDecisionVelocity([...rows].reverse().map((row, i) => ({
-      ...row,
-      // Swapping the numeric time values by chronology is tested separately below.
-    })), now, thresholds).trend).toBe("degrading");
   });
 
   it("reports acceleration when recent decisions are actually quicker", () => {
