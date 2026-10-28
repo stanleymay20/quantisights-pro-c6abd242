@@ -166,3 +166,8 @@ Production hardening therefore includes:
 - exact-SHA CI/deployment certification.
 
 A green dashboard or CI badge alone does not establish trust. Quantivis is trustworthy only when the full decision chain is demonstrably trustworthy.
+
+
+## 2026 strategy decision — implementation reference
+
+The October 2026 strategy reconciles Analytics, Decision Intelligence OS, Enterprise OS, Decision Solutions and AI Consulting Infrastructure into **one** product. The current operating focus remains the governed decision loop; Supplier Decision Intelligence is the first **proposed** market wedge; Enterprise OS modules and governed agents are phased ambitions, not production claims. Consulting firms remain legitimate experts and potential partners. Read [the 2026 strategy decision](strategy/2026-10-28_GISMA_ENTERPRISE_OS.md) before extending product scope. All product changes remain subject to the zero-tolerance trust rules and release gates above.
