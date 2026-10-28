@@ -121,6 +121,7 @@ const BusinessModel = lazy(() => import("@/pages/BusinessModel"));
 const FounderHandbook = lazy(() => import("@/pages/FounderHandbook"));
 const WhyVsMicrosoft = lazy(() => import("@/pages/WhyVsMicrosoft"));
 const Pitch = lazy(() => import("@/pages/Pitch"));
+const GismaPitch = lazy(() => import("@/pages/GismaPitch"));
 const Competitions = lazy(() => import("@/pages/Competitions"));
 const PitchDeck = lazy(() => import("@/pages/PitchDeck"));
 const Ebook = lazy(() => import("@/pages/Ebook"));
@@ -239,6 +240,7 @@ export const routes: RouteEntry[] = [
   // layout: "none" — renders own Navbar/Footer (DS-0).
   { path: "/decision-intelligence-platforms", element: <DecisionIntelligencePlatforms />, layout: "none" },
   { path: "/pitch", element: <Pitch />, layout: "full" },
+  { path: "/gisma-2026", element: <GismaPitch />, layout: "public" },
   { path: "/competitions", element: <Competitions />, layout: "full" },
   { path: "/pitch-deck", element: <PitchDeck />, layout: "full" },
   { path: "/ebook", element: <Ebook />, layout: "full" },

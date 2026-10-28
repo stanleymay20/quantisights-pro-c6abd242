@@ -4,6 +4,8 @@
 
 **Website:** https://www.quantivis.io
 
+**2026 strategy and GISMA investor presentation:** [Enterprise OS / AI decision consulting strategy](docs/strategy/2026-10-28_GISMA_ENTERPRISE_OS.md) · [GISMA pitch brief (source)](src/pages/GismaPitch.tsx). This records the Supplier Decision Intelligence market wedge and the relationship to the existing Product Doctrine; it does not certify the live deployment.
+
 Quantivis is an AI-assisted decision-intelligence platform for turning messy operational data into validated analytical outputs, forecasts, structured insights and decision support.
 
 The codebase demonstrates the engineering work between **raw data and a defensible decision**: ingestion, schema inference, validation, quality diagnostics, multi-tenant data handling, analytical workflows and governed application delivery.

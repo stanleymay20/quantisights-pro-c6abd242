@@ -1,5 +1,6 @@
 import { forwardRef } from "react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { Check, X } from "lucide-react";
 
 const fitRows = [
@@ -46,11 +47,11 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
       >
         <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-3">Choose the right layer</p>
         <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-3">
-          Decision Governance, Not a Replacement for <span className="gradient-text">Every Analytics Tool</span>
+          Continuous Decision Governance, <span className="gradient-text">Beyond One-Off Advice</span>
         </h2>
         <p className="text-muted-foreground text-sm max-w-2xl mx-auto leading-relaxed">
           Quantivis is designed to sit between evidence, AI-assisted recommendations and accountable human decisions.
-          BI, consulting and FP&amp;A products can remain part of the surrounding stack where they are the better specialist tool.
+          Quantivis aims to productize repeatable decision monitoring and accountable follow-through. Expert consulting, enterprise decision platforms, BI, ERP and FP&amp;A remain valuable alternatives and complements.
         </p>
       </motion.div>
 
@@ -85,6 +86,13 @@ const ComparisonSection = forwardRef<HTMLElement, { inline?: boolean }>(({ inlin
             </tbody>
           </table>
         </div>
+      </div>
+
+
+      <div className="mt-6 text-center">
+        <Link to="/gisma-2026" className="inline-flex items-center rounded-lg border border-primary/30 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/5">
+          Read our GISMA 2026 investor positioning
+        </Link>
       </div>
 
       <motion.div

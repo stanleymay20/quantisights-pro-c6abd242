@@ -7,6 +7,11 @@ export interface PageMetadataDefinition {
 }
 
 export const PAGE_METADATA: Record<string, PageMetadataDefinition> = {
+  "/gisma-2026": {
+    title: "Quantivis — GISMA AsiaBerlin 2026 Investor Brief",
+    description: "Quantivis AI decision governance, supplier-risk pilot thesis, consulting positioning and evidence boundaries.",
+    canonicalPath: "/gisma-2026",
+  },
   "/trust": {
     title: "Trust Center | Quantivis",
     description:
